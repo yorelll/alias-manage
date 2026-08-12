@@ -18,6 +18,8 @@ impl FileLock {
                     std::io::Write::write_all(&mut &file, owner.as_bytes())?;
                     return Ok(Self { file, path });
                 }
+                Ok(false) if started.elapsed() >= timeout => return Err(AliasError::LockTimeout),
+                Ok(false) => thread::sleep(Duration::from_millis(25)),
                 Err(_) if started.elapsed() >= timeout => return Err(AliasError::LockTimeout),
                 Err(_) => thread::sleep(Duration::from_millis(25)),
             }
