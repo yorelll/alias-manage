@@ -12,7 +12,7 @@ impl FileLock {
         let started = Instant::now();
         loop {
             match file.try_lock_exclusive() {
-                Ok(()) => {
+                Ok(true) => {
                     file.set_len(0)?;
                     let owner = format!("pid={}\nstarted_at={}\n", std::process::id(), chrono::Utc::now().to_rfc3339());
                     std::io::Write::write_all(&mut &file, owner.as_bytes())?;
