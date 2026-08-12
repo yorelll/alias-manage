@@ -1,5 +1,5 @@
 use crate::error::AliasError;
-use fs4::FileExt;
+use fs4::fs_std::FileExt;
 use std::{fs::{self, File, OpenOptions}, path::{Path, PathBuf}, thread, time::{Duration, Instant}};
 
 pub struct FileLock { file: File, path: PathBuf }
