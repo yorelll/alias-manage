@@ -1250,14 +1250,14 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - Create: `.gitignore`
 - Create: `rust-toolchain.toml`
 
-- [ ] 写一个最小 `aliasmgr-core` 单元测试，验证 crate 可以被 workspace 构建。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test --workspace`，预期输出 `test result: ok`。
-- [ ] 配置依赖版本和 workspace lint，保证 CLI 依赖 core 而非反向依赖。
-- [ ] 【CI】明确依赖 features：`rusqlite = { version = "*", features = ["bundled"] }`，并在 Windows runner 上验证无需系统 SQLite 即可构建。
+- [x] 写一个最小 `aliasmgr-core` 单元测试，验证 crate 可以被 workspace 构建。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test --workspace`，预期输出 `test result: ok`。
+- [x] 配置依赖版本和 workspace lint，保证 CLI 依赖 core 而非反向依赖。
+- [x] 【CI】明确依赖 features：`rusqlite = { version = "*", features = ["bundled"] }`，并在 Windows runner 上验证无需系统 SQLite 即可构建。
 - [ ] 【CI】选定并验证文件锁库（`fs4` 优先），在 Linux 与 Windows runner 上各跑一个跨进程加锁的冒烟测试。
-- [ ] 确认 Tauri 2 的 Linux 系统依赖（`webkit2gtk-4.1` 等）与最低支持发行版，写入 `docs/architecture.md`。
-- [ ] 【CI】建立 `crates/aliasmgr-tests` 空集成测试 crate，在 CI 上验证 `cargo test -p aliasmgr-tests` 能运行（确认集成测试不放在 workspace 根 `tests/`，否则不会被编译）。
-- [ ] 提交 `chore: initialize Rust workspace`。
+- [x] 确认 Tauri 2 的 Linux 系统依赖（`webkit2gtk-4.1` 等）与最低支持发行版，写入 `docs/architecture.md`。
+- [x] 【CI】建立 `crates/aliasmgr-tests` 空集成测试 crate，在 CI 上验证 `cargo test -p aliasmgr-tests` 能运行（确认集成测试不放在 workspace 根 `tests/`，否则不会被编译）。
+- [x] 提交 `chore: initialize Rust workspace`。
 
 ### Task 1.1：打通 GitHub Actions 验证闭环（M0 的实际门槛）
 
@@ -1284,12 +1284,12 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - Modify: `crates/aliasmgr-core/src/lib.rs`
 - Test: `crates/aliasmgr-core/src/model.rs` 内单元测试
 
-- [ ] 先写 `AliasRecord` 默认值、JSON 往返、枚举未知值拒绝的失败测试。
-- [ ] 实现 `AliasRecord`、`TargetType`、`ShellKind`、`Conflict`、`ShellConfig`、`SyncReceipt`（含 per-shell 结果）、`ShellState`、`ManagedNameSet`（当前托管名 + tombstone）、`PathMode`、`PathOrigin`、`record_checksum` 和 `revision` 字段。
-- [ ] 不实现 `sort_index`（已从设计中移除，排序由查询期字段决定）。
-- [ ] 使用 Serde 明确 JSON 字段名，时间统一 RFC3339，UUID 使用字符串。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core model`，预期全部通过。
-- [ ] 提交 `feat: add alias domain model`。
+- [x] 先写 `AliasRecord` 默认值、JSON 往返、枚举未知值拒绝的失败测试。
+- [x] 实现 `AliasRecord`、`TargetType`、`ShellKind`、`Conflict`、`ShellConfig`、`SyncReceipt`（含 per-shell 结果）、`ShellState`、`ManagedNameSet`（当前托管名 + tombstone）、`PathMode`、`PathOrigin`、`record_checksum` 和 `revision` 字段。
+- [x] 不实现 `sort_index`（已从设计中移除，排序由查询期字段决定）。
+- [x] 使用 Serde 明确 JSON 字段名，时间统一 RFC3339，UUID 使用字符串。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core model`，预期全部通过。
+- [x] 提交 `feat: add alias domain model`。
 
 ### Task 3：实现名称校验和冲突数据结构
 
@@ -1297,15 +1297,15 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - Create: `crates/aliasmgr-core/src/validation.rs`
 - Test: `crates/aliasmgr-core/src/validation.rs`
 
-- [ ] 先写合法名称 `cm`、`copy-mv`、`build_cam`、`g1` 和非法名称 `my alias`、`a=b`、`hello;world`、`$cmd`、超长名称的参数化测试。
-- [ ] 实现 `validate_alias_name(name: &str)`，使用跨平台正则、非空检查和 64 字符上限。
-- [ ] 实现 `validate_alias(alias: &AliasRecord)`，校验 Shell 非空、目标程序非空。
-- [ ] 实现 `{{args}}` 占位符校验：最多一个、`pass_args = false` 时不允许出现、`{{{{args}}}}` 转义，违规返回 `InvalidArgTemplate`。
-- [ ] 实现高级模式拒绝：`advanced_shell_mode = true` 或 `target_type = RawShellCommand` 返回 `AdvancedModeUnsupported`（见 §0.3.1、§3.3）。
-- [ ] 实现 PowerShell 保留名称清单与 `NameReserved` 判定（`ReadOnly`/`Constant` 内置 alias）。
+- [x] 先写合法名称 `cm`、`copy-mv`、`build_cam`、`g1` 和非法名称 `my alias`、`a=b`、`hello;world`、`$cmd`、超长名称的参数化测试。
+- [x] 实现 `validate_alias_name(name: &str)`，使用跨平台正则、非空检查和 64 字符上限。
+- [x] 实现 `validate_alias(alias: &AliasRecord)`，校验 Shell 非空、目标程序非空。
+- [x] 实现 `{{args}}` 占位符校验：最多一个、`pass_args = false` 时不允许出现、`{{{{args}}}}` 转义，违规返回 `InvalidArgTemplate`。
+- [x] 实现高级模式拒绝：`advanced_shell_mode = true` 或 `target_type = RawShellCommand` 返回 `AdvancedModeUnsupported`（见 §0.3.1、§3.3）。
+- [x] 实现 PowerShell 保留名称清单与 `NameReserved` 判定（`ReadOnly`/`Constant` 内置 alias）。
 - [ ] 实现大小写折叠冲突检查入口（目标 Shell 含 PowerShell 时生效）。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core validation`，预期全部通过。
-- [ ] 提交 `feat: validate alias definitions`。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core validation`，预期全部通过。
+- [x] 提交 `feat: add alias validation`。
 
 ### Task 4：实现 SQLite 存储和迁移
 
@@ -1316,12 +1316,12 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - Modify: `crates/aliasmgr-core/src/lib.rs`
 - Test: `crates/aliasmgr-core/src/storage.rs`
 
-- [ ] 先写内存数据库测试：创建表、插入、按 ID 读取、按名称读取、更新、删除和事务回滚。
-- [ ] 实现迁移执行器：按 `NNNN_name.sql` 顺序在单事务内执行，维护 `PRAGMA user_version` 与 `schema_migrations(version, applied_at, checksum)`。
+- [x] 先写内存数据库测试：创建表、插入、按 ID 读取、按名称读取、更新、删除和事务回滚。
+- [x] 实现迁移执行器：按 `NNNN_name.sql` 顺序在单事务内执行，维护 `PRAGMA user_version` 与 `schema_migrations(version, applied_at, checksum)`。
 - [ ] 先写 `SchemaTooNew` 测试：`user_version` 大于程序已知最大编号时拒绝打开并不做任何写入。
 - [ ] 迁移前创建数据库文件备份到 `backups/db/`，迁移失败即恢复。
 - [ ] 设置连接 PRAGMA：`journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`、`synchronous = FULL`；检测到不可靠文件系统时降级为 `DELETE` 并发出 `UnreliableFilesystem`。
-- [ ] 实现 `Database::open(path)`、`migrate()`、`insert_alias()`、`get_alias()`、`list_aliases()`、`update_alias()`、`delete_alias()`。
+- [x] 实现 `Database::open(path)`、`migrate()`、`insert_alias()`、`get_alias()`、`list_aliases()`、`update_alias()`、`delete_alias()`。
 - [ ] 实现 `shell_state`、`retired_names`、`overridden_definitions` 的读写：`upsert_shell_state()`、`retire_name()`、`managed_name_set(shell)`、`prune_retired_names()`、`record_override()`。
 - [ ] 维护 `name_folded` 列，并实现大小写折叠冲突查询（面向 PowerShell 的记录）。
 - [ ] 所有 JSON 字段通过 Serde 编解码，布尔值使用 SQLite integer 映射，时间使用 RFC3339。
@@ -1355,12 +1355,12 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 先写解析优先级测试：`--config-dir` > `ALIASMGR_CONFIG_DIR` > 平台默认（XDG / LOCALAPPDATA）。
 - [x] 实现 `AppPaths::discover()`、`ensure_directories()` 和 `generated_path(shell)`（PowerShell 5.1 与 7 返回不同文件名）。
 - [x] 实现 `config.toml` 的加载与默认值，覆盖 §2.4 的备份/日志/tombstone 保留策略。
-- [ ] 实现 Shell 配置路径覆盖项（`shells.<shell>.profile_path` / `rc_path`），供解析失败时的用户指定与 CI 临时 Profile 注入使用（§4.2、§11.7）。
+- [x] 实现 Shell 配置路径覆盖项（`shells.<shell>.profile_path` / `rc_path`），供解析失败时的用户指定与 CI 临时 Profile 注入使用（§4.2、§11.7）。
 - [ ] 实现备份与日志轮转（按份数与 `max_total_bytes`），保证不删除本次操作刚创建的备份。
 - [ ] 实现全局可写目录检测，为 §5.4 的 `UnsafeTargetLocation` 提供判定函数（Linux other-writable 位、Windows ACL）。
-- [ ] 实现跨平台全局锁：默认 10 秒超时返回 `LockTimeout`，锁文件记录 PID 与启动时间，仅在持有进程确认不存在时接管，不删除其他活跃进程的锁文件。
-- [ ] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core config` 与 `cargo test -p aliasmgr-core lock`（不要在一条命令里传两个过滤参数）。
-- [ ] 提交 `feat: add platform paths and config lock`。
+- [x] 实现跨平台全局锁：默认 10 秒超时返回 `LockTimeout`，锁文件记录 PID 与启动时间，仅在持有进程确认不存在时接管，不删除其他活跃进程的锁文件。
+- [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core config` 与 `cargo test -p aliasmgr-core lock`（不要在一条命令里传两个过滤参数）。
+- [x] 提交 `feat: add platform paths and config lock`。
 
 ---
 

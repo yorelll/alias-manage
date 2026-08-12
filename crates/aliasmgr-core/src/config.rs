@@ -30,8 +30,12 @@ pub struct ShellPathOverrides {
     pub powershell7_profile_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retired_names: RetiredNameConfig, pub shells: ShellPathOverrides }
+
+impl Default for AppConfig {
+    fn default() -> Self { Self { backups: BackupConfig::default(), logs: LogConfig::default(), retired_names: RetiredNameConfig::default(), shells: ShellPathOverrides::default() } }
+}
 
 #[derive(Debug, Clone)]
 pub struct AppPaths { pub root: PathBuf }
