@@ -42,7 +42,8 @@ mod tests {
     fn lock_writes_owner_and_second_lock_times_out() {
         let path = std::env::temp_dir().join(format!("aliasmgr-lock-{}.lock", std::process::id()));
         let first = FileLock::acquire(&path, Duration::from_millis(100)).unwrap();
-        let content = fs::read_to_string(&path).unwrap();
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut &first.file, &mut content).unwrap();
         assert!(content.contains("pid="));
         assert!(matches!(FileLock::acquire(&path, Duration::from_millis(25)), Err(AliasError::LockTimeout)));
         drop(first);
