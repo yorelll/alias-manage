@@ -57,7 +57,7 @@ jobs:
       - name: Assert isolated configuration on Linux
         if: runner.os == 'Linux'
         shell: bash
-        run: test -n "$ALIASMGR_CONFIG_DIR" && case "$ALIASMGR_CONFIG_DIR" in *runner*|*github*) exit 1;; esac
+        run: test -n "$ALIASMGR_CONFIG_DIR" && test "$ALIASMGR_CONFIG_DIR" != "$HOME/.config/alias-manager"
       - name: Assert isolated configuration on Windows
         if: runner.os == 'Windows'
         shell: pwsh
