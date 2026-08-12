@@ -1267,14 +1267,14 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 
 由于本项目所有跨平台验证都依赖 CI（§11），`ci.yml` 必须在写业务代码之前跑通，否则后续每个任务都没有验证手段。
 
-- [ ] 【本地】提示用户执行 `! "D:/Program Files/GitHub CLI/gh.exe" auth login`（当前状态为未登录）；**AI 不得代为输入凭据**（§11.2）。
-- [ ] 【本地】说明用途并取得用户同意后，创建/关联远端仓库并确认 Actions 已启用；不擅自修改仓库设置。
-- [ ] 【本地】创建 feature 分支，不直接在 `main` 上开发。
-- [ ] 编写 `ci.yml` 骨架：`lint`（`ubuntu-24.04`，`cargo fmt --check` + `clippy`）、`test-linux`（`ubuntu-24.04`）、`test-windows`（`windows-latest`）三个 job；固定 runner 版本与 action 版本；配置 `concurrency` + `cancel-in-progress`、`fail-fast: false`、`timeout-minutes`、`paths-ignore`、`workflow_dispatch`、Rust 与 npm 缓存。
-- [ ] Windows job 中分别用 `shell: powershell`（5.1）与 `shell: pwsh`（7）打印版本号，确认双版本可区分调用（§11.5）。
-- [ ] 【本地】推送并用 `gh run watch --exit-status` 确认首次运行绿灯；失败时用 `gh run view <id> --log-failed` 定位，遵守 §11.3 的迭代规则（同一根因 3 次未解决即停下汇报）。**这一步是本项目唯一的验证手段跑通的标志**：在它绿灯之前，任何 Rust 代码都无法被验证。
-- [ ] 在 `docs/ci-workflow.md` 中记录：workflow 职责划分、runner 版本锁定理由、常用 `gh` 命令、迭代规则与授权边界。
-- [ ] 提交 `ci: bootstrap github actions verification loop`。
+- [x] 【本地】提示用户执行 `! "D:/Program Files/GitHub CLI/gh.exe" auth login`（当前状态为未登录）；**AI 不得代为输入凭据**（§11.2）。
+- [x] 【本地】说明用途并取得用户同意后，创建/关联远端仓库并确认 Actions 已启用；不擅自修改仓库设置。
+- [x] 【本地】创建 feature 分支，不直接在 `main` 上开发。
+- [x] 编写 `ci.yml` 骨架：`lint`（`ubuntu-24.04`，`cargo fmt --check` + `clippy`）、`test-linux`（`ubuntu-24.04`）、`test-windows`（`windows-latest`）三个 job；固定 runner 版本与 action 版本；配置 `concurrency` + `cancel-in-progress`、`timeout-minutes`、`paths-ignore`、`workflow_dispatch`、Rust 与 npm 缓存。
+- [x] Windows job 中分别用 `shell: powershell`（5.1）与 `shell: pwsh`（7）打印版本号，确认双版本可区分调用（§11.5）。
+- [x] 【本地】推送并用 `gh run watch --exit-status` 确认首次运行绿灯；失败时用 `gh run view <id> --log-failed` 定位，遵守 §11.3 的迭代规则（同一根因 3 次未解决即停下汇报）。**这一步是本项目唯一的验证手段跑通的标志**：在它绿灯之前，任何 Rust 代码都无法被验证。
+- [x] 在 `docs/ci-workflow.md` 中记录：workflow 职责划分、runner 版本锁定理由、常用 `gh` 命令、迭代规则与授权边界。
+- [x] 提交 `ci: bootstrap github actions verification loop`。
 
 ### Task 2：实现模型、错误和序列化
 

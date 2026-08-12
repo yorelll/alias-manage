@@ -4,11 +4,61 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**"]
+    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**", ".github/workflows/integration.yml"]
+
+concurrency:
+  group: integration-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   integration:
-    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            shell: bash
+            test: bash
+          - os: ubuntu-24.04
+            shell: bash
+            test: lock_process
+          - os: windows-latest
+            shell: pwsh
+            test: lock_process
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test -p aliasmgr-tests
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate Linux configuration
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/aliasmgr-config"
+          echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
+      - name: Isolate Windows configuration
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'aliasmgr-config'
+          New-Item -ItemType Directory -Force -Path $config | Out-Null
+          "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
+      - name: Run smoke integration test
+        if: matrix.test == 'bash'
+        run: cargo test -p aliasmgr-tests --test smoke
+      - name: Run process lock test
+        if: matrix.test == 'lock_process'
+        run: cargo test -p aliasmgr-tests --test lock_process
+      - name: Run core tests
+        run: cargo test -p aliasmgr-core
+      - name: Assert isolated configuration on Linux
+        if: runner.os == 'Linux'
+        shell: bash
+        run: test -n "$ALIASMGR_CONFIG_DIR" && case "$ALIASMGR_CONFIG_DIR" in *runner*|*github*) exit 1;; esac
+      - name: Assert isolated configuration on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: if (-not $env:ALIASMGR_CONFIG_DIR) { exit 1 }

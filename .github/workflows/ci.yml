@@ -20,6 +20,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
       - run: cargo fmt --all
       - run: cargo fmt --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -29,6 +32,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate test configuration
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/aliasmgr-home" "$RUNNER_TEMP/aliasmgr-config"
+          echo "HOME=$RUNNER_TEMP/aliasmgr-home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/aliasmgr-config" >> "$GITHUB_ENV"
+          echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
       - run: cargo test --workspace
   test-windows:
     runs-on: windows-latest
@@ -36,6 +49,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate Windows test configuration
+        shell: pwsh
+        run: |
+          $home = Join-Path $env:RUNNER_TEMP 'aliasmgr-home'
+          $config = Join-Path $env:RUNNER_TEMP 'aliasmgr-config'
+          New-Item -ItemType Directory -Force -Path $home, $config | Out-Null
+          "USERPROFILE=$home" >> $env:GITHUB_ENV
+          "LOCALAPPDATA=$config" >> $env:GITHUB_ENV
+          "APPDATA=$config" >> $env:GITHUB_ENV
+          "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
       - name: PowerShell 5.1 version
         shell: powershell
         run: $PSVersionTable.PSVersion.ToString()
