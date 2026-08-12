@@ -93,7 +93,7 @@
 
 **Files:** `.github/workflows/ci.yml`, `docs/ci-workflow.md`, `README.md`
 
-- [ ] **Step 1: Update CI to use fixed action versions, `ubuntu-24.04`, `windows-latest`, concurrency cancellation, timeout limits, and separate PowerShell 5.1/7 version-print steps.**
+- [x] **Step 1: Update CI to use fixed action versions, `ubuntu-24.04`, `windows-latest`, concurrency cancellation, timeout limits, and separate PowerShell 5.1/7 version-print steps.**
 - [ ] **Step 2: Ensure Linux runs `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, and `cargo test --workspace`; Windows runs `cargo test --workspace`.**
 - [ ] **Step 3: Add CI documentation describing that local Cargo is prohibited by the project plan, that tests use isolated temporary directories, and that remote checks use the absolute GitHub CLI path.**
 - [ ] **Step 4: Confirm the remote repository target with `git remote -v`; do not rewrite remotes or change repository settings without user authorization.**
