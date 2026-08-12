@@ -1,0 +1,11 @@
+target/
+.DS_Store
+*.db
+*.db-wal
+*.db-shm
+.env
+node_modules/
+dist/
+.vscode/
+.idea/
+.worktrees/

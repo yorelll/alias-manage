@@ -1,0 +1,8 @@
+[package]
+name = "aliasmgr-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dev-dependencies]
+aliasmgr-core = { path = "../aliasmgr-core" }
