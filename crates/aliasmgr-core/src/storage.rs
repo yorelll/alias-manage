@@ -96,8 +96,8 @@ mod tests {
     #[test]
     fn crud_and_ordering_work_in_memory() {
         let database = Database::open_in_memory().unwrap();
-        let mut first = AliasRecord::default(); first.name = "zeta".into(); first.executable = "tool".into();
-        let mut second = AliasRecord::default(); second.name = "alpha".into(); second.executable = "tool".into();
+        let mut first = AliasRecord { name: "zeta".into(), executable: "tool".into(), ..Default::default() };
+        let second = AliasRecord { name: "alpha".into(), executable: "tool".into(), ..Default::default() };
         database.insert_alias(&first).unwrap(); database.insert_alias(&second).unwrap();
         assert_eq!(database.get_alias(first.id).unwrap().unwrap(), first);
         assert_eq!(database.get_alias_by_name("alpha").unwrap().unwrap(), second);
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn duplicate_names_are_conflicts() {
         let database = Database::open_in_memory().unwrap();
-        let mut first = AliasRecord::default(); first.name = "same".into(); first.executable = "tool".into();
+        let first = AliasRecord { name: "same".into(), executable: "tool".into(), ..Default::default() };
         let second = first.clone(); database.insert_alias(&first).unwrap();
         assert!(matches!(database.insert_alias(&second), Err(AliasError::AliasConflict(_))));
     }

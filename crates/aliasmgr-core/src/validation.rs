@@ -51,10 +51,7 @@ mod tests {
     use super::*;
 
     fn alias(name: &str) -> AliasRecord {
-        let mut value = AliasRecord::default();
-        value.name = name.into();
-        value.executable = "tool".into();
-        value
+        AliasRecord { name: name.into(), executable: "tool".into(), ..Default::default() }
     }
 
     #[test]
