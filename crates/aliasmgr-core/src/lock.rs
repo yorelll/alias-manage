@@ -1,6 +1,6 @@
 use crate::error::AliasError;
 use fs4::fs_std::FileExt;
-use std::{fs::{self, File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, thread, time::{Duration, Instant}};
+use std::{fs::{self, File, OpenOptions}, path::{Path, PathBuf}, thread, time::{Duration, Instant}};
 
 pub struct FileLock { file: File, path: PathBuf }
 
@@ -8,7 +8,7 @@ impl FileLock {
     pub fn acquire(path: impl AsRef<Path>, timeout: Duration) -> Result<Self, AliasError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-        let file = OpenOptions::new().create(true).read(true).write(true).open(&path)?;
+        let file = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&path)?;
         let started = Instant::now();
         loop {
             match file.try_lock_exclusive() {
@@ -45,8 +45,8 @@ mod tests {
         let first = FileLock::acquire(&path, Duration::from_millis(100)).unwrap();
         let mut content = String::new();
         let mut file = first.file.try_clone().unwrap();
-        file.seek(SeekFrom::Start(0)).unwrap();
-        file.read_to_string(&mut content).unwrap();
+        std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0)).unwrap();
+        std::io::Read::read_to_string(&mut file, &mut content).unwrap();
         assert!(content.contains("pid="));
         assert!(matches!(FileLock::acquire(&path, Duration::from_millis(25)), Err(AliasError::LockTimeout)));
         drop(first);

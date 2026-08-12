@@ -30,12 +30,8 @@ pub struct ShellPathOverrides {
     pub powershell7_profile_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retired_names: RetiredNameConfig, pub shells: ShellPathOverrides }
-
-impl Default for AppConfig {
-    fn default() -> Self { Self { backups: BackupConfig::default(), logs: LogConfig::default(), retired_names: RetiredNameConfig::default(), shells: ShellPathOverrides::default() } }
-}
 
 #[derive(Debug, Clone)]
 pub struct AppPaths { pub root: PathBuf }
@@ -113,6 +109,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[test]
     fn powershell_versions_have_separate_generated_files() {
         let paths = AppPaths { root: PathBuf::from("config") };
         assert_ne!(paths.generated_path("powershell5"), paths.generated_path("powershell7"));
