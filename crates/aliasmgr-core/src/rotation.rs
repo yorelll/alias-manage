@@ -4,7 +4,7 @@ use std::{fs, path::{Path, PathBuf}};
 pub fn prune_oldest(directory: &Path, keep: usize, protected: &[PathBuf]) -> Result<(), AliasError> {
     let mut files: Vec<_> = fs::read_dir(directory)?.filter_map(Result::ok).filter(|entry| entry.path().is_file() && !protected.contains(&entry.path())).collect();
     files.sort_by_key(|entry| entry.metadata().and_then(|metadata| metadata.modified()).ok());
-    while files.len() > keep { if let Some(entry) = files.remove(0) { fs::remove_file(entry.path())?; } }
+    while files.len() > keep { let entry = files.remove(0); fs::remove_file(entry.path())?; }
     Ok(())
 }
 
