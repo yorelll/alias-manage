@@ -4,5 +4,8 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[dependencies]
+aliasmgr-core = { path = "../aliasmgr-core" }
+
 [dev-dependencies]
 aliasmgr-core = { path = "../aliasmgr-core" }
