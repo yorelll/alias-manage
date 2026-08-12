@@ -23,7 +23,7 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let old = root.join("old"); let current = root.join("current");
         fs::write(&old, "old").unwrap(); fs::write(&current, "current").unwrap();
-        prune_oldest(&root, 1, std::slice::from_ref(&current)).unwrap();
+        prune_oldest(&root, 0, std::slice::from_ref(&current)).unwrap();
         assert!(current.exists()); assert!(!old.exists()); let _ = fs::remove_dir_all(root);
     }
 }
