@@ -1352,9 +1352,9 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - Modify: `crates/aliasmgr-core/src/lib.rs`
 - Test: `crates/aliasmgr-core/src/config.rs`
 
-- [ ] 先写解析优先级测试：`--config-dir` > `ALIASMGR_CONFIG_DIR` > 平台默认（XDG / LOCALAPPDATA）。
-- [ ] 实现 `AppPaths::discover()`、`ensure_directories()` 和 `generated_path(shell)`（PowerShell 5.1 与 7 返回不同文件名）。
-- [ ] 实现 `config.toml` 的加载与默认值，覆盖 §2.4 的备份/日志/tombstone 保留策略。
+- [x] 先写解析优先级测试：`--config-dir` > `ALIASMGR_CONFIG_DIR` > 平台默认（XDG / LOCALAPPDATA）。
+- [x] 实现 `AppPaths::discover()`、`ensure_directories()` 和 `generated_path(shell)`（PowerShell 5.1 与 7 返回不同文件名）。
+- [x] 实现 `config.toml` 的加载与默认值，覆盖 §2.4 的备份/日志/tombstone 保留策略。
 - [ ] 实现 Shell 配置路径覆盖项（`shells.<shell>.profile_path` / `rc_path`），供解析失败时的用户指定与 CI 临时 Profile 注入使用（§4.2、§11.7）。
 - [ ] 实现备份与日志轮转（按份数与 `max_total_bytes`），保证不删除本次操作刚创建的备份。
 - [ ] 实现全局可写目录检测，为 §5.4 的 `UnsafeTargetLocation` 提供判定函数（Linux other-writable 位、Windows ACL）。

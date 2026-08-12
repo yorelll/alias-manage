@@ -16,6 +16,14 @@ pub enum AliasError {
     TargetMissing(String),
     #[error("database schema is newer than this program")]
     SchemaTooNew,
+    #[error("lock acquisition timed out")]
+    LockTimeout,
+    #[error("permission denied")]
+    PermissionDenied,
+    #[error("unsafe path")]
+    UnsafePath,
+    #[error("configuration error: {0}")]
+    Config(String),
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("serialization error: {0}")]

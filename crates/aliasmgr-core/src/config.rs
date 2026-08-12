@@ -1,4 +1,37 @@
+use crate::error::AliasError;
+use serde::{Deserialize, Serialize};
 use std::{env, fs, path::{Path, PathBuf}};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupConfig {
+    pub rc_keep: usize,
+    pub generated_keep: usize,
+    pub db_keep: usize,
+    pub max_total_bytes: u64,
+}
+
+impl Default for BackupConfig {
+    fn default() -> Self { Self { rc_keep: 10, generated_keep: 10, db_keep: 5, max_total_bytes: 64 * 1024 * 1024 } }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogConfig { pub max_file_bytes: u64, pub keep_files: usize }
+impl Default for LogConfig { fn default() -> Self { Self { max_file_bytes: 8 * 1024 * 1024, keep_files: 7 } } }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RetiredNameConfig { pub keep_revisions: i64 }
+impl Default for RetiredNameConfig { fn default() -> Self { Self { keep_revisions: 20 } } }
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ShellPathOverrides {
+    pub bash_rc_path: Option<PathBuf>,
+    pub zsh_rc_path: Option<PathBuf>,
+    pub powershell5_profile_path: Option<PathBuf>,
+    pub powershell7_profile_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retired_names: RetiredNameConfig, pub shells: ShellPathOverrides }
 
 #[derive(Debug, Clone)]
 pub struct AppPaths { pub root: PathBuf }
@@ -24,6 +57,22 @@ impl AppPaths {
     pub fn generated_path(&self, shell: &str) -> PathBuf {
         let extension = if shell.starts_with("powershell") { "ps1" } else { "sh" };
         self.root.join("generated").join(format!("{shell}.{extension}"))
+    }
+
+    pub fn config_file(&self) -> PathBuf { self.root.join("config.toml") }
+
+    pub fn load_config(&self) -> Result<AppConfig, AliasError> {
+        if !self.config_file().exists() { return Ok(AppConfig::default()); }
+        let content = fs::read_to_string(self.config_file())?;
+        toml::from_str(&content).map_err(|error| AliasError::Config(error.to_string()))
+    }
+}
+
+impl AppConfig {
+    pub fn save(&self, paths: &AppPaths) -> Result<(), AliasError> {
+        paths.ensure_directories()?;
+        fs::write(paths.config_file(), toml::to_string_pretty(self).map_err(|error| AliasError::Config(error.to_string()))?)?;
+        Ok(())
     }
 }
 
@@ -51,6 +100,15 @@ mod tests {
     }
 
     #[test]
+    fn defaults_load_and_round_trip_through_toml() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-config-{}", std::process::id()));
+        let paths = AppPaths { root: root.clone() };
+        let config = AppConfig::default();
+        config.save(&paths).unwrap();
+        assert_eq!(paths.load_config().unwrap().backups.rc_keep, 10);
+        let _ = fs::remove_dir_all(root);
+    }
+
     fn powershell_versions_have_separate_generated_files() {
         let paths = AppPaths { root: PathBuf::from("config") };
         assert_ne!(paths.generated_path("powershell5"), paths.generated_path("powershell7"));
