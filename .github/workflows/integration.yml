@@ -1,0 +1,14 @@
+name: Integration
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**"]
+jobs:
+  integration:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test -p aliasmgr-tests

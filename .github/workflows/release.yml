@@ -1,0 +1,12 @@
+name: Release
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  source-check:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --workspace
