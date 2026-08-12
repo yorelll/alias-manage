@@ -1,11 +1,7 @@
 pub mod error;
 pub mod model;
 pub mod validation;
-pub mod executor;
-pub mod shell;
 pub mod storage;
-pub mod search;
-pub mod config;
 pub mod migrations;
 
 pub fn version() -> &'static str {
