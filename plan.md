@@ -1254,7 +1254,7 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test --workspace`，预期输出 `test result: ok`。
 - [x] 配置依赖版本和 workspace lint，保证 CLI 依赖 core 而非反向依赖。
 - [x] 【CI】明确依赖 features：`rusqlite = { version = "*", features = ["bundled"] }`，并在 Windows runner 上验证无需系统 SQLite 即可构建。
-- [ ] 【CI】选定并验证文件锁库（`fs4` 优先），在 Linux 与 Windows runner 上各跑一个跨进程加锁的冒烟测试。
+- [x] 【CI】选定并验证文件锁库（`fs4` 优先），在 Linux 与 Windows runner 上各跑一个跨进程加锁的冒烟测试。
 - [x] 确认 Tauri 2 的 Linux 系统依赖（`webkit2gtk-4.1` 等）与最低支持发行版，写入 `docs/architecture.md`。
 - [x] 【CI】建立 `crates/aliasmgr-tests` 空集成测试 crate，在 CI 上验证 `cargo test -p aliasmgr-tests` 能运行（确认集成测试不放在 workspace 根 `tests/`，否则不会被编译）。
 - [x] 提交 `chore: initialize Rust workspace`。
