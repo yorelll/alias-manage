@@ -151,7 +151,7 @@ mod tests {
         let mut first = AliasRecord { name: "Build".into(), executable: "tool".into(), shells: vec![crate::model::ShellKind::PowerShell7], ..Default::default() };
         database.insert_alias(&first).unwrap();
         assert!(database.has_powershell_case_conflict("build", None).unwrap());
-        assert!(database.has_powershell_case_conflict("build", Some(first.id)).unwrap() == false);
+        assert!(!database.has_powershell_case_conflict("build", Some(first.id)).unwrap());
         first.name = "other".into();
     }
 
