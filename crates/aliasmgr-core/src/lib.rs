@@ -1,8 +1,8 @@
 pub mod error;
-pub mod model;
-pub mod validation;
-pub mod storage;
 pub mod migrations;
+pub mod model;
+pub mod storage;
+pub mod validation;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
