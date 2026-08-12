@@ -1,5 +1,6 @@
 use aliasmgr_core::{error::AliasError, lock::FileLock};
-use std::{path::PathBuf, process::Command, time::Duration};
+use std::process::Command;
+use std::time::Duration;
 
 #[test]
 fn independent_process_holds_lock() {
@@ -10,5 +11,5 @@ fn independent_process_holds_lock() {
     assert!(matches!(FileLock::acquire(&path, Duration::from_millis(100)), Err(AliasError::LockTimeout)));
     child.kill().unwrap();
     let _ = child.wait();
-    let _ = std::fs::remove_file(PathBuf::from(path));
+    let _ = std::fs::remove_file(path);
 }
