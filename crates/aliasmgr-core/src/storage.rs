@@ -8,9 +8,21 @@ pub struct Database { pub conn: Connection }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, AliasError> {
+        let path = path.as_ref();
+        let backup = if path.exists() {
+            let directory = path.parent().unwrap_or_else(|| Path::new(".")).join("backups/db");
+            std::fs::create_dir_all(&directory)?;
+            let backup = directory.join(format!("aliases-{}.db", chrono::Utc::now().format("%Y%m%d%H%M%S")));
+            std::fs::copy(path, &backup)?;
+            Some(backup)
+        } else { None };
         let conn = Connection::open(path)?;
         Self::configure(&conn)?;
-        migrations::migrate(&conn)?;
+        if let Err(error) = migrations::migrate(&conn) {
+            drop(conn);
+            if let Some(backup) = backup { std::fs::copy(backup, path)?; }
+            return Err(error);
+        }
         Ok(Self { conn })
     }
 
@@ -22,7 +34,7 @@ impl Database {
     }
 
     fn configure(conn: &Connection) -> Result<(), AliasError> {
-        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL;")?;
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL; PRAGMA journal_mode = WAL;")?;
         Ok(())
     }
 
@@ -37,6 +49,31 @@ impl Database {
 
     pub fn get_alias(&self, id: Uuid) -> Result<Option<AliasRecord>, AliasError> { self.fetch("id", &id.to_string()) }
     pub fn get_alias_by_name(&self, name: &str) -> Result<Option<AliasRecord>, AliasError> { self.fetch("name", name) }
+
+    pub fn has_powershell_case_conflict(&self, name: &str, excluding: Option<Uuid>) -> Result<bool, AliasError> {
+        let folded = name.to_lowercase();
+        let mut statement = self.conn.prepare("SELECT id, shells_json FROM aliases WHERE name_folded = ?1")?;
+        let rows = statement.query_map(params![folded], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+        for row in rows {
+            let (id, shells): (String, String) = row?;
+            if excluding == Uuid::parse_str(&id).ok() { continue; }
+            let shells: Vec<crate::model::ShellKind> = serde_json::from_str(&shells)?;
+            if shells.iter().any(|shell| matches!(shell, crate::model::ShellKind::PowerShell5 | crate::model::ShellKind::PowerShell7)) { return Ok(true); }
+        }
+        Ok(false)
+    }
+
+    pub fn schema_version(&self) -> Result<i64, AliasError> { Ok(self.conn.query_row("PRAGMA user_version", [], |row| row.get(0))?) }
+
+    pub fn upsert_shell_state(&self, state: &crate::model::ShellState) -> Result<(), AliasError> {
+        self.conn.execute("INSERT INTO shell_state(shell, applied_revision, file_checksum, loader_installed, status, last_error) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(shell) DO UPDATE SET applied_revision=excluded.applied_revision,file_checksum=excluded.file_checksum,loader_installed=excluded.loader_installed,status=excluded.status,last_error=excluded.last_error", params![serde_json::to_string(&state.shell)?, state.applied_revision, state.file_checksum, state.loader_installed, serde_json::to_string(&state.status)?, state.last_error])?;
+        Ok(())
+    }
+
+    pub fn retire_name(&self, name: &str, shell: &crate::model::ShellKind, revision: i64) -> Result<(), AliasError> {
+        self.conn.execute("INSERT INTO retired_names(name, shell, definition_kind, retired_at_revision, retired_at) VALUES (?1,?2,'function',?3,datetime('now'))", params![name, serde_json::to_string(shell)?, revision])?;
+        Ok(())
+    }
 
     fn fetch(&self, field: &str, value: &str) -> Result<Option<AliasRecord>, AliasError> {
         let sql = format!("SELECT id,name,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision FROM aliases WHERE {field} = ?1");
@@ -106,6 +143,16 @@ mod tests {
         assert_eq!(database.get_alias(first.id).unwrap().unwrap().description, "updated");
         assert!(database.delete_alias(second.id).unwrap());
         assert!(database.get_alias(second.id).unwrap().is_none());
+    }
+
+    #[test]
+    fn powershell_case_conflicts_are_detected() {
+        let database = Database::open_in_memory().unwrap();
+        let mut first = AliasRecord { name: "Build".into(), executable: "tool".into(), shells: vec![crate::model::ShellKind::PowerShell7], ..Default::default() };
+        database.insert_alias(&first).unwrap();
+        assert!(database.has_powershell_case_conflict("build", None).unwrap());
+        assert!(database.has_powershell_case_conflict("build", Some(first.id)).unwrap() == false);
+        first.name = "other".into();
     }
 
     #[test]

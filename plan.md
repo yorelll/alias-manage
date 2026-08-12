@@ -1303,7 +1303,7 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 实现 `{{args}}` 占位符校验：最多一个、`pass_args = false` 时不允许出现、`{{{{args}}}}` 转义，违规返回 `InvalidArgTemplate`。
 - [x] 实现高级模式拒绝：`advanced_shell_mode = true` 或 `target_type = RawShellCommand` 返回 `AdvancedModeUnsupported`（见 §0.3.1、§3.3）。
 - [x] 实现 PowerShell 保留名称清单与 `NameReserved` 判定（`ReadOnly`/`Constant` 内置 alias）。
-- [ ] 实现大小写折叠冲突检查入口（目标 Shell 含 PowerShell 时生效）。
+- [x] 实现大小写折叠冲突检查入口（目标 Shell 含 PowerShell 时生效）。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core validation`，预期全部通过。
 - [x] 提交 `feat: add alias validation`。
 

@@ -14,11 +14,21 @@ pub fn migrate(connection: &Connection) -> Result<(), AliasError> {
     let checksum = format!("{:x}", digest.finalize());
     let transaction = connection.unchecked_transaction()?;
     transaction.execute_batch(INITIAL)?;
-    transaction.execute(
-        "INSERT INTO schema_migrations(version, applied_at, checksum) VALUES (?1, datetime('now'), ?2)",
-        rusqlite::params![CURRENT_VERSION, checksum],
-    )?;
+    transaction.execute("INSERT INTO schema_migrations(version, applied_at, checksum) VALUES (?1, datetime('now'), ?2)", rusqlite::params![CURRENT_VERSION, checksum])?;
     transaction.execute_batch(&format!("PRAGMA user_version = {CURRENT_VERSION}"))?;
     transaction.commit()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_schema_is_rejected_without_creating_tables() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch("PRAGMA user_version = 999").unwrap();
+        assert!(matches!(migrate(&connection), Err(AliasError::SchemaTooNew)));
+        assert!(connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='aliases'", [], |row| row.get::<_, i64>(0)).unwrap() == 0);
+    }
 }

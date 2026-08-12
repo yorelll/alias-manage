@@ -3,7 +3,6 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TEXT NOT NULL,
     checksum TEXT NOT NULL
 );
-
 CREATE TABLE IF NOT EXISTS aliases (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL COLLATE BINARY,
@@ -26,6 +25,21 @@ CREATE TABLE IF NOT EXISTS aliases (
     record_checksum TEXT NOT NULL DEFAULT '',
     revision INTEGER NOT NULL DEFAULT 1
 );
-
 CREATE UNIQUE INDEX IF NOT EXISTS aliases_name_unique ON aliases(name COLLATE BINARY);
 CREATE INDEX IF NOT EXISTS aliases_name_folded_idx ON aliases(name_folded);
+CREATE TABLE IF NOT EXISTS shell_state (
+    shell TEXT PRIMARY KEY NOT NULL,
+    applied_revision INTEGER NOT NULL DEFAULT 0,
+    file_checksum TEXT NOT NULL DEFAULT '',
+    loader_installed INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'unknown',
+    last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS retired_names (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    shell TEXT NOT NULL,
+    definition_kind TEXT NOT NULL,
+    retired_at_revision INTEGER NOT NULL,
+    retired_at TEXT NOT NULL
+);
