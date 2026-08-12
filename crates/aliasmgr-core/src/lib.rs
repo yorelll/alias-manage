@@ -1,5 +1,7 @@
 pub mod error;
 pub mod migrations;
+pub mod search;
+pub mod config;
 pub mod model;
 pub mod storage;
 pub mod validation;
