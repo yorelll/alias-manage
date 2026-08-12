@@ -48,7 +48,7 @@ jobs:
           "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
       - name: Run smoke integration test
         if: matrix.test == 'bash'
-        run: cargo test -p aliasmgr-tests --test smoke
+        run: cargo test -p aliasmgr-tests --test lock
       - name: Run process lock test
         if: matrix.test == 'lock_process'
         run: cargo test -p aliasmgr-tests --test lock_process
