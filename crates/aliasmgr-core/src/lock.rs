@@ -1,6 +1,6 @@
 use crate::error::AliasError;
 use fs4::fs_std::FileExt;
-use std::{fs::{self, File, OpenOptions}, path::{Path, PathBuf}, thread, time::{Duration, Instant}};
+use std::{fs::{self, File, OpenOptions}, io::{Read, Seek, SeekFrom}, path::{Path, PathBuf}, thread, time::{Duration, Instant}};
 
 pub struct FileLock { file: File, path: PathBuf }
 
@@ -16,6 +16,7 @@ impl FileLock {
                     file.set_len(0)?;
                     let owner = format!("pid={}\nstarted_at={}\n", std::process::id(), chrono::Utc::now().to_rfc3339());
                     std::io::Write::write_all(&mut &file, owner.as_bytes())?;
+                    file.sync_all()?;
                     return Ok(Self { file, path });
                 }
                 Ok(false) if started.elapsed() >= timeout => return Err(AliasError::LockTimeout),
@@ -43,7 +44,9 @@ mod tests {
         let path = std::env::temp_dir().join(format!("aliasmgr-lock-{}.lock", std::process::id()));
         let first = FileLock::acquire(&path, Duration::from_millis(100)).unwrap();
         let mut content = String::new();
-        std::io::Read::read_to_string(&mut &first.file, &mut content).unwrap();
+        let mut file = first.file.try_clone().unwrap();
+        file.seek(SeekFrom::Start(0)).unwrap();
+        file.read_to_string(&mut content).unwrap();
         assert!(content.contains("pid="));
         assert!(matches!(FileLock::acquire(&path, Duration::from_millis(25)), Err(AliasError::LockTimeout)));
         drop(first);
