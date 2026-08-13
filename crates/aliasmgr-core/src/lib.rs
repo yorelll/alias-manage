@@ -7,6 +7,7 @@ pub mod lock;
 pub mod rotation;
 pub mod shells;
 pub mod sync;
+pub mod detection;
 pub mod model;
 pub mod storage;
 pub mod validation;
