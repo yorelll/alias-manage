@@ -1448,17 +1448,17 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-core/src/shells/powershell.rs`
 - Test: `crates/aliasmgr-core/src/shells/common.rs`
 
-- [ ] 先写空配置创建、首次插入、重复插入、只删除标记块、缺失结束标记拒绝修改的测试。
-- [ ] 实现标记块解析器，要求开始和结束标记成对出现且最多一个完整块。
-- [ ] 加载块**始终追加到文件末尾**；检测到已有加载块不在末尾时返回可报告状态（供 `doctor` 提示“可能被后续配置覆盖”），提供显式的“移动到末尾”操作但不自动执行。
-- [ ] 加载块中写入已解析的绝对生成文件路径，变量名使用 `__aliasmgr_generated_file` / `__AliasMgrGeneratedFile`，Bash 用 `unset -v` 清理。
-- [ ] 写入前创建时间戳备份到 `backups/rc/`，按 §2.4 的保留策略清理。
+- [x] 先写空配置创建、首次插入、重复插入、只删除标记块、缺失结束标记拒绝修改的测试。
+- [x] 实现标记块解析器，要求开始和结束标记成对出现且最多一个完整块。
+- [x] 加载块**始终追加到文件末尾**；检测到已有加载块不在末尾时返回可报告状态（供 `doctor` 提示“可能被后续配置覆盖”），提供显式的“移动到末尾”操作但不自动执行。
+- [x] 加载块中写入已解析的绝对生成文件路径，变量名使用 `__aliasmgr_generated_file` / `__AliasMgrGeneratedFile`，Bash 用 `unset -v` 清理。
+- [x] 写入前创建时间戳备份到 `backups/rc/`，按 §2.4 的保留策略清理。
 - [ ] 对被手工修改的生成文件比较 `shell_state.file_checksum` 与磁盘内容 checksum，返回需要用户决策的状态。
 - [ ] 将“当前托管名 ∪ 未过期 tombstone”清单写入生成文件，并让清理逻辑在定义之前执行；验证删除/禁用/改名后 reload 不残留旧定义（这是 §5.1.1 的核心，必须有真实 Shell 回归测试）。
 - [ ] 实现定义指纹比对，避免误删用户在会话中自行重建的同名定义；跳过项进入跳过清单。
 - [ ] 强制覆盖已有 alias/function 时把原定义快照写入 `overridden_definitions`；无法解析时置 `recoverable = 0`，并在 CLI/GUI 中提示用户。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core loader`，预期全部通过。
-- [ ] 提交 `feat: manage shell loader blocks safely`。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core loader`，预期全部通过。
+- [x] 提交 `feat: manage shell loader blocks safely`。
 
 ### Task 11：实现原子同步、journal 和回滚
 
