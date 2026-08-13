@@ -21,7 +21,7 @@ impl Executor for StructuredExecutor {
     fn target_type(&self) -> TargetType { TargetType::NativeExecutable }
     fn validate(&self, alias: &AliasRecord) -> Result<(), AliasError> {
         if alias.executable.trim().is_empty() { return Err(AliasError::TargetMissing(alias.executable.clone())); }
-        if !Path::new(&alias.executable).exists() && alias.executable.contains(std::path::MAIN_SEPARATOR) { return Err(AliasError::TargetMissing(alias.executable.clone())); }
+        if !Path::new(&alias.executable).exists() && alias.executable.contains('/') || alias.executable.contains('\\') { return Err(AliasError::TargetMissing(alias.executable.clone())); }
         Ok(())
     }
     fn render_argv(&self, alias: &AliasRecord, args: &[String]) -> Result<CommandSpec, AliasError> {
