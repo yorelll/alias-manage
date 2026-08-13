@@ -54,6 +54,6 @@ mod tests {
     #[test]
     fn finds_simple_definition_source_with_line_number() {
         let path = std::env::temp_dir().join(format!("aliasmgr-detection-{}.rc", std::process::id())); fs::write(&path, "# comment\nalias gs='git status'\n").unwrap();
-        let found = find_definition_source(&[path.clone()], "gs").unwrap().unwrap(); assert_eq!(found.line, 2); let _ = fs::remove_file(path);
+        let found = find_definition_source(std::slice::from_ref(&path), "gs").unwrap().unwrap(); assert_eq!(found.line, 2); let _ = fs::remove_file(path);
     }
 }
