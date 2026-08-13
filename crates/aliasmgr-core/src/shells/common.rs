@@ -1,6 +1,9 @@
 use crate::error::AliasError;
 use crate::model::{AliasRecord, ManagedNameSet};
-use std::{path::Path, fs};
+use std::{fs, path::Path};
+
+pub const START_MARKER: &str = "# >>> Alias Manager >>>";
+pub const END_MARKER: &str = "# <<< Alias Manager <<<";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LoaderPosition { Missing, AtEnd, NotAtEnd }
@@ -13,7 +16,7 @@ pub fn loader_position(content: &str) -> Result<LoaderPosition, AliasError> {
     Ok(if content[end_index..].trim().is_empty() { LoaderPosition::AtEnd } else { LoaderPosition::NotAtEnd })
 }
 
-pub fn write_loader_file(path: &Path, content: &str, loader: &str) -> Result<(), AliasError> {
+pub fn write_loader_file(path: &Path, _content: &str, loader: &str) -> Result<(), AliasError> {
     if path.exists() { let backup_dir = path.parent().unwrap_or_else(|| Path::new(".")).join("backups/rc"); fs::create_dir_all(&backup_dir)?; let backup = backup_dir.join(format!("rc-{}.bak", chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default())); fs::copy(path, backup)?; }
     let original = if path.exists() { fs::read_to_string(path)? } else { String::new() };
     fs::write(path, install_loader(&original, loader)?)?;
@@ -41,9 +44,6 @@ mod tests {
 
 // keep filesystem support in the module boundary for future atomic replacement tests
 pub fn _filesystem_exists(path: &Path) -> bool { path.exists() }
-
-pub const START_MARKER: &str = "# >>> Alias Manager >>>";
-pub const END_MARKER: &str = "# <<< Alias Manager <<<";
 
 pub fn quote_posix(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
