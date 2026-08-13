@@ -4,6 +4,7 @@ pub mod search;
 pub mod config;
 pub mod lock;
 pub mod rotation;
+pub mod shells;
 pub mod model;
 pub mod storage;
 pub mod validation;

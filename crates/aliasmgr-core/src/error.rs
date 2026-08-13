@@ -24,6 +24,8 @@ pub enum AliasError {
     UnsafePath,
     #[error("configuration error: {0}")]
     Config(String),
+    #[error("shell is not installed")]
+    ShellNotInstalled,
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("serialization error: {0}")]
