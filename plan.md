@@ -1485,14 +1485,14 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-core/src/shell.rs`
 - Test: `crates/aliasmgr-core/src/detection.rs`
 
-- [ ] 先写显式 Shell 优先、父进程优先于 `$SHELL`、默认 Shell 回退和已安装 Shell 扫描测试。
-- [ ] 实现 Linux `/proc` 父链读取，并在不可用时安全回退，不把 `$SHELL` 当作当前 Shell 的绝对事实。
+- [x] 先写显式 Shell 优先、父进程优先于 `$SHELL`、默认 Shell 回退和已安装 Shell 扫描测试。
+- [x] 实现 Linux `/proc` 父链读取，并在不可用时安全回退，不把 `$SHELL` 当作当前 Shell 的绝对事实。
 - [ ] 实现 Windows `powershell.exe`/`pwsh.exe` 发现和版本区分（含 PS 7 的多版本并存）。
-- [ ] 实现 PATH 可执行文件冲突报告；Windows 必须按 `PATHEXT` 逐后缀查找，不只查 `.exe`。
-- [ ] 实现已知内置命令、Cmdlet、内置 alias 与保留名称（`ReadOnly`/`Constant`）的冲突报告，保留名称直接判定为 `NameReserved`。
-- [ ] 实现用户配置中同名定义的来源定位（文件 + 行号），用于 `doctor` 报告“插件在加载块之后重新定义”。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core detection`，预期全部通过。
-- [ ] 提交 `feat: detect shells and report conflicts`。
+- [x] 实现 PATH 可执行文件冲突报告；Windows 必须按 `PATHEXT` 逐后缀查找，不只查 `.exe`。
+- [x] 实现已知内置命令、Cmdlet、内置 alias 与保留名称（`ReadOnly`/`Constant`）的冲突报告，保留名称直接判定为 `NameReserved`。
+- [x] 实现用户配置中同名定义的来源定位（文件 + 行号），用于 `doctor` 报告“插件在加载块之后重新定义”。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core detection`，预期全部通过。
+- [x] 提交 `feat: detect shells and report conflicts`。
 
 ---
 
