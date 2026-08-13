@@ -1,5 +1,5 @@
 use crate::{error::AliasError, lock::FileLock, model::{AliasRecord, ShellKind, ShellStatus, ShellSyncResult, SyncReceipt}, shells::{bash, powershell, zsh}};
-use std::{fs, path::{Path, PathBuf}, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 pub struct SyncCoordinator { pub config_dir: PathBuf }
 
