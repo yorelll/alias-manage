@@ -1380,15 +1380,15 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-core/src/model.rs`
 - Test: `crates/aliasmgr-core/src/executor.rs`
 
-- [ ] 先写 native、Python、PowerShell、BAT/CMD、JAR、切换目录的参数数组测试。
-- [ ] 实现 `Executor` trait 和执行器选择函数。
-- [ ] 实现 `{{args}}` 占位符展开：无占位符时追加到末尾；有占位符时做元素级替换；只做数组元素替换，不做元素内字符串插值。
-- [ ] `TargetType::Batch` 使用**独立执行器与独立转义器**，不复用 native exe 逻辑；对参数中的 `%`、`!`、`&`、`|`、`^`、`<`、`>` 转义或拒绝（见 §3.5）。
-- [ ] 实现工作目录与环境变量的参数化表示（子 shell / `env` 前缀 / `Push-Location`），环境变量值不进入 `Debug` 输出与日志。
-- [ ] 确保固定参数和用户参数逻辑上保持数组边界，不实现整行命令拼接。
-- [ ] 对缺失目标提供显式 `TargetMissing`，由调用层决定阻止或允许保存。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core executor`，预期全部通过。
-- [ ] 提交 `feat: add structured command executors`。
+- [x] 先写 native、Python、PowerShell、BAT/CMD、JAR、切换目录的参数数组测试.
+- [x] 实现 `Executor` trait 和执行器选择函数。
+- [x] 实现 `{{args}}` 占位符展开：无占位符时追加到末尾；有占位符时做元素级替换；只做数组元素替换，不做元素内字符串插值。
+- [x] `TargetType::Batch` 使用**独立执行器与独立转义器**，不复用 native exe 逻辑；对参数中的 `%`、`!`、`&`、`|`、`^`、`<`、`>` 转义或拒绝（见 §3.5）。
+- [x] 实现工作目录与环境变量的参数化表示（子 shell / `env` 前缀 / `Push-Location`），环境变量值不进入 `Debug` 输出与日志。
+- [x] 确保固定参数和用户参数逻辑上保持数组边界，不实现整行命令拼接。
+- [x] 对缺失目标提供显式 `TargetMissing`，由调用层决定阻止或允许保存。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core executor`，预期全部通过。
+- [x] 提交 `feat: add structured command executors`。
 
 ### Task 8：实现 Bash/Zsh 适配器
 
