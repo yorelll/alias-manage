@@ -1401,19 +1401,19 @@ Task 1 CI enhancements adopted:
 - Test: `crates/aliasmgr-core/src/shells/bash.rs`
 - Test: `crates/aliasmgr-core/src/shells/zsh.rs`
 
-- [ ] 先写函数优先、简单 alias 优化、工作目录、环境变量、`{{args}}` 中间插入、名称抢占和托管名称清理的精确字符串测试。
-- [ ] 实现 POSIX 单引号转义，确保路径中的单引号不会改变生成代码含义。
-- [ ] 默认生成函数；只有满足 §3.2 全部“简单条件”才生成 `alias name='...'`，复杂命令使用 `command ... "$@"`。
-- [ ] 实现 `render_preemption()`：每个函数定义前输出独立一行 `unalias <name> 2>/dev/null`，前后加空行确保它与函数定义处于不同解析单元（否则交互式 Shell 的 alias 展开会先发生并导致 `syntax error`）。
-- [ ] 实现 `render_cleanup()`：按“当前托管名 ∪ 未过期 tombstone”清理，alias 用 `unalias`、function 用 `unset -f`，并在清理前用 `declare -f` / `alias` 取值与内联指纹表比对，不一致则跳过并计入跳过清单。
+- [x] 先写函数优先、简单 alias 优化、工作目录、环境变量、`{{args}}` 中间插入、名称抢占和托管名称清理的精确字符串测试。
+- [x] 实现 POSIX 单引号转义，确保路径中的单引号不会改变生成代码含义。
+- [x] 默认生成函数；只有满足 §3.2 全部“简单条件”才生成 `alias name='...'`，复杂命令使用 `command ... "$@"`。
+- [x] 实现 `render_preemption()`：每个函数定义前输出独立一行 `unalias <name> 2>/dev/null`，前后加空行确保它与函数定义处于不同解析单元（否则交互式 Shell 的 alias 展开会先发生并导致 `syntax error`）。
+- [x] 实现 `render_cleanup()`：按“当前托管名 ∪ 未过期 tombstone”清理，alias 用 `unalias`、function 用 `unset -f`，并在清理前用 `declare -f` / `alias` 取值与内联指纹表比对，不一致则跳过并计入跳过清单。
 - [ ] 在生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单（`file_checksum` 计算时排除该行本身）。
-- [ ] 工作目录使用 `( cd -- '<dir>' && command ... )` 子 shell；环境变量使用 `env VAR=value` 前缀，不使用 `export`。
+- [x] 工作目录使用 `( cd -- '<dir>' && command ... )` 子 shell；环境变量使用 `env VAR=value` 前缀，不使用 `export`。
 - [ ] 实现 Bash/Zsh 配置路径、加载块**追加到文件末尾**、幂等检测、标记块删除和 `bash -n`/`zsh -n` 检查；加载块中写入已解析的绝对路径。
 - [ ] 实现 RC 文件为 symlink 时就地修改目标文件的逻辑（保持 symlink 不被原子替换掉），并对不可信链路返回 `UnsafePath`。
 - [ ] 读写用户 RC 文件时保留原有行尾风格。
-- [ ] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core shells::bash` 与 `cargo test -p aliasmgr-core shells::zsh`。
+- [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core shells::bash` 与 `cargo test -p aliasmgr-core shells::zsh`。
 - [ ] 【CI】在安装 Bash/Zsh 的 Linux runner 执行真实语法检查，并补一个 oh-my-zsh 环境下的抢占测试。
-- [ ] 提交 `feat: generate bash and zsh aliases`。
+- [x] 提交 `feat: generate bash and zsh aliases`。
 
 ### Task 9：实现 PowerShell 适配器
 
