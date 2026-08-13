@@ -1422,10 +1422,10 @@ Task 1 CI enhancements adopted:
 - Create: `crates/aliasmgr-core/src/shells/powershell.rs`
 - Test: `crates/aliasmgr-core/src/shells/powershell.rs`
 
-- [ ] 先写函数优先、`Set-Alias` 简单目标、固定参数、`{{args}}` 中间插入、工作目录、环境变量、参数透传、名称抢占、托管名称清理和覆盖恢复提示的生成测试。
-- [ ] 实现 PowerShell 字符串字面量转义，Windows 路径使用字面量传入调用运算符。
-- [ ] 默认生成 `function global:name { & ... @args }`；只有满足 §3.2 全部“简单条件”才生成 `Set-Alias -Scope Global -Force`。
-- [ ] 实现 `render_preemption()`：定义前输出 `Remove-Item -LiteralPath Alias:\<name> -Force -EA SilentlyContinue` 与 `Remove-Item -LiteralPath Function:\<name> -Force -EA SilentlyContinue`。**这是必需项**：PowerShell 名称解析顺序为 Alias → Function，不清理同名 alias 时函数永不生效，且语法检查会通过（见 §3.4）。
+- [x] 先写函数优先、`Set-Alias` 简单目标、固定参数、`{{args}}` 中间插入、工作目录、环境变量、参数透传、名称抢占、托管名称清理和覆盖恢复提示的生成测试。
+- [x] 实现 PowerShell 字符串字面量转义，Windows 路径使用字面量传入调用运算符。
+- [x] 默认生成 `function global:name { & ... @args }`；只有满足 §3.2 全部“简单条件”才生成 `Set-Alias -Scope Global -Force`。
+- [x] 实现 `render_preemption()`：定义前输出 `Remove-Item -LiteralPath Alias:\<name> -Force -EA SilentlyContinue` 与 `Remove-Item -LiteralPath Function:\<name> -Force -EA SilentlyContinue`。**这是必需项**：PowerShell 名称解析顺序为 Alias → Function，不清理同名 alias 时函数永不生效，且语法检查会通过（见 §3.4）。
 - [ ] 用真实 PS 5.1/7 测试覆盖内置 alias 抢占：创建名为 `ls` 的托管别名后 `Get-Command ls` 必须返回托管 Function。
 - [ ] 实现 `ReadOnly`/`Constant` 内置 alias 的保留名称判定，返回 `NameReserved`，在创建阶段拒绝而非运行时静默失败。
 - [ ] 实现 `render_cleanup()`：按“当前托管名 ∪ 未过期 tombstone”清理 `Alias:\` 与 `Function:\`，清理前用 `(Get-Item Function:\<name>).Definition` 与内联指纹比对，不一致则跳过。
@@ -1435,9 +1435,9 @@ Task 1 CI enhancements adopted:
 - [ ] 支持 `config.toml` 中的 `profile_path` 覆盖，并优先于自动解析；CI 依赖该能力做隔离测试（§11.7）。
 - [ ] PowerShell 5.1 与 7 生成**独立文件**：`powershell5.ps1` 使用 UTF-8 BOM，`powershell7.ps1` 使用 UTF-8 无 BOM；修改用户 Profile 时保留其原有编码与行尾。
 - [ ] 实现 Parser API 语法检查；实现 ExecutionPolicy 诊断：检出 `Restricted`（Profile 完全不执行）时输出用户自行执行的 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 指引，检出 `AllSigned`/GroupPolicy 锁定/ConstrainedLanguage 时报告 `ExecutionPolicyBlocked` 并标注不支持；不修改策略、不使用 `-ExecutionPolicy Bypass` 伪装成功。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core shells::powershell`，预期全部通过。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core shells::powershell`，预期全部通过。
 - [ ] 【CI】在 Windows runner 上运行真实 Parser 检查与 PS 5.1/7 双版本参数矩阵（PS 7 已预装，无需安装）。
-- [ ] 提交 `feat: generate powershell aliases`。
+- [x] 提交 `feat: generate powershell aliases`。
 
 ### Task 10：实现配置加载块管理
 
