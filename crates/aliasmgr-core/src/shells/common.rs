@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use crate::error::AliasError;
 use crate::model::{AliasRecord, ManagedNameSet};
 use std::{fs, path::Path};
