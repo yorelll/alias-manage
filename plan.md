@@ -1325,15 +1325,15 @@ Task 1 CI enhancements adopted:
 
 - [x] 先写内存数据库测试：创建表、插入、按 ID 读取、按名称读取、更新、删除和事务回滚。
 - [x] 实现迁移执行器：按 `NNNN_name.sql` 顺序在单事务内执行，维护 `PRAGMA user_version` 与 `schema_migrations(version, applied_at, checksum)`。
-- [ ] 先写 `SchemaTooNew` 测试：`user_version` 大于程序已知最大编号时拒绝打开并不做任何写入。
-- [ ] 迁移前创建数据库文件备份到 `backups/db/`，迁移失败即恢复。
-- [ ] 设置连接 PRAGMA：`journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`、`synchronous = FULL`；检测到不可靠文件系统时降级为 `DELETE` 并发出 `UnreliableFilesystem`。
+- [x] 先写 `SchemaTooNew` 测试：`user_version` 大于程序已知最大编号时拒绝打开并不做任何写入。
+- [x] 迁移前创建数据库文件备份到 `backups/db/`，迁移失败即恢复。
+- [x] 设置连接 PRAGMA：`journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`、`synchronous = FULL`；检测到不可靠文件系统时降级为 `DELETE` 并发出 `UnreliableFilesystem`。
 - [x] 实现 `Database::open(path)`、`migrate()`、`insert_alias()`、`get_alias()`、`list_aliases()`、`update_alias()`、`delete_alias()`。
-- [ ] 实现 `shell_state`、`retired_names`、`overridden_definitions` 的读写：`upsert_shell_state()`、`retire_name()`、`managed_name_set(shell)`、`prune_retired_names()`、`record_override()`。
+- [x] 实现 `shell_state`、`retired_names`、`overridden_definitions` 的读写：`upsert_shell_state()`、`retire_name()`、`managed_name_set(shell)`、`prune_retired_names()`、`record_override()`。
 - [ ] 维护 `name_folded` 列，并实现大小写折叠冲突查询（面向 PowerShell 的记录）。
 - [ ] 所有 JSON 字段通过 Serde 编解码，布尔值使用 SQLite integer 映射，时间使用 RFC3339。
 - [ ] 实现唯一名称冲突到 `AliasConflict` 的错误映射，并区分“同名”与“大小写冲突”两种消息。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
 - [ ] 提交 `feat: add transactional sqlite storage`。
 
 ### Task 5：实现搜索和排序
@@ -1363,8 +1363,8 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `AppPaths::discover()`、`ensure_directories()` 和 `generated_path(shell)`（PowerShell 5.1 与 7 返回不同文件名）。
 - [x] 实现 `config.toml` 的加载与默认值，覆盖 §2.4 的备份/日志/tombstone 保留策略。
 - [x] 实现 Shell 配置路径覆盖项（`shells.<shell>.profile_path` / `rc_path`），供解析失败时的用户指定与 CI 临时 Profile 注入使用（§4.2、§11.7）。
-- [ ] 实现备份与日志轮转（按份数与 `max_total_bytes`），保证不删除本次操作刚创建的备份。
-- [ ] 实现全局可写目录检测，为 §5.4 的 `UnsafeTargetLocation` 提供判定函数（Linux other-writable 位、Windows ACL）。
+- [x] 实现备份与日志轮转（按份数与 `max_total_bytes`），保证不删除本次操作刚创建的备份。
+- [x] 实现全局可写目录检测，为 §5.4 的 `UnsafeTargetLocation` 提供判定函数（Linux other-writable 位、Windows ACL）。
 - [x] 实现跨平台全局锁：默认 10 秒超时返回 `LockTimeout`，锁文件记录 PID 与启动时间，仅在持有进程确认不存在时接管，不删除其他活跃进程的锁文件。
 - [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core config` 与 `cargo test -p aliasmgr-core lock`（不要在一条命令里传两个过滤参数）。
 - [x] 提交 `feat: add platform paths and config lock`。

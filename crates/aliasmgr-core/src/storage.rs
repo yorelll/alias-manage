@@ -75,6 +75,23 @@ impl Database {
         Ok(())
     }
 
+    pub fn managed_name_set(&self, shell: &crate::model::ShellKind) -> Result<crate::model::ManagedNameSet, AliasError> {
+        let shell_json = serde_json::to_string(shell)?;
+        let current = self.conn.prepare("SELECT name FROM aliases WHERE enabled = 1 AND shells_json LIKE '%' || ?1 || '%'")?.query_map(params![shell_json.trim_matches('"')], |row| row.get(0))?.collect::<Result<Vec<String>, _>>()?;
+        let retired = self.conn.prepare("SELECT name FROM retired_names WHERE shell = ?1 ORDER BY retired_at_revision")?.query_map(params![shell_json], |row| row.get(0))?.collect::<Result<Vec<String>, _>>()?;
+        Ok(crate::model::ManagedNameSet { current, retired })
+    }
+
+    pub fn prune_retired_names(&self, minimum_revision: i64) -> Result<usize, AliasError> {
+        Ok(self.conn.execute("DELETE FROM retired_names WHERE retired_at_revision < ?1", params![minimum_revision])?)
+    }
+
+    pub fn record_override(&self, name: &str, shell: &crate::model::ShellKind, original_definition: Option<&str>, recoverable: bool) -> Result<(), AliasError> {
+        self.conn.execute_batch("CREATE TABLE IF NOT EXISTS overridden_definitions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, shell TEXT NOT NULL, definition_kind TEXT NOT NULL, original_definition TEXT, recoverable INTEGER NOT NULL DEFAULT 0, captured_at TEXT NOT NULL)")?;
+        self.conn.execute("INSERT INTO overridden_definitions(name,shell,definition_kind,original_definition,recoverable,captured_at) VALUES (?1,?2,'function',?3,?4,datetime('now'))", params![name, serde_json::to_string(shell)?, original_definition, recoverable])?;
+        Ok(())
+    }
+
     fn fetch(&self, field: &str, value: &str) -> Result<Option<AliasRecord>, AliasError> {
         let sql = format!("SELECT id,name,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision FROM aliases WHERE {field} = ?1");
         self.conn.query_row(&sql, params![value], row_to_alias).optional().map_err(AliasError::from)
@@ -161,6 +178,17 @@ mod tests {
         let first = AliasRecord { name: "same".into(), executable: "tool".into(), ..Default::default() };
         let second = first.clone(); database.insert_alias(&first).unwrap();
         assert!(matches!(database.insert_alias(&second), Err(AliasError::AliasConflict(_))));
+    }
+
+    #[test]
+    fn auxiliary_shell_state_and_retired_names_are_stored() {
+        let database = Database::open_in_memory().unwrap();
+        let state = crate::model::ShellState { shell: crate::model::ShellKind::Bash, applied_revision: 1, file_checksum: "abc".into(), loader_installed: true, status: crate::model::ShellStatus::Ok, last_error: None };
+        database.upsert_shell_state(&state).unwrap();
+        database.retire_name("old", &crate::model::ShellKind::Bash, 1).unwrap();
+        assert_eq!(database.managed_name_set(&crate::model::ShellKind::Bash).unwrap().retired, vec!["old"]);
+        database.record_override("old", &crate::model::ShellKind::Bash, Some("fn"), true).unwrap();
+        assert_eq!(database.prune_retired_names(2).unwrap(), 1);
     }
 
     #[test]
