@@ -1467,16 +1467,16 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-core/src/storage.rs`
 - Test: `crates/aliasmgr-core/src/sync.rs`
 
-- [ ] 先写生成临时文件、语法检查失败不替换、替换失败恢复、数据库事务回滚和 journal 状态测试。
-- [ ] 实现 `SyncCoordinator::apply()`：锁定、备份、生成、检查、原子替换、提交和释放锁；返回 per-shell 的 `SyncReceipt`。
-- [ ] journal 记录 `revision_from`、`revision_to` 与 `backups_json`（多个备份路径的数组，覆盖每个 RC/Profile 与每个生成文件）。
-- [ ] 实现启动恢复 `recover_pending_operations()`：依据 `revision_from`/`revision_to` 判断前滚（数据库已提交则重建生成文件）或回滚（未提交则按 `backups_json` 恢复并清理临时文件）。
-- [ ] 每个 Shell 独立生成和替换，成功即更新该 Shell 的 `shell_state`；单 Shell 失败不回滚其他 Shell 的成功替换、不回滚数据库。
+- [x] 先写生成临时文件、语法检查失败不替换、替换失败恢复、数据库事务回滚和 journal 状态测试。
+- [x] 实现 `SyncCoordinator::apply()`：锁定、备份、生成、检查、原子替换、提交和释放锁；返回 per-shell 的 `SyncReceipt`。
+- [x] journal 记录 `revision_from`、`revision_to` 与 `backups_json`（多个备份路径的数组，覆盖每个 RC/Profile 与每个生成文件）。
+- [x] 实现启动恢复 `recover_pending_operations()`：依据 `revision_from`/`revision_to` 判断前滚（数据库已提交则重建生成文件）或回滚（未提交则按 `backups_json` 恢复并清理临时文件）。
+- [x] 每个 Shell 独立生成和替换，成功即更新该 Shell 的 `shell_state`；单 Shell 失败不回滚其他 Shell 的成功替换、不回滚数据库。
 - [ ] 实现 `shell_state.status` 计算（`ok`/`stale`/`failed`/`loader_missing`/`unknown`），供 `doctor` 报告派生文件过期。
-- [ ] 写入 `retired_names` 并在同步成功后执行 `prune_retired_names()`。
+- [x] 写入 `retired_names` 并在同步成功后执行 `prune_retired_names()`。
 - [ ] 先写多 Shell 部分失败测试：PowerShell 检查失败、Bash 成功时，`shell_state` 分别为 `failed` 与 `ok`，且数据库 revision 已递增。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core sync`，预期全部通过。
-- [ ] 提交 `feat: add atomic shell synchronization and rollback`。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core sync`，预期全部通过。
+- [x] 提交 `feat: add atomic shell synchronization and rollback`。
 
 ### Task 12：实现 Shell 检测和冲突检测
 
