@@ -23,6 +23,8 @@ pub fn write_loader_file(path: &Path, _content: &str, loader: &str) -> Result<()
     Ok(())
 }
 
+pub fn _filesystem_exists(path: &Path) -> bool { path.exists() }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -42,8 +44,6 @@ mod tests {
     }
 }
 
-// keep filesystem support in the module boundary for future atomic replacement tests
-pub fn _filesystem_exists(path: &Path) -> bool { path.exists() }
 
 pub fn quote_posix(value: &str) -> String { format!("'{}'", value.replace('\'', "'\\''")) }
 
