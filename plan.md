@@ -1334,7 +1334,7 @@ Task 1 CI enhancements adopted:
 - [ ] 所有 JSON 字段通过 Serde 编解码，布尔值使用 SQLite integer 映射，时间使用 RFC3339。
 - [ ] 实现唯一名称冲突到 `AliasConflict` 的错误映射，并区分“同名”与“大小写冲突”两种消息。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
-- [ ] 提交 `feat: add transactional sqlite storage`。
+- [x] 提交 `feat: add transactional sqlite storage`。
 
 ### Task 5：实现搜索和排序
 
