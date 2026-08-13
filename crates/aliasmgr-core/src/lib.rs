@@ -2,6 +2,7 @@ pub mod error;
 pub mod migrations;
 pub mod search;
 pub mod config;
+pub mod executor;
 pub mod lock;
 pub mod rotation;
 pub mod shells;
