@@ -8,6 +8,7 @@ pub mod rotation;
 pub mod shells;
 pub mod sync;
 pub mod detection;
+pub mod transfer;
 pub mod model;
 pub mod storage;
 pub mod validation;
