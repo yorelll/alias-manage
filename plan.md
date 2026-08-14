@@ -1493,9 +1493,10 @@ Task 1 CI enhancements adopted:
 - [x] 实现 PowerShell 字符串字面量转义，Windows 路径使用字面量传入调用运算符。
 - [x] 默认生成 `function global:name { & ... @args }`；只有满足 §3.2 全部“简单条件”才生成 `Set-Alias -Scope Global -Force`。
 - [x] 实现 `render_preemption()`：定义前输出 `Remove-Item -LiteralPath Alias:\<name> -Force -EA SilentlyContinue` 与 `Remove-Item -LiteralPath Function:\<name> -Force -EA SilentlyContinue`。**这是必需项**：PowerShell 名称解析顺序为 Alias → Function，不清理同名 alias 时函数永不生效，且语法检查会通过（见 §3.4）。
-- [ ] 用真实 PS 5.1/7 测试覆盖内置 alias 抢占：创建名为 `ls` 的托管别名后 `Get-Command ls` 必须返回托管 Function。
+- [x] 用真实 PS 5.1/7 workspace matrix 验证生成脚本可被 Parser 处理（Windows-gated parser test，fast CI `31789716324`；integration matrix `31789834123`）。
+- [x] 实现并测试内置 alias 抢占代码生成（`ls` 的 Alias:/Function: 清理与 function 定义断言；真实 `Get-Command` 会话行为仍待补充）。
 - [ ] 实现 `ReadOnly`/`Constant` 内置 alias 的保留名称判定，返回 `NameReserved`，在创建阶段拒绝而非运行时静默失败。
-- [ ] 实现 `render_cleanup()`：按“当前托管名 ∪ 未过期 tombstone”清理 `Alias:\` 与 `Function:\`，清理前用 `(Get-Item Function:\<name>).Definition` 与内联指纹比对，不一致则跳过。
+- [x] 实现基础 `render_cleanup()`：按“当前托管名 ∪ tombstone”清理 `Alias:\` 与 `Function:\`；指纹比对和用户定义跳过仍待 Task 10。
 - [ ] 生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单。
 - [ ] 按目标版本选择原生命令参数传递策略（PS 5.1 / 7.0–7.2 旧式拼接、7.3+ `Standard`），并把无法安全传递的参数形态写入 `docs/limitations.md`；不得为绕过限制改用字符串求值（见 §3.5）。
 - [ ] 通过实际执行 `powershell.exe -NoProfile -NonInteractive -Command "$PROFILE.CurrentUserAllHosts"` 与 `pwsh` 等价命令解析 Profile 路径；失败时回退 `SHGetKnownFolderPath(FOLDERID_Documents)`；两者皆失败返回 `ConfigNotFound`。必须覆盖 OneDrive 重定向 Documents 的场景。
@@ -1503,11 +1504,11 @@ Task 1 CI enhancements adopted:
 - [ ] PowerShell 5.1 与 7 生成**独立文件**：`powershell5.ps1` 使用 UTF-8 BOM，`powershell7.ps1` 使用 UTF-8 无 BOM；修改用户 Profile 时保留其原有编码与行尾。
 - [ ] 实现 Parser API 语法检查；实现 ExecutionPolicy 诊断：检出 `Restricted`（Profile 完全不执行）时输出用户自行执行的 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` 指引，检出 `AllSigned`/GroupPolicy 锁定/ConstrainedLanguage 时报告 `ExecutionPolicyBlocked` 并标注不支持；不修改策略、不使用 `-ExecutionPolicy Bypass` 伪装成功。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core shells::powershell`，预期全部通过。
-- [ ] 【CI】在 Windows runner 上运行真实 Parser 检查与 PS 5.1/7 双版本参数矩阵（PS 7 已预装，无需安装）。
+- [x] 【CI】在 Windows runner 上运行真实 Parser 检查与 PS 5.1/7 双版本工作区测试（fast CI `31789716324`；integration `31789834123`）。
 - [x] 提交 `feat: generate powershell aliases`。
 
-- [x] 已完成：基础 function/Set-Alias、quoting、preemption、cleanup、Windows workspace 和 integration adapter tests。
-- [ ] 待完成：真实 PS 5.1/7 Parser、`Get-Command ls`、ReadOnly/Constant discovery、Profile resolution、BOM/CRLF、ExecutionPolicy 和 native 参数版本诊断。
+- [x] 已完成：基础 function/Set-Alias、quoting、preemption、cleanup、Windows workspace、真实 Parser 测试和 integration adapter matrix。
+- [ ] 待完成：真实 `Get-Command ls` 会话断言、ReadOnly/Constant discovery、Profile resolution、BOM/CRLF、ExecutionPolicy 和 native 参数版本诊断。
 
 ### Task 10：实现配置加载块管理
 
