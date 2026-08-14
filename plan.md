@@ -1472,15 +1472,15 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `render_cleanup()`：按“当前托管名 ∪ 未过期 tombstone”清理，alias 用 `unalias`、function 用 `unset -f`，并在清理前用 `declare -f` / `alias` 取值与内联指纹表比对，不一致则跳过并计入跳过清单。
 - [x] 在生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单（`file_checksum` 计算时排除该行本身）。
 - [x] 工作目录使用 `( cd -- '<dir>' && command ... )` 子 shell；环境变量使用 `env VAR=value` 前缀，不使用 `export`。
-- [ ] 实现 Bash/Zsh 配置路径、加载块**追加到文件末尾**、幂等检测、标记块删除和 `bash -n`/`zsh -n` 检查；加载块中写入已解析的绝对路径。
-- [ ] 实现 RC 文件为 symlink 时就地修改目标文件的逻辑（保持 symlink 不被原子替换掉），并对不可信链路返回 `UnsafePath`。
-- [ ] 读写用户 RC 文件时保留原有行尾风格。
+- [x] 实现 Bash/Zsh 配置路径、加载块**追加到文件末尾**、幂等检测、标记块删除和可用环境中的 `bash -n`/`zsh -n` 检查；加载块中写入已解析的绝对路径（`crates/aliasmgr-tests/tests/shell_syntax.rs`，fast CI `31788660240`，integration `31788782212`）。
+- [x] 实现 RC 文件为 symlink 时就地修改目标文件的逻辑（保持 symlink 不被原子替换掉；Unix 测试覆盖 `common.rs`，Windows 保留人工边界）。
+- [x] 读写用户 RC 文件时保留原有行尾风格（CRLF loader unit test in `common.rs`）。
 - [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core shells::bash` 与 `cargo test -p aliasmgr-core shells::zsh`。
 - [x] 【CI】在安装 Bash/Zsh 的 Linux runner 执行真实语法检查，并补一个 oh-my-zsh 环境下的抢占测试。
 - [x] 提交 `feat: generate bash and zsh aliases`。
 
-- [x] 已完成：POSIX quoting、函数、简单 alias、preemption、cleanup、loader 测试、fast CI 和 Bash/Zsh integration matrix。
-- [ ] 待完成：生成 metadata、symlink RC、行尾保持、真实 `bash -n`/`zsh -n` 和 oh-my-zsh 插件顺序验收。
+- [x] 已完成：POSIX quoting、函数、简单 alias、preemption、cleanup、loader 测试、真实 Bash/Zsh syntax checks、symlink-safe loader write、CRLF preservation、fast CI 和 Bash/Zsh integration matrix。
+- [ ] 待完成：生成 metadata、真实 oh-my-zsh 插件顺序验收，以及 Windows symlink/用户配置人工验收。
 
 ### Task 9：实现 PowerShell 适配器
 
