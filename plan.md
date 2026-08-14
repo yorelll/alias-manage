@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 执行本计划。所有步骤使用复选框跟踪，并在每个独立任务后运行对应测试。
 >
-> **验证方式：本项目采用 CI 驱动开发。本地没有 Rust 工具链（已实测：无 `cargo`/`rustc`/`rustup`），所有 `cargo` 命令只在 GitHub Actions 上执行，禁止在本地尝试。** 任务清单中带 `【CI】` 标记的条目表示“该命令由 CI 执行并通过”，带 `【本地】` 的条目才在本机执行（仅 `git`、`gh`、`npm`、`python`）。`gh` 不在 PATH，必须用绝对路径 `"D:/Program Files/GitHub CLI/gh.exe"`。执行任何任务前必须先读 §11，其中的执行位置约定（§11.1.1、§11.1.2）、授权边界（§11.2）与迭代规则（§11.3）是硬性约束。
+> **验证方式：本项目采用 CI 驱动开发。本地没有 Rust 工具链（已实测：无 `cargo`/`rustc`/`rustup`），所有 `cargo` 命令只在 GitHub Actions 上执行，禁止在本地尝试。** 任务清单中带 `【CI】` 标记的条目表示“该命令由 CI 执行并通过”，带 `【本地】` 的条目才在本机执行（仅 `git`、`gh`、`npm`、`python`）。`gh` 如果不在 PATH，可以用绝对路径 `"D:/Program Files/GitHub CLI/gh.exe"`，但优先使用gh去执行。执行任何任务前必须先读 §11，其中的执行位置约定（§11.1.1、§11.1.2）、授权边界（§11.2）与迭代规则（§11.3）是硬性约束。
 
 **目标：** 构建一个支持 Linux 与 Windows 的跨平台命令别名管理器，以统一别名模型、安全的结构化参数透传、Shell 适配器和可回滚配置同步为核心。**跨平台 GUI 与 Linux CLI 同为基础需求**，两者共享同一核心库。
 
@@ -444,15 +444,15 @@ PowerShell 5.1 与 7 使用**独立生成文件**，因为编码策略（BOM）�
 
 **保留与轮转策略（写入 `config.toml`，含默认值）：**
 
-| 项目 | 默认 | 上限行为 |
-|---|---|---|
-| `backups.rc_keep` | 10 份/文件 | 超出按时间删除最旧 |
-| `backups.generated_keep` | 10 份/Shell | 超出按时间删除最旧 |
-| `backups.db_keep` | 5 份 | 超出按时间删除最旧 |
-| `backups.max_total_bytes` | 64 MiB | 超出时从最旧开始清理，并记录警告 |
-| `logs.max_file_bytes` | 8 MiB | 按天 + 大小轮转 |
-| `logs.keep_files` | 7 | 超出删除最旧 |
-| `retired_names.keep_revisions` | 20 | 超出该 revision 跨度的 tombstone 可清理，见 §5.1.1 |
+| 项目                           | 默认        | 上限行为                                           |
+| ------------------------------ | ----------- | -------------------------------------------------- |
+| `backups.rc_keep`              | 10 份/文件  | 超出按时间删除最旧                                 |
+| `backups.generated_keep`       | 10 份/Shell | 超出按时间删除最旧                                 |
+| `backups.db_keep`              | 5 份        | 超出按时间删除最旧                                 |
+| `backups.max_total_bytes`      | 64 MiB      | 超出时从最旧开始清理，并记录警告                   |
+| `logs.max_file_bytes`          | 8 MiB       | 按天 + 大小轮转                                    |
+| `logs.keep_files`              | 7           | 超出删除最旧                                       |
+| `retired_names.keep_revisions` | 20          | 超出该 revision 跨度的 tombstone 可清理，见 §5.1.1 |
 
 清理只在成功完成一次同步后执行，且永不删除本次操作刚创建的备份。
 
@@ -562,11 +562,11 @@ Shell 的名称解析优先级是 **alias 优先于 function**，这会导致两
 
 PowerShell 调用外部程序时会把参数重新拼接为命令行字符串，行为随版本变化：
 
-| 版本 | 行为 | 影响 |
-|---|---|---|
-| PS 5.1 | 旧式拼接 | 含嵌入 `"`、空字符串 `""`、`--opt="a b"`、结尾反斜杠的参数会被破坏 |
-| PS 7.0–7.2 | 旧式拼接（同上） | 同上 |
-| PS 7.3+ | 默认 `PSNativeCommandArgumentPassing = Standard` | 大部分场景修复，但与旧脚本行为不一致 |
+| 版本       | 行为                                             | 影响                                                               |
+| ---------- | ------------------------------------------------ | ------------------------------------------------------------------ |
+| PS 5.1     | 旧式拼接                                         | 含嵌入 `"`、空字符串 `""`、`--opt="a b"`、结尾反斜杠的参数会被破坏 |
+| PS 7.0–7.2 | 旧式拼接（同上）                                 | 同上                                                               |
+| PS 7.3+    | 默认 `PSNativeCommandArgumentPassing = Standard` | 大部分场景修复，但与旧脚本行为不一致                               |
 
 要求：适配器按目标版本选择转义策略；对 PS 5.1/7.2 已知无法安全传递的参数形态，在 `doctor` 与文档 `docs/limitations.md` 中明确列为已知限制，**不得声称完全安全**；不得为了绕过该限制而改用字符串求值。
 
@@ -592,12 +592,12 @@ Linux 检测顺序固定为：显式 `--shell` > 当前父进程链 > `$SHELL` >
 
 ### 4.2 配置文件
 
-| Shell | 默认配置 |
-|---|---|
-| Bash | `~/.bashrc` |
-| Zsh | `~/.zshrc` |
+| Shell          | 默认配置                       |
+| -------------- | ------------------------------ |
+| Bash           | `~/.bashrc`                    |
+| Zsh            | `~/.zshrc`                     |
 | PowerShell 5.1 | `$PROFILE.CurrentUserAllHosts` |
-| PowerShell 7 | `$PROFILE.CurrentUserAllHosts` |
+| PowerShell 7   | `$PROFILE.CurrentUserAllHosts` |
 
 Bash 登录文件只在检测到没有加载 `.bashrc` 时提示用户，不擅自修改 `.bash_profile`、`.bash_login` 或 `.profile`。
 
@@ -833,23 +833,23 @@ aliasmgr uninstall [--purge-aliases]
 
 自动化脚本依赖稳定退出码，映射必须固定并写入 `docs/exit-codes.md`：
 
-| 码 | 含义 | 对应错误 |
-|---|---|---|
-| 0 | 成功 | — |
-| 1 | 未分类错误 | 兜底 |
-| 2 | 用法错误 | clap 解析失败、参数组合非法 |
-| 3 | 名称/定义冲突 | `AliasConflict`、`NameReserved` |
-| 4 | 未找到 | 别名不存在、`ConfigNotFound` |
-| 5 | 校验失败 | `InvalidAliasName`、`InvalidArgTemplate`、`AdvancedModeUnsupported` |
-| 6 | 目标缺失或不安全 | `TargetMissing`、`UnsafePath`、`UnsafeTargetLocation` |
-| 7 | 权限问题 | `PermissionDenied` |
-| 8 | 锁超时 | `LockTimeout` |
-| 9 | 语法检查失败 | `SyntaxCheckFailed` |
-| 10 | 同步部分失败 | 至少一个 Shell 失败，其余成功 |
-| 11 | 回滚失败（需人工介入） | `RollbackFailed` |
-| 12 | 环境不支持 | `ShellNotInstalled`、`ExecutionPolicyBlocked`、`SchemaTooNew` |
-| 13 | 存储错误 | `DatabaseError`、`UnreliableFilesystem`（致命时） |
-| 14 | 需要交互但无 TTY | `NonInteractive` |
+| 码  | 含义                   | 对应错误                                                            |
+| --- | ---------------------- | ------------------------------------------------------------------- |
+| 0   | 成功                   | —                                                                   |
+| 1   | 未分类错误             | 兜底                                                                |
+| 2   | 用法错误               | clap 解析失败、参数组合非法                                         |
+| 3   | 名称/定义冲突          | `AliasConflict`、`NameReserved`                                     |
+| 4   | 未找到                 | 别名不存在、`ConfigNotFound`                                        |
+| 5   | 校验失败               | `InvalidAliasName`、`InvalidArgTemplate`、`AdvancedModeUnsupported` |
+| 6   | 目标缺失或不安全       | `TargetMissing`、`UnsafePath`、`UnsafeTargetLocation`               |
+| 7   | 权限问题               | `PermissionDenied`                                                  |
+| 8   | 锁超时                 | `LockTimeout`                                                       |
+| 9   | 语法检查失败           | `SyntaxCheckFailed`                                                 |
+| 10  | 同步部分失败           | 至少一个 Shell 失败，其余成功                                       |
+| 11  | 回滚失败（需人工介入） | `RollbackFailed`                                                    |
+| 12  | 环境不支持             | `ShellNotInstalled`、`ExecutionPolicyBlocked`、`SchemaTooNew`       |
+| 13  | 存储错误               | `DatabaseError`、`UnreliableFilesystem`（致命时）                   |
+| 14  | 需要交互但无 TTY       | `NonInteractive`                                                    |
 
 退出码一经发布不得改变含义；新增错误只能追加新码或归入现有语义。
 
@@ -879,15 +879,15 @@ GUI 使用 Tauri 2，所有业务操作调用 Rust 核心命令，不复制 CLI 
 
 搜索字段包括名称、目标、脚本路径、描述、标签、Shell 和目标类型。评分权重必须以常量形式集中定义并写入 `docs/architecture.md`，保证结果可复现：
 
-| 匹配类型 | 权重 |
-|---|---|
-| 名称完全匹配 | 1000 |
-| 名称前缀匹配 | 800 |
-| 名称连续子串 | 600 |
-| 名称非连续字符（fuzzy） | 400 |
-| 标签完全匹配 | 350 |
-| 描述/目标连续子串 | 200 |
-| 编辑距离 ≤ 2 | 100 |
+| 匹配类型                | 权重 |
+| ----------------------- | ---- |
+| 名称完全匹配            | 1000 |
+| 名称前缀匹配            | 800  |
+| 名称连续子串            | 600  |
+| 名称非连续字符（fuzzy） | 400  |
+| 标签完全匹配            | 350  |
+| 描述/目标连续子串       | 200  |
+| 编辑距离 ≤ 2            | 100  |
 
 相同评分按名称升序、再按 `updated_at` 降序稳定排序。`--limit` 默认 50（`--limit 0` 表示不限制），GUI 默认分页 100 条。排序字段：`name`、`updated_at`、`created_at`、`target_type`、`enabled`。
 
@@ -930,13 +930,13 @@ GUI 文件选择器返回的可执行文件、脚本和 JAR 默认规范化为�
 
 ### 9.1.1 非功能性指标（NFR）
 
-| 指标 | 目标 |
-|---|---|
-| 支持别名规模 | ≥ 1000 条 |
-| 生成文件加载耗时 | 500 条别名时 Bash/Zsh source < 30ms；PowerShell dot-source < 150ms |
-| CLI 冷启动到输出 | `aliasmgr list`（500 条）< 150ms |
-| 单次同步（全 Shell，500 条） | < 500ms（不含 Shell 语法检查进程启动） |
-| GUI 首屏可交互 | < 1.5s |
+| 指标                         | 目标                                                               |
+| ---------------------------- | ------------------------------------------------------------------ |
+| 支持别名规模                 | ≥ 1000 条                                                          |
+| 生成文件加载耗时             | 500 条别名时 Bash/Zsh source < 30ms；PowerShell dot-source < 150ms |
+| CLI 冷启动到输出             | `aliasmgr list`（500 条）< 150ms                                   |
+| 单次同步（全 Shell，500 条） | < 500ms（不含 Shell 语法检查进程启动）                             |
+| GUI 首屏可交互               | < 1.5s                                                             |
 
 PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现为终端启动变慢），因此生成代码必须紧凑：避免逐条别名的重复样板、把清理清单合并为循环、避免在生成文件中做路径探测或外部进程调用。M2 结束时必须用 500/1000 条别名做一次加载耗时基准并记录在 `docs/testing.md`；超标则考虑按需加载或代码压缩策略。
 
@@ -958,20 +958,20 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 ### 10.2 集成矩阵
 
-| 平台 | Shell | 重点 |
-|---|---|---|
-| Ubuntu | Bash | 增删改查、`"$@"` 透传、`.bashrc` 加载块 |
-| Ubuntu | Zsh | 函数生成、语法检查、`.zshrc` 加载块 |
-| Ubuntu + oh-my-zsh | Zsh | 已存在同名 alias 的抢占、加载块位置、插件后置覆盖检测 |
-| Fedora | Bash | XDG 路径和权限 |
-| Linux（dotfiles symlink） | Bash | RC 为 symlink 时就地修改目标文件、symlink 不被替换 |
-| Windows 10 | PowerShell 5.1 | Profile、EXE、BAT、执行策略诊断、UTF-8 BOM |
-| Windows 11 | PowerShell 7 | 函数、Python、PS1、多个宿主、无 BOM |
-| Windows（Restricted 策略） | PS 5.1 | `doctor` 检出 Profile 不执行并给出正确指引 |
-| Windows（OneDrive 重定向 Documents） | PS 5.1/7 | Profile 路径实测解析而非拼接 |
-| Windows Terminal | PS 5.1/7 | 版本隔离和 Profile 定位 |
-| Linux + Windows | — | GUI 端到端（Playwright）：列表、向导、同步、诊断、卸载设置 |
-| WSL | Bash/Zsh | 路径与父进程检测，作为后续阶段 |
+| 平台                                 | Shell          | 重点                                                       |
+| ------------------------------------ | -------------- | ---------------------------------------------------------- |
+| Ubuntu                               | Bash           | 增删改查、`"$@"` 透传、`.bashrc` 加载块                    |
+| Ubuntu                               | Zsh            | 函数生成、语法检查、`.zshrc` 加载块                        |
+| Ubuntu + oh-my-zsh                   | Zsh            | 已存在同名 alias 的抢占、加载块位置、插件后置覆盖检测      |
+| Fedora                               | Bash           | XDG 路径和权限                                             |
+| Linux（dotfiles symlink）            | Bash           | RC 为 symlink 时就地修改目标文件、symlink 不被替换         |
+| Windows 10                           | PowerShell 5.1 | Profile、EXE、BAT、执行策略诊断、UTF-8 BOM                 |
+| Windows 11                           | PowerShell 7   | 函数、Python、PS1、多个宿主、无 BOM                        |
+| Windows（Restricted 策略）           | PS 5.1         | `doctor` 检出 Profile 不执行并给出正确指引                 |
+| Windows（OneDrive 重定向 Documents） | PS 5.1/7       | Profile 路径实测解析而非拼接                               |
+| Windows Terminal                     | PS 5.1/7       | 版本隔离和 Profile 定位                                    |
+| Linux + Windows                      | —              | GUI 端到端（Playwright）：列表、向导、同步、诊断、卸载设置 |
+| WSL                                  | Bash/Zsh       | 路径与父进程检测，作为后续阶段                             |
 
 ### 10.3 关键验收用例
 
@@ -1018,20 +1018,18 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 本地环境已实测确认：
 
-| 工具 | 状态 | 说明 |
-|---|---|---|
-| `git` | 已安装（2.53.0.windows.1） | 提交与推送 |
-| `gh` | 已安装（2.97.0），**不在 PATH** | 位于 `D:\Program Files\GitHub CLI\gh.exe`，**必须使用绝对路径调用** |
-| `node` / `npm` | 已安装（v24.16.0 / 11.13.0） | 可做前端本地自检 |
-| `python` | 已安装（3.12.3） | 可本地校验测试夹具脚本语法 |
-| `cargo` / `rustc` / `rustup` | **未安装** | **本地无法执行任何 `cargo` 命令** |
+| 工具                         | 状态                            | 说明                                                                |
+| ---------------------------- | ------------------------------- | ------------------------------------------------------------------- |
+| `git`                        | 已安装（2.53.0.windows.1）      | 提交与推送                                                          |
+| `gh`                         | 已安装（2.97.0），**不在 PATH** | 位于 `D:\Program Files\GitHub CLI\gh.exe`，**必须使用绝对路径调用** |
+| `node` / `npm`               | 已安装（v24.16.0 / 11.13.0）    | 可做前端本地自检                                                    |
+| `python`                     | 已安装（3.12.3）                | 可本地校验测试夹具脚本语法                                          |
+| `cargo` / `rustc` / `rustup` | **未安装**                      | **本地无法执行任何 `cargo` 命令**                                   |
 
 **结论：本地不存在 Rust 工具链，因此计划中所有 `cargo` 命令（含 `cargo fmt`、`cargo check`、`cargo clippy`、`cargo test`、`cargo tauri build`/`dev`）一律不在本地执行，只在 GitHub Actions 上执行。** 本项目不要求用户安装 Rust——这正是采用 CI 驱动开发的原因。
 
-`gh` 调用必须写绝对路径（裸 `gh` 在 PATH 中不存在，会直接失败）：
-
 ```bash
-"D:/Program Files/GitHub CLI/gh.exe" run list --branch <branch> --limit 5
+"gh.exe" run list --branch <branch> --limit 5
 ```
 
 `gh` 当前**未登录**（`You are not logged into any GitHub hosts`），需用户先执行认证，见 §11.2。
@@ -1040,11 +1038,11 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 计划中所有任务清单条目按以下规则判定执行位置：
 
-| 标记 | 含义 |
-|---|---|
-| `【CI】` | **只在 GitHub Actions 上执行。** AI 不得尝试在本地运行；本地运行必然因缺少工具链而失败，这类失败不是代码缺陷。 |
-| `【本地】` | 在本地执行（仅限 `git`、`gh` 绝对路径、`npm`、`python`、文件读写）。 |
-| 无标记 | 编码/设计类步骤（写代码、写 SQL、写文档），不涉及命令执行。 |
+| 标记       | 含义                                                                                                           |
+| ---------- | -------------------------------------------------------------------------------------------------------------- |
+| `【CI】`   | **只在 GitHub Actions 上执行。** AI 不得尝试在本地运行；本地运行必然因缺少工具链而失败，这类失败不是代码缺陷。 |
+| `【本地】` | 在本地执行（仅限 `git`、`gh` 绝对路径、`npm`、`python`、文件读写）。                                           |
+| 无标记     | 编码/设计类步骤（写代码、写 SQL、写文档），不涉及命令执行。                                                    |
 
 判定规则（标记缺失时以此为准）：
 
@@ -1060,7 +1058,7 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 `gh` 涉及账户凭据与远程写操作，因此：
 
-1. **`gh auth login` 及任何认证流程必须由用户本人执行**，AI 不得代为输入凭据、不得读取或打印 token、不得修改 `~/.config/gh/hosts.yml`。AI 只能在需要时提示用户执行 `! "D:/Program Files/GitHub CLI/gh.exe" auth login` 或 `... auth status`。
+1. **`gh auth login` 及任何认证流程必须由用户本人执行**，AI 不得代为输入凭据、不得读取或打印 token、不得修改 `~/.config/gh/hosts.yml`。AI 只能在需要时提示用户执行 `! "gh.exe" auth login` 或 `... auth status`。
 2. 首次需要创建远端仓库、修改仓库设置、启用 Actions、添加 Secrets 时，AI 必须先说明用途并取得用户明确同意，不擅自执行。
 3. AI 只在 **feature 分支**上提交与推送；不直接推送 `main`，不使用 `--force`（含 `--force-with-lease`）除用户明确要求，不删除远端分支，不改写已推送的历史。
 4. 合并到 `main` 由用户决定（PR 审阅或明确指示），AI 不自动合并、不自动创建 Release、不自动打 tag。
@@ -1075,7 +1073,7 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 - 每次修改必须基于日志中的具体错误定位，禁止“改点东西再推一次看看”。
 - 若失败原因是 CI 环境本身（依赖包名变更、runner 镜像升级），修 workflow，并在 commit message 中写明。
 
-常用命令（供实现与文档参考）。**所有命令中的 `gh` 均需替换为绝对路径 `"D:/Program Files/GitHub CLI/gh.exe"`**（§11.1.1）：
+常用命令（供实现与文档参考）。（§11.1.1）：
 
 ```bash
 gh auth status                              # 由用户执行
@@ -1095,13 +1093,13 @@ gh run download <run-id> -n <artifact>      # 需要产物时（GUI 人工确认
 
 **`ci.yml`** — `push`、`pull_request`、`workflow_dispatch` 触发，提供快速反馈。
 
-| Job | Runner | 内容 |
-|---|---|---|
-| `lint` | `ubuntu-latest` | `cargo fmt --check`、`cargo clippy --workspace --all-targets -- -D warnings` |
-| `test-linux` | `ubuntu-latest` | `cargo test --workspace`、SQLite 迁移测试、Bash/Zsh 适配器测试 |
-| `test-windows` | `windows-latest` | `cargo clippy`（平台分支代码）、`cargo test --workspace`、PowerShell 5.1 与 7 分别测试、Profile 定位、Parser 检查、UTF-8 BOM 校验、Windows CLI 测试 |
-| `gui-build-linux` | `ubuntu-latest` | 前端单元测试 + 类型检查 + Tauri Linux 编译 |
-| `gui-build-windows` | `windows-latest` | 前端单元测试 + Tauri Windows 编译 |
+| Job                 | Runner           | 内容                                                                                                                                                |
+| ------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lint`              | `ubuntu-latest`  | `cargo fmt --check`、`cargo clippy --workspace --all-targets -- -D warnings`                                                                        |
+| `test-linux`        | `ubuntu-latest`  | `cargo test --workspace`、SQLite 迁移测试、Bash/Zsh 适配器测试                                                                                      |
+| `test-windows`      | `windows-latest` | `cargo clippy`（平台分支代码）、`cargo test --workspace`、PowerShell 5.1 与 7 分别测试、Profile 定位、Parser 检查、UTF-8 BOM 校验、Windows CLI 测试 |
+| `gui-build-linux`   | `ubuntu-latest`  | 前端单元测试 + 类型检查 + Tauri Linux 编译                                                                                                          |
+| `gui-build-windows` | `windows-latest` | 前端单元测试 + Tauri Windows 编译                                                                                                                   |
 
 `cargo fmt --check` **只在 Linux 跑一次**（格式与平台无关，重复执行只是浪费时间）；`clippy` 两个平台都要跑，因为 `#[cfg(windows)]` / `#[cfg(unix)]` 分支下的代码只在对应平台被检查。
 
@@ -1207,11 +1205,11 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 
 避免 GUI 构建问题干扰核心逻辑开发，分三步启用：
 
-| 阶段 | 时机 | CI 内容 |
-|---|---|---|
-| 一 | M0–M3 | Rust core、SQLite 迁移、Bash、Zsh、PowerShell 5.1、PowerShell 7、CLI |
-| 二 | M4–M5 | 追加 Tauri Linux/Windows 编译、前端单元测试、GUI 类型检查 |
-| 三 | M6 | 追加 AppImage/deb、MSI/EXE 打包、卸载测试、升级测试、artifact 下载验证 |
+| 阶段 | 时机  | CI 内容                                                                |
+| ---- | ----- | ---------------------------------------------------------------------- |
+| 一   | M0–M3 | Rust core、SQLite 迁移、Bash、Zsh、PowerShell 5.1、PowerShell 7、CLI   |
+| 二   | M4–M5 | 追加 Tauri Linux/Windows 编译、前端单元测试、GUI 类型检查              |
+| 三   | M6    | 追加 AppImage/deb、MSI/EXE 打包、卸载测试、升级测试、artifact 下载验证 |
 
 `ci.yml` 的骨架在 Task 1（M0）就必须建立并跑通一次，否则后续每个任务都缺少验证手段；GUI 与打包相关 job 按上表逐步加入。
 
@@ -1219,16 +1217,16 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 
 ## 12. 里程碑和依赖
 
-| 里程碑 | 结果 | 前置 |
-|---|---|---|
-| M0 | Workspace、规范、`ci.yml` 骨架在 Linux/Windows 双 runner 跑通、测试夹具可运行；Tauri 依赖与目标发行版范围确认 | 无 |
-| M1 | 核心模型、迁移执行器、SQLite、校验、搜索完成 | M0 |
-| M2 | Bash/Zsh/PowerShell 生成、名称抢占、tombstone 清理与同步完成；加载耗时基准 | M1 |
-| M3 | Linux CLI 可用（含退出码表与 `reload`） | M2 |
-| M4 | Windows CLI 与卸载流程可用 | M3 |
-| M5 | Tauri GUI 在 Linux 与 Windows 可用（**MVP 交付物**） | M3 |
-| M6 | 导入导出、发布质量与验收完成 | M4、M5 |
-| M7 | 扩展 Shell（Fish/POSIX/WSL/CMD 等）与插件边界 | M6 |
+| 里程碑 | 结果                                                                                                          | 前置   |
+| ------ | ------------------------------------------------------------------------------------------------------------- | ------ |
+| M0     | Workspace、规范、`ci.yml` 骨架在 Linux/Windows 双 runner 跑通、测试夹具可运行；Tauri 依赖与目标发行版范围确认 | 无     |
+| M1     | 核心模型、迁移执行器、SQLite、校验、搜索完成                                                                  | M0     |
+| M2     | Bash/Zsh/PowerShell 生成、名称抢占、tombstone 清理与同步完成；加载耗时基准                                    | M1     |
+| M3     | Linux CLI 可用（含退出码表与 `reload`）                                                                       | M2     |
+| M4     | Windows CLI 与卸载流程可用                                                                                    | M3     |
+| M5     | Tauri GUI 在 Linux 与 Windows 可用（**MVP 交付物**）                                                          | M3     |
+| M6     | 导入导出、发布质量与验收完成                                                                                  | M4、M5 |
+| M7     | 扩展 Shell（Fish/POSIX/WSL/CMD 等）与插件边界                                                                 | M6     |
 
 **MVP 边界 = M0–M6。** M5 的 GUI 属于 MVP，不可裁剪；M7 为 MVP 之后的扩展。
 
@@ -1274,7 +1272,7 @@ Task 1 CI enhancements adopted:
 
 由于本项目所有跨平台验证都依赖 CI（§11），`ci.yml` 必须在写业务代码之前跑通，否则后续每个任务都没有验证手段。
 
-- [x] 【本地】提示用户执行 `! "D:/Program Files/GitHub CLI/gh.exe" auth login`（当前状态为未登录）；**AI 不得代为输入凭据**（§11.2）。
+- [x] 【本地】提示用户执行 `! "gh.exe" auth login`（当前状态为未登录）；**AI 不得代为输入凭据**（§11.2）。
 - [x] 【本地】说明用途并取得用户同意后，创建/关联远端仓库并确认 Actions 已启用；不擅自修改仓库设置。
 - [x] 【本地】创建 feature 分支，不直接在 `main` 上开发。
 - [x] 编写 `ci.yml` 骨架：`lint`（`ubuntu-24.04`，`cargo fmt --check` + `clippy`）、`test-linux`（`ubuntu-24.04`）、`test-windows`（`windows-latest`）三个 job；固定 runner 版本与 action 版本；配置 `concurrency` + `cancel-in-progress`、`timeout-minutes`、`paths-ignore`、`workflow_dispatch`、Rust 缓存；npm 缓存待 GUI job 启用后加入。
@@ -1524,12 +1522,12 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-cli/src/commands.rs`
 - Test: `crates/aliasmgr-cli/tests/crud.rs`
 
-- [ ] 先写端到端 CLI 测试，通过 `ALIASMGR_CONFIG_DIR` 指向临时目录：添加 `gs`、获取、查找、列表、更新、改名、禁用、启用、删除。
-- [ ] 将所有操作委托给 `aliasmgr-core`，CLI 不直接访问 SQLite 表或生成 Shell 代码。
+- [x] 先写端到端 CLI 测试，通过 `ALIASMGR_CONFIG_DIR` 指向临时目录：添加 `gs`、获取、查找、列表、更新、改名、禁用、启用、删除。
+- [x] 将所有操作委托给 `aliasmgr-core`，CLI 不直接访问 SQLite 表或生成 Shell 代码。
 - [ ] 删除操作默认交互确认，`--yes` 执行非交互删除，并逐 Shell 报告需要重新加载的命令与“当前会话可能仍有旧定义”的提示。
 - [ ] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
-- [ ] 提交 `feat: add cli alias lifecycle commands`。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
+- [x] 提交 `feat: add cli alias lifecycle commands`。
 
 ### Task 15：实现 sync、doctor 和 shell 子命令
 
