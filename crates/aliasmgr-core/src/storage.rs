@@ -39,6 +39,8 @@ impl Database {
     }
 
     pub fn insert_alias(&self, alias: &AliasRecord) -> Result<(), AliasError> {
+        if self.get_alias_by_name(&alias.name)?.is_some() { return Err(AliasError::ExactNameConflict(alias.name.clone())); }
+        if alias.shells.iter().any(|shell| matches!(shell, crate::model::ShellKind::PowerShell5 | crate::model::ShellKind::PowerShell7)) && self.has_powershell_case_conflict(&alias.name, None)? { return Err(AliasError::CaseFoldConflict(alias.name.clone())); }
         self.conn.execute(
             "INSERT INTO aliases (id,name,name_folded,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
             params![alias.id.to_string(), alias.name, alias.name.to_lowercase(), alias.description, serde_json::to_string(&alias.target_type)?, alias.executable, serde_json::to_string(&alias.fixed_args)?, alias.pass_args, alias.working_directory, serde_json::to_string(&alias.environment)?, serde_json::to_string(&alias.shells)?, alias.enabled, alias.advanced_shell_mode, serde_json::to_string(&alias.tags)?, serde_json::to_string(&alias.path_mode)?, serde_json::to_string(&alias.path_origin)?, alias.created_at.to_rfc3339(), alias.updated_at.to_rfc3339(), alias.record_checksum, alias.revision,
@@ -104,6 +106,8 @@ impl Database {
     }
 
     pub fn update_alias(&self, alias: &AliasRecord) -> Result<bool, AliasError> {
+        if self.conn.query_row("SELECT name FROM aliases WHERE id = ?1", params![alias.id.to_string()], |row| row.get::<_, String>(0)).optional()?.is_none() { return Ok(false); }
+        if self.conn.query_row("SELECT id FROM aliases WHERE name = ?1 AND id != ?2", params![alias.name, alias.id.to_string()], |row| row.get::<_, String>(0)).optional()?.is_some() { return Err(AliasError::ExactNameConflict(alias.name.clone())); }
         let changed = self.conn.execute(
             "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19 WHERE id=?1",
             params![alias.id.to_string(), alias.name, alias.name.to_lowercase(), alias.description, serde_json::to_string(&alias.target_type)?, alias.executable, serde_json::to_string(&alias.fixed_args)?, alias.pass_args, alias.working_directory, serde_json::to_string(&alias.environment)?, serde_json::to_string(&alias.shells)?, alias.enabled, alias.advanced_shell_mode, serde_json::to_string(&alias.tags)?, serde_json::to_string(&alias.path_mode)?, serde_json::to_string(&alias.path_origin)?, alias.updated_at.to_rfc3339(), alias.record_checksum, alias.revision],

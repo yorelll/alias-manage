@@ -59,6 +59,11 @@ pub struct AliasRecord {
     pub revision: i64,
 }
 
+pub fn record_checksum(alias: &AliasRecord) -> Result<String, serde_json::Error> {
+    let mut value = alias.clone(); value.record_checksum.clear(); value.updated_at = value.created_at;
+    let json = serde_json::to_vec(&value)?; use sha2::{Digest, Sha256}; let mut digest = Sha256::new(); digest.update(json); Ok(format!("{:x}", digest.finalize()))
+}
+
 impl Default for AliasRecord {
     fn default() -> Self {
         let now = Utc::now();
@@ -103,6 +108,12 @@ pub struct SyncReceipt { pub revision: i64, pub results: Vec<ShellSyncResult> }
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checksum_is_stable_for_same_content() {
+        let alias = AliasRecord::default();
+        assert_eq!(record_checksum(&alias).unwrap(), record_checksum(&alias).unwrap());
+    }
 
     #[test]
     fn alias_round_trips_as_json() {

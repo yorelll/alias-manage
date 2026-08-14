@@ -10,6 +10,12 @@ pub enum AliasError {
     AdvancedModeUnsupported,
     #[error("alias conflict: {0}")]
     AliasConflict(String),
+    #[error("exact alias name already exists: {0}")]
+    ExactNameConflict(String),
+    #[error("PowerShell case-fold alias conflict: {0}")]
+    CaseFoldConflict(String),
+    #[error("checksum mismatch")]
+    ChecksumMismatch,
     #[error("name is reserved")]
     NameReserved,
     #[error("target is missing: {0}")]
