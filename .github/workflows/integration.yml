@@ -37,6 +37,12 @@ jobs:
           - os: windows-latest
             shell: pwsh
             test: lock_process
+          - os: ubuntu-24.04
+            shell: bash
+            test: cli_layers
+          - os: windows-latest
+            shell: pwsh
+            test: cli_layers
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -82,6 +88,10 @@ jobs:
       - name: Run process lock test
         if: matrix.test == 'lock_process'
         run: cargo test -p aliasmgr-tests --test lock_process
+      - name: Run CLI layered evidence test
+        if: matrix.test == 'cli_layers'
+        shell: ${{ matrix.shell }}
+        run: cargo test -p aliasmgr-tests --test cli_layers
       - name: Run core tests
         if: matrix.test == 'bash' || matrix.test == 'zsh_shell'
         run: cargo test -p aliasmgr-tests --test shell_syntax
