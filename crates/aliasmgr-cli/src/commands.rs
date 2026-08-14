@@ -1,6 +1,6 @@
 use crate::cli::{AddArgs, Command};
 use crate::messages::NON_INTERACTIVE;
-use aliasmgr_core::{error::AliasError, model::{AliasRecord, ShellKind}, storage::Database, validation::validate_alias};
+use aliasmgr_core::{error::AliasError, model::{record_checksum, AliasRecord, ShellKind}, storage::Database, validation::validate_alias};
 use std::path::Path;
 
 pub fn requires_confirmation(command: &Command) -> bool { matches!(command, Command::Remove { yes: false, .. } | Command::Uninstall { purge_aliases: true }) }
@@ -18,16 +18,16 @@ fn database(config_dir: Option<&str>) -> Result<Database, AliasError> {
 pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, AliasError> {
     let mut alias = AliasRecord { name: args.name.clone(), executable: args.exec.clone(), fixed_args: args.args.clone(), pass_args: !args.no_pass_args, working_directory: args.cwd.clone(), tags: args.tags.clone(), ..Default::default() };
     if !args.shell.is_empty() { alias.shells = args.shell.iter().filter_map(|value| match value.as_str() { "bash" => Some(ShellKind::Bash), "zsh" => Some(ShellKind::Zsh), "powershell5" => Some(ShellKind::PowerShell5), "powershell7" => Some(ShellKind::PowerShell7), _ => None }).collect(); }
-    validate_alias(&alias)?; let database = database(config_dir)?; database.insert_alias(&alias)?; Ok(alias)
+    validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; let database = database(config_dir)?; database.insert_alias(&alias)?; Ok(alias)
 }
 
 pub fn get(config_dir: Option<&str>, name: &str) -> Result<Option<AliasRecord>, AliasError> { database(config_dir)?.get_alias_by_name(name) }
 pub fn list(config_dir: Option<&str>) -> Result<Vec<AliasRecord>, AliasError> { database(config_dir)?.list_aliases() }
 pub fn remove(config_dir: Option<&str>, name: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let alias = database.get_alias_by_name(name)?; match alias { Some(alias) => { for shell in &alias.shells { database.retire_name(name, shell, alias.revision)?; } database.delete_alias(alias.id) }, None => Ok(false) } }
-pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.enabled = enabled; database.update_alias(&alias) }
+pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.enabled = enabled; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 
-pub fn update(config_dir: Option<&str>, name: &str, executable: &str, fixed_args: Vec<String>) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.executable = executable.into(); alias.fixed_args = fixed_args; validate_alias(&alias)?; database.update_alias(&alias) }
-pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::Config(format!("alias not found: {old}")))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision)?; alias.name = new.into(); validate_alias(&alias)?; database.update_alias(&alias) }
+pub fn update(config_dir: Option<&str>, name: &str, executable: &str, fixed_args: Vec<String>) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.executable = executable.into(); alias.fixed_args = fixed_args; validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
+pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::Config(format!("alias not found: {old}")))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision)?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 pub fn find(config_dir: Option<&str>, query: &str) -> Result<Vec<AliasRecord>, AliasError> { let aliases = list(config_dir)?; let query = aliasmgr_core::search::SearchQuery { query: query.into(), ..Default::default() }; Ok(aliasmgr_core::search::search(&aliases, &query).into_iter().map(|result| result.alias).collect()) }
 #[allow(dead_code)]
 pub fn retired_names(config_dir: Option<&str>, shell: &str) -> Result<Vec<String>, AliasError> { let database = database(config_dir)?; let kind = match shell { "zsh" => ShellKind::Zsh, "powershell5" => ShellKind::PowerShell5, "powershell7" => ShellKind::PowerShell7, _ => ShellKind::Bash }; Ok(database.managed_name_set(&kind)?.retired) }

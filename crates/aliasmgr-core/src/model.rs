@@ -116,6 +116,15 @@ mod tests {
     }
 
     #[test]
+    fn checksum_changes_when_record_content_changes() {
+        let alias = AliasRecord::default();
+        let original = record_checksum(&alias).unwrap();
+        let mut changed = alias.clone();
+        changed.description = "changed".into();
+        assert_ne!(original, record_checksum(&changed).unwrap());
+    }
+
+    #[test]
     fn alias_round_trips_as_json() {
         let alias = AliasRecord::default();
         let json = serde_json::to_string(&alias).unwrap();
