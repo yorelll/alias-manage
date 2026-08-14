@@ -70,12 +70,12 @@ Never run `cargo`, `rustc`, `rustup`, Bash, Zsh, PowerShell, or Tauri locally. P
 
 **Files:** `crates/aliasmgr-core/src/transfer.rs`, `crates/aliasmgr-core/src/uninstall.rs`, `crates/aliasmgr-cli/src/commands.rs`, `crates/aliasmgr-cli/tests/transfer.rs`, `uninstall.rs`, `plan.md`
 
-- [ ] Add failing tests for TOML export/import, overwrite/rename/ask conflicts, unsupported records, relative paths, and safety warnings.
-- [ ] Implement TOML alongside JSON with the same top-level metadata and filtering semantics.
-- [ ] Expose CLI `import`, `export`, and `uninstall` dispatch; require confirmation for destructive non-TTY operations.
-- [ ] Add tests that referenced EXE/BAT/CMD/Python/PowerShell/Shell/JAR files remain untouched in both uninstall modes.
-- [ ] Push `feat: complete cli transfer and uninstall interfaces`.
-- [ ] Verify `cargo test -p aliasmgr-cli --test transfer` and `uninstall` in CI; mark Task 16/17 checkboxes supported by evidence.
+- [x] Add failing tests for TOML export/import, overwrite/rename/ask conflicts, unsupported records, relative paths, and safety warnings.
+- [x] Implement TOML alongside JSON with the same top-level metadata and filtering semantics.
+- [x] Expose CLI `import`, `export`, and `uninstall` dispatch; require confirmation for destructive non-TTY operations.
+- [x] Add tests that referenced EXE/BAT/CMD/Python/PowerShell/Shell/JAR files remain untouched in both uninstall modes.
+- [x] Push `feat: complete cli transfer and uninstall interfaces`.
+- [x] Verify fast CI and the full integration matrix; mark Task 16/17 checkboxes supported by evidence.
 
 ### Task 5: Documentation and CLI release boundary
 
