@@ -25,3 +25,15 @@ pub fn get(config_dir: Option<&str>, name: &str) -> Result<Option<AliasRecord>, 
 pub fn list(config_dir: Option<&str>) -> Result<Vec<AliasRecord>, AliasError> { database(config_dir)?.list_aliases() }
 pub fn remove(config_dir: Option<&str>, name: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let alias = database.get_alias_by_name(name)?; match alias { Some(alias) => database.delete_alias(alias.id), None => Ok(false) } }
 pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.enabled = enabled; database.update_alias(&alias) }
+
+pub fn shell_detect() -> aliasmgr_core::detection::DetectionResult { aliasmgr_core::detection::detect(&aliasmgr_core::detection::DetectionContext { explicit: None, parent_shell: None, shell_env: std::env::var("SHELL").ok(), login_shell: None }) }
+pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasError> { let aliases = list(config_dir)?; if dry_run { return Ok(aliases.iter().map(|a| format!("{} -> {}", a.name, a.executable)).collect::<Vec<_>>().join("\n")); } let root = config_dir.unwrap_or(".alias-manager"); let shells = aliases.iter().flat_map(|a| a.shells.clone()).collect::<Vec<_>>(); let receipt = aliasmgr_core::sync::SyncCoordinator::new(root).apply(&aliases, &shells, 1)?; Ok(format!("synced {} shell results", receipt.results.len())) }
+pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String { let root = config_dir.unwrap_or(".alias-manager"); match shell { "zsh" => format!("source '{root}/generated/zsh.sh'"), "powershell5" => format!(". '{root}/generated/powershell5.ps1'"), "powershell7" => format!(". '{root}/generated/powershell7.ps1'"), _ => format!(". '{root}/generated/bash.sh'"), } }
+pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> { let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new)); let mut findings = Vec::new(); if !paths.root.join("aliases.db").exists() { findings.push("数据库文件缺失".into()); } if !paths.generated_path("bash").exists() { findings.push("Bash 生成文件缺失".into()); } Ok(findings) }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dry_run_and_reload_are_non_mutating_helpers() { assert!(reload_print(Some("cfg"), "bash").contains("generated/bash.sh")); }
+}

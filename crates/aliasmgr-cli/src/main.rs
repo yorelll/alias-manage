@@ -21,6 +21,11 @@ fn main() {
         cli::Command::Remove { name, .. } => commands::remove(cli.config_dir.as_deref(), name).map(|_| messages::ALIAS_REMOVED.to_string()),
         cli::Command::Enable { name } => commands::enable(cli.config_dir.as_deref(), name, true).map(|_| messages::ALIAS_ADDED.to_string()),
         cli::Command::Disable { name } => commands::enable(cli.config_dir.as_deref(), name, false).map(|_| messages::ALIAS_REMOVED.to_string()),
+        cli::Command::Sync { dry_run } => commands::sync(cli.config_dir.as_deref(), *dry_run),
+        cli::Command::Reload { print } => Ok(if *print { commands::reload_print(cli.config_dir.as_deref(), "bash") } else { messages::RELOAD_REQUIRED.to_string() }),
+        cli::Command::Doctor => commands::doctor(cli.config_dir.as_deref()).map(|findings| findings.join("\n")),
+        cli::Command::Shell { command: cli::ShellCommand::Detect } => Ok(format!("{:?}", commands::shell_detect())),
+        cli::Command::Shell { .. } => Ok("shell operation requested".into()),
         _ => Ok(format!("aliasmgr foundation parsed: {:?}", cli.command)),
     };
     match result { Ok(output) => println!("{output}"), Err(error) => { eprintln!("{error}"); std::process::exit(exit_code::exit_code(&error)); } }
