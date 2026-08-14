@@ -1524,15 +1524,15 @@ Task 1 CI enhancements adopted:
 - [x] 加载块**始终追加到文件末尾**；检测到已有加载块不在末尾时返回可报告状态（供 `doctor` 提示“可能被后续配置覆盖”），提供显式的“移动到末尾”操作但不自动执行。
 - [x] 加载块中写入已解析的绝对生成文件路径，变量名使用 `__aliasmgr_generated_file` / `__AliasMgrGeneratedFile`，Bash 用 `unset -v` 清理。
 - [x] 写入前创建时间戳备份到 `backups/rc/`，按 §2.4 的保留策略清理。
-- [ ] 对被手工修改的生成文件比较 `shell_state.file_checksum` 与磁盘内容 checksum，返回需要用户决策的状态。
-- [ ] 将“当前托管名 ∪ 未过期 tombstone”清单写入生成文件，并让清理逻辑在定义之前执行；验证删除/禁用/改名后 reload 不残留旧定义（这是 §5.1.1 的核心，必须有真实 Shell 回归测试）。
+- [x] 对被手工修改的生成文件提供内容 checksum 比较函数，并以回归测试识别编辑（`sync::verify_file_checksum`，fast CI `31790578135`）。需要用户决策的 doctor/CLI 状态仍待后续 slice。
+- [x] 将当前托管名与 retired 名清单写入生成文件 metadata，并让已有 cleanup 在定义之前执行；真实删除/禁用/改名 reload 回归仍待后续同步 slice。
 - [ ] 实现定义指纹比对，避免误删用户在会话中自行重建的同名定义；跳过项进入跳过清单。
 - [ ] 强制覆盖已有 alias/function 时把原定义快照写入 `overridden_definitions`；无法解析时置 `recoverable = 0`，并在 CLI/GUI 中提示用户。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core loader`，预期全部通过。
 - [x] 提交 `feat: manage shell loader blocks safely`。
 
-- [x] 已完成：成对 marker、追加末尾、幂等、删除、绝对路径、RC 备份和 loader CI 测试。
-- [ ] 待完成：手工修改 checksum 决策、指纹保护、tombstone cleanup、override recovery、symlink 和行尾保持。
+- [x] 已完成：成对 marker、追加末尾、幂等、删除、绝对路径、RC 备份、symlink/行尾行为和 generated metadata/checksum verification（fast CI `31790578135`，integration `31792342413`）。
+- [ ] 待完成：手工修改后的 doctor/CLI 决策状态、指纹保护、真实 tombstone reload 回归和 override recovery。
 
 ### Task 11：实现原子同步、journal 和回滚
 
