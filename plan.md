@@ -1552,13 +1552,13 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-cli/src/commands.rs`
 - Test: `crates/aliasmgr-cli/tests/transfer.rs`
 
-- [ ] 先写导出再导入的字段保真测试和敏感环境变量过滤测试。
-- [ ] 导出包含 `format_version`、`exported_at`、`exported_by_version`；先写 `format_version` 过高被拒绝、缺失被拒绝的测试。
-- [ ] 实现 JSON/TOML 导出、冲突策略 `skip|overwrite|rename|ask` 和导入安全报告。
-- [ ] 导入相对路径时要求用户选择基准目录或拒绝导入；`advanced_shell_mode`/`RawShellCommand` 记录标记为 unsupported 并跳过。
-- [ ] 不执行导入文件中的高级命令；缺失目标、网络路径、全局可写目录目标和危险命令只生成警告或阻止同步。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test transfer`，预期全部通过。
-- [ ] 提交 `feat: add safe alias import and export`。
+- [x] 先写导出再导入的字段保真测试和敏感环境变量过滤测试。
+- [x] 导出包含 `format_version`、`exported_at`、`exported_by_version`；先写 `format_version` 过高被拒绝、缺失被拒绝的测试。
+- [x] 实现 JSON/TOML 导出、冲突策略 `skip|overwrite|rename|ask` 和导入安全报告。
+- [x] 导入相对路径时要求用户选择基准目录或拒绝导入；`advanced_shell_mode`/`RawShellCommand` 记录标记为 unsupported 并跳过。
+- [x] 不执行导入文件中的高级命令；缺失目标、网络路径、全局可写目录目标和危险命令只生成警告或阻止同步。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test transfer`，预期全部通过。
+- [x] 提交 `feat: add safe alias import and export`。
 
 ### Task 17：实现卸载清理
 
