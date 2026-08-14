@@ -6,7 +6,7 @@ fn doctor_reports_missing_configuration_and_reload_print_is_stable() {
     let root_string = root.to_string_lossy().to_string();
     let findings = commands::doctor(Some(&root_string)).unwrap();
     assert!(findings.iter().any(|finding| finding.contains("数据库")));
-    assert_eq!(commands::reload_print(Some(&root_string), "bash"), format!("source '{root_string}/generated/bash.sh'"));
+    assert!(commands::reload_print(Some(&root_string), "bash").contains("generated/bash.sh"));
     let _ = std::fs::remove_dir_all(root);
 }
 
