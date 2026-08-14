@@ -90,7 +90,7 @@ jobs:
         run: cargo test -p aliasmgr-tests --test lock_process
       - name: Run CLI layered evidence test
         if: matrix.test == 'cli_layers'
-        shell: ${{ matrix.shell }}
+        shell: bash
         run: cargo test -p aliasmgr-tests --test cli_layers
       - name: Run core tests
         if: matrix.test == 'bash' || matrix.test == 'zsh_shell'
