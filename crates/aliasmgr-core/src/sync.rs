@@ -2,8 +2,11 @@ use crate::{error::AliasError, lock::FileLock, model::{AliasRecord, ShellKind, S
 use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, time::Duration};
 
-fn content_checksum(content: &str) -> String { let mut digest = Sha256::new(); digest.update(content.lines().filter(|line| !line.starts_with("# file_checksum:")).collect::<Vec<_>>().join("\n").as_bytes()); format!("{:x}", digest.finalize()) }
+pub fn content_checksum(content: &str) -> String { let mut digest = Sha256::new(); digest.update(content.lines().filter(|line| !line.starts_with("# file_checksum:")).collect::<Vec<_>>().join("\n").as_bytes()); format!("{:x}", digest.finalize()) }
 
+pub fn verify_file_checksum(content: &str, expected: &str) -> bool { content_checksum(content) == expected }
+
+fn metadata_line(name: &str, values: &[String]) -> String { format!("# {name}: {}\n", values.join(" ")) }
 pub struct SyncCoordinator { pub config_dir: PathBuf }
 
 pub fn shell_status(applied_revision: i64, current_revision: i64, loader_installed: bool, error: Option<&str>) -> ShellStatus {
@@ -59,8 +62,10 @@ impl SyncCoordinator {
     }
 
     fn render_shell(&self, aliases: &[AliasRecord], shell: &ShellKind, revision: i64) -> Result<String, AliasError> {
-        let mut output = format!("# Alias Manager\n# revision: {revision}\n# managed: {}\n", aliases.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(" "));
         let names = crate::model::ManagedNameSet { current: aliases.iter().map(|a| a.name.clone()).collect(), retired: Vec::new() };
+        let mut output = format!("# Alias Manager\n# revision: {revision}\n");
+        output.push_str(&metadata_line("managed", &names.current));
+        output.push_str(&metadata_line("retired", &names.retired));
         for alias in aliases.iter().filter(|alias| alias.enabled) { output.push_str(&match shell { ShellKind::Bash => bash::render(alias, &names)?, ShellKind::Zsh => zsh::render(alias, &names)?, ShellKind::PowerShell5 | ShellKind::PowerShell7 => powershell::render(alias, shell.clone(), &names)?, _ => return Err(AliasError::ShellNotInstalled) }); }
         Ok(output)
     }
@@ -76,8 +81,20 @@ mod tests {
         let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() };
         SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap();
         let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
-        assert!(content.contains("# revision: 2")); assert!(content.contains("# file_checksum:"));
+        assert!(content.contains("# revision: 2"));
+        assert!(content.contains("# managed: gs"));
+        assert!(content.contains("# retired: \n"));
+        let checksum = content.lines().find_map(|line| line.strip_prefix("# file_checksum: ")).unwrap();
+        assert!(verify_file_checksum(&content, checksum));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn checksum_verification_detects_manual_generated_file_edits() {
+        let original = "# revision: 2\n# managed: gs\n# retired: \nfunction gs() { command git \"$@\"; }\n# file_checksum: ignored\n";
+        let checksum = content_checksum(original);
+        assert!(verify_file_checksum(original, &checksum));
+        assert!(!verify_file_checksum(&original.replace("command git", "command rm"), &checksum));
     }
 
     #[test]
