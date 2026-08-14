@@ -1287,6 +1287,9 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 【CI】建立 `crates/aliasmgr-tests` 空集成测试 crate，在 CI 上验证 `cargo test -p aliasmgr-tests` 能运行（确认集成测试不放在 workspace 根 `tests/`，否则不会被编译）。
 - [x] 提交 `chore: initialize Rust workspace`。
 
+- [x] 已完成：Workspace manifests、core smoke test、bundled SQLite、依赖方向、Linux/Windows fast CI、fs4 独立进程锁测试和 Tauri Linux 依赖文档。
+- [ ] 待完成：GUI job 启用后的 npm cache 配置。
+
 Task 1 CI enhancements adopted:
 - Rust cache: implemented with `Swatinem/rust-cache` in fast and integration workflows.
 - npm cache: deferred until GUI jobs enter CI; no frontend dependency install exists in the current workspace.
