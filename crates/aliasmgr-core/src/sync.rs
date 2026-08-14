@@ -1,5 +1,8 @@
 use crate::{error::AliasError, lock::FileLock, model::{AliasRecord, ShellKind, ShellStatus, ShellSyncResult, SyncReceipt}, shells::{bash, powershell, zsh}};
+use sha2::{Digest, Sha256};
 use std::{fs, path::PathBuf, time::Duration};
+
+fn content_checksum(content: &str) -> String { let mut digest = Sha256::new(); digest.update(content.lines().filter(|line| !line.starts_with("# file_checksum:")).collect::<Vec<_>>().join("\n").as_bytes()); format!("{:x}", digest.finalize()) }
 
 pub struct SyncCoordinator { pub config_dir: PathBuf }
 
@@ -18,16 +21,20 @@ impl SyncCoordinator {
         fs::create_dir_all(self.config_dir.join("generated"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
         let journal = self.config_dir.join("operation.journal");
-        fs::write(&journal, format!("revision_from={}\nrevision_to={}\nstate=prepared\nbackups=[]\n", revision.saturating_sub(1), revision))?;
+        let revision_from = revision.saturating_sub(1);
+        fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=prepared\nbackups=[]\n"))?;
         let mut results = Vec::new();
         for shell in shells {
             let path = self.generated_path(shell);
             let temp = path.with_extension(format!("tmp.{}", std::process::id()));
             match self.render_shell(aliases, shell, revision) {
                 Ok(body) => {
+                    let checksum = content_checksum(&body);
+                    let body = format!("{body}# file_checksum: {checksum}\n");
                     fs::write(&temp, &body)?;
                     fs::rename(&temp, &path)?;
                     results.push(ShellSyncResult { shell: shell.clone(), status: shell_status(revision, revision, true, None), error: None });
+                    fs::write(self.config_dir.join(format!("shell_state.{shell:?}")), format!("applied_revision={revision}\nfile_checksum={checksum}\nstatus=ok\n"))?;
                 }
                 Err(error) => {
                     let message = error.to_string();
@@ -63,6 +70,16 @@ impl SyncCoordinator {
 mod tests {
     use super::*;
     use crate::model::TargetType;
+    #[test]
+    fn generated_files_include_stable_checksum_metadata() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-checksum-{}", std::process::id()));
+        let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() };
+        SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap();
+        let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
+        assert!(content.contains("# revision: 2")); assert!(content.contains("# file_checksum:"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn computes_shell_states() {
         assert_eq!(shell_status(2, 2, true, None), ShellStatus::Ok);
