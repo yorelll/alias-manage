@@ -501,12 +501,18 @@ mod tests {
             Err(AliasError::CaseFoldConflict(name)) if name == "build"
         ));
 
-        let mut updated = database.get_alias(first.id).unwrap().unwrap();
-        updated.name = "build".into();
-        updated.record_checksum = record_checksum(&updated).unwrap();
+        let mut bash_alias = AliasRecord {
+            name: "other".into(),
+            executable: "tool".into(),
+            ..Default::default()
+        };
+        database.insert_alias(&bash_alias).unwrap();
+        bash_alias.name = "Build".into();
+        bash_alias.shells = vec![crate::model::ShellKind::PowerShell5];
+        bash_alias.record_checksum = record_checksum(&bash_alias).unwrap();
         assert!(matches!(
-            database.update_alias(&updated),
-            Err(AliasError::CaseFoldConflict(name)) if name == "build"
+            database.update_alias(&bash_alias),
+            Err(AliasError::CaseFoldConflict(name)) if name == "Build"
         ));
     }
 
@@ -582,11 +588,41 @@ mod tests {
     #[test]
     fn legacy_empty_checksum_is_rejected_when_read() {
         let database = Database::open_in_memory().unwrap();
+        let id = Uuid::new_v4();
+        let now = Utc::now();
+        let legacy = AliasRecord {
+            id,
+            name: "legacy".into(),
+            executable: "tool".into(),
+            created_at: now,
+            updated_at: now,
+            ..Default::default()
+        };
         database
             .conn
             .execute(
-                "INSERT INTO aliases (id,name,name_folded,target_type,executable,fixed_args_json,shells_json,created_at,updated_at) VALUES (?1,'legacy','legacy','native_executable','tool','[]','[\"bash\"]',?2,?2)",
-                params![Uuid::new_v4().to_string(), Utc::now().to_rfc3339()],
+                "INSERT INTO aliases (id,name,name_folded,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+                params![
+                    legacy.id.to_string(),
+                    legacy.name,
+                    "legacy",
+                    serde_json::to_string(&legacy.target_type).unwrap(),
+                    legacy.executable,
+                    serde_json::to_string(&legacy.fixed_args).unwrap(),
+                    legacy.pass_args,
+                    legacy.working_directory,
+                    serde_json::to_string(&legacy.environment).unwrap(),
+                    serde_json::to_string(&legacy.shells).unwrap(),
+                    legacy.enabled,
+                    legacy.advanced_shell_mode,
+                    serde_json::to_string(&legacy.tags).unwrap(),
+                    serde_json::to_string(&legacy.path_mode).unwrap(),
+                    serde_json::to_string(&legacy.path_origin).unwrap(),
+                    legacy.created_at.to_rfc3339(),
+                    legacy.updated_at.to_rfc3339(),
+                    "",
+                    legacy.revision,
+                ],
             )
             .unwrap();
         assert!(matches!(
