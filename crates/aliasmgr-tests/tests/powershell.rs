@@ -25,8 +25,9 @@ fn generated_powershell_script_passes_parser_in_windows_powershell_5_1() {
     fs::create_dir_all(&root).unwrap();
     let path = root.join("generated.ps1");
     fs::write(&path, script).unwrap();
-    let probe = "$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$errors); if ($errors) { exit 1 }";
-    let status = Command::new(command).args(["-NoProfile", "-NonInteractive", "-Command", probe, path.to_str().unwrap()]).status().unwrap();
+    let path_literal = path.to_string_lossy().replace('\'', "''");
+    let probe = format!("& {{ param($path) $tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors); if ($errors.Count -gt 0) {{ exit 1 }} }} -path '{}'", path_literal);
+    let status = Command::new(command).args(["-NoProfile", "-NonInteractive", "-Command", &probe]).status().unwrap();
     assert!(status.success());
     let _ = fs::remove_dir_all(root);
 }
@@ -57,8 +58,9 @@ fn powershell_5_1_parser_accepts_generated_file() {
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("generated.ps1");
     std::fs::write(&path, script).unwrap();
-    let probe = "$errors = $null; [System.Management.Automation.Language.Parser]::ParseFile($args[0], [ref]$null, [ref]$errors); if ($errors) { exit 1 }";
-    let status = std::process::Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", probe, path.to_str().unwrap()]).status().unwrap();
+    let path_literal = path.to_string_lossy().replace('\'', "''");
+    let probe = format!("& {{ param($path) $tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors); if ($errors.Count -gt 0) {{ exit 1 }} }} -path '{}'", path_literal);
+    let status = std::process::Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &probe]).status().unwrap();
     assert!(status.success());
     let _ = std::fs::remove_dir_all(root);
 }
