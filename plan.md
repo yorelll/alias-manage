@@ -861,10 +861,10 @@ GUI 使用 Tauri 2，所有业务操作调用 Rust 核心命令，不复制 CLI 
 
 ### 7.1 GUI 页面（MVP 范围）
 
-- 主列表：状态、别名、目标、类型、Shell、参数透传、更新时间、冲突状态、per-shell 同步状态（`ok`/`stale`/`failed`）；
-- 搜索：名称、目标、描述、标签、Shell、启用状态和模糊匹配；
-- 新增/编辑向导：名称、目标类型、结构化参数（含 `{{args}}` 占位符可视化）、工作目录、环境变量、标签、Shell、预览、测试确认；
-- 详情页：文件存在性、生成代码、配置路径、最近同步结果、诊断信息、被覆盖的原定义与恢复入口；
+- 主列表：状态、别名、**描述备忘**、目标、类型、Shell、参数透传、**标签**、更新时间、冲突状态、per-shell 同步状态（`ok`/`stale`/`failed`）；描述较长时列内截断并在悬浮/详情中完整展示，标签以彩色 chip 呈现；
+- 搜索：名称、目标、描述、标签、Shell、启用状态的自由文本模糊匹配，**叠加标签分面（tag facet）硬筛选**（见 §7.3、§8.1）；
+- 新增/编辑向导：名称、**描述备忘**、目标类型、结构化参数（含 `{{args}}` 占位符可视化）、工作目录、环境变量、**标签编辑（chip 增删）**、Shell、预览、测试确认；
+- 详情页：完整描述备忘、标签、文件存在性、生成代码、配置路径、最近同步结果、诊断信息、被覆盖的原定义与恢复入口；
 - 设置：备份轮转、日志轮转、默认 Shell、配置目录、相对路径开关、卸载保留/清理策略。
 
 ### 7.2 测试运行
@@ -1352,8 +1352,12 @@ Task 1 CI enhancements adopted:
 - [x] 设置连接 PRAGMA：`journal_mode = WAL`、`foreign_keys = ON`、`busy_timeout = 5000`、`synchronous = FULL`；检测到不可靠文件系统时降级为 `DELETE` 并发出 `UnreliableFilesystem`。
 - [x] 实现 `Database::open(path)`、`migrate()`、`insert_alias()`、`get_alias()`、`list_aliases()`、`update_alias()`、`delete_alias()`。
 - [x] 实现 `shell_state`、`retired_names`、`overridden_definitions` 的读写：`upsert_shell_state()`、`retire_name()`、`managed_name_set(shell)`、`prune_retired_names()`、`record_override()`。
-- [ ] 维护 `name_folded` 列，并实现大小写折叠冲突查询（面向 PowerShell 的记录）。
-- [ ] 所有 JSON 字段通过 Serde 编解码，布尔值使用 SQLite integer 映射，时间使用 RFC3339。
+- [x] 维护 `name_folded` 列，并实现大小写折叠冲突查询（面向 PowerShell 的记录）。
+  - [x] 基础列、查询 API 和 CI 单元测试。
+  - [ ] 新增/更新持久化入口统一拒绝大小写折叠冲突。
+- [x] 所有 JSON 字段通过 Serde 编解码，布尔值使用 SQLite integer 映射，时间使用 RFC3339。
+  - [x] AliasRecord CRUD round-trip tests.
+  - [x] Linux/Windows workspace evidence.
 - [ ] 实现唯一名称冲突到 `AliasConflict` 的错误映射，并区分“同名”与“大小写冲突”两种消息。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
 - [x] 提交 `feat: add transactional sqlite storage`。

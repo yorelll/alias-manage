@@ -22,6 +22,8 @@ A broad checkbox remains unchecked until every required subordinate item is comp
 
 ### Phase 2: Layered CI verification
 
+Status: completed for the current non-GUI matrix; additional behavior gaps remain tracked as subordinate Task 1–17 checkboxes.
+
 Keep `ci.yml` fast and deterministic:
 
 - Linux lint and format
