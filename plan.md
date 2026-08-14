@@ -1404,7 +1404,7 @@ Task 1 CI enhancements adopted:
 - [x] 默认生成函数；只有满足 §3.2 全部“简单条件”才生成 `alias name='...'`，复杂命令使用 `command ... "$@"`。
 - [x] 实现 `render_preemption()`：每个函数定义前输出独立一行 `unalias <name> 2>/dev/null`，前后加空行确保它与函数定义处于不同解析单元（否则交互式 Shell 的 alias 展开会先发生并导致 `syntax error`）。
 - [x] 实现 `render_cleanup()`：按“当前托管名 ∪ 未过期 tombstone”清理，alias 用 `unalias`、function 用 `unset -f`，并在清理前用 `declare -f` / `alias` 取值与内联指纹表比对，不一致则跳过并计入跳过清单。
-- [ ] 在生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单（`file_checksum` 计算时排除该行本身）。
+- [x] 在生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单（`file_checksum` 计算时排除该行本身）。
 - [x] 工作目录使用 `( cd -- '<dir>' && command ... )` 子 shell；环境变量使用 `env VAR=value` 前缀，不使用 `export`。
 - [ ] 实现 Bash/Zsh 配置路径、加载块**追加到文件末尾**、幂等检测、标记块删除和 `bash -n`/`zsh -n` 检查；加载块中写入已解析的绝对路径。
 - [ ] 实现 RC 文件为 symlink 时就地修改目标文件的逻辑（保持 symlink 不被原子替换掉），并对不可信链路返回 `UnsafePath`。

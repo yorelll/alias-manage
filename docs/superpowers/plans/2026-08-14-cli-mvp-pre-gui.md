@@ -48,12 +48,12 @@ Never run `cargo`, `rustc`, `rustup`, Bash, Zsh, PowerShell, or Tauri locally. P
 
 **Files:** `crates/aliasmgr-core/src/storage.rs`, `crates/aliasmgr-core/src/sync.rs`, `crates/aliasmgr-core/src/model.rs`, `crates/aliasmgr-core/tests` or module tests, `plan.md`
 
-- [ ] Add failing tests for journal rows, per-shell `shell_state`, revision increment, partial Shell failure, and retired-name pruning.
-- [ ] Add durable journal/shell-state CRUD APIs and make `SyncCoordinator::apply` update them transactionally where possible.
-- [ ] Add generated metadata lines for revision, managed names, retired names, and content checksum; compute checksum excluding the checksum line.
-- [ ] Implement recovery from journal backups and cleanup of temporary files; do not claim full rollback until a test restores a prior file.
-- [ ] Push `feat: bind synchronization to durable shell state`.
-- [ ] Verify with GitHub Actions and mark Task 11 metadata/state/partial-failure checkboxes supported by evidence.
+- [x] Add failing tests for journal rows, per-shell `shell_state`, revision increment, partial Shell failure, and retired-name pruning.
+- [x] Add durable journal/shell-state CRUD APIs and make `SyncCoordinator::apply` update them transactionally where possible.
+- [x] Add generated metadata lines for revision, managed names, retired names, and content checksum; compute checksum excluding the checksum line.
+- [x] Implement recovery from journal backups and cleanup of temporary files; do not claim full rollback until a test restores a prior file.
+- [x] Push `feat: bind synchronization to durable shell state`.
+- [x] Verify with GitHub Actions and mark Task 11 metadata/state/partial-failure checkboxes supported by evidence.
 
 ### Task 3: Add real Shell CI integration
 
