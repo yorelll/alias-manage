@@ -19,7 +19,6 @@ fn main() {
         cli::Command::Update { name } => commands::update(cli.config_dir.as_deref(), name, "git", Vec::new()).map(|_| "别名已更新。".to_string()),
         cli::Command::Find { query, .. } => commands::find(cli.config_dir.as_deref(), query).map(|values| output::table(&values.iter().map(|value| output::AliasRow { name: value.name.clone(), target: value.executable.clone(), enabled: value.enabled }).collect::<Vec<_>>())),
         cli::Command::Remove { .. } => Ok(messages::ALIAS_REMOVED.to_string()),
-        cli::Command::Rename { .. } => Ok("别名已改名。".to_string()),
         cli::Command::Sync { dry_run } => commands::sync(cli.config_dir.as_deref(), *dry_run),
         cli::Command::Reload { print } => Ok(if *print { commands::reload_print(cli.config_dir.as_deref(), "bash") } else { messages::RELOAD_REQUIRED.to_string() }),
         cli::Command::Doctor => commands::doctor(cli.config_dir.as_deref()).map(|findings| findings.join("\n")),
