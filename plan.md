@@ -802,8 +802,8 @@ aliasmgr add <name> --exec <program> [--arg <value>]... [--shell <shells>]
 aliasmgr remove <name> [--yes]
 aliasmgr update <name> [fields...]
 aliasmgr get <name> [--json]
-aliasmgr find <query> [--fuzzy] [--field <field>] [--limit <n>]
-aliasmgr list [--sort <field>] [--desc] [--shell <shell>] [--tag <tag>] [--limit <n>]
+aliasmgr find <query> [--fuzzy] [--field <field>] [--tag <tag>]... [--limit <n>]
+aliasmgr list [--sort <field>] [--desc] [--shell <shell>] [--tag <tag>]... [--limit <n>]
 aliasmgr enable <name>
 aliasmgr disable <name>
 aliasmgr sync [--shell <shell>] [--dry-run]
@@ -871,6 +871,29 @@ GUI 使用 Tauri 2，所有业务操作调用 Rust 核心命令，不复制 CLI 
 
 测试按钮必须显示最终参数和可能的副作用，要求用户主动确认。普通模式测试通过 Rust `Command` 数组执行，不经过 Shell；高级模式测试在 MVP 中不执行。
 
+### 7.3 描述备忘与标签
+
+`AliasRecord.description` 与 `AliasRecord.tags` 是既有字段，本节规定其在 GUI 中的交互，不引入新数据结构。
+
+**描述备忘（description）**
+
+- 用途：让用户记录别名的作用（例如“备份工作目录到 NAS”），便于日后回忆；纯备注，不参与执行。
+- 编辑：向导/编辑页提供多行文本框，长度上限与 core 校验一致（无特殊上限则由 core `validate_alias` 给出，UI 侧作软提示）。
+- 展示：主列表列内截断并在悬浮 tooltip 与详情页完整展示；描述参与自由文本搜索（§8.1 的“描述/目标连续子串”评分）。
+
+**标签（tags）**
+
+- 用途：用户为别名打分类标签，如 `python`、`work`、`git`；一个别名可有多个标签。
+- 编辑：向导/编辑页以可增删的 chip 输入呈现；输入时对已存在标签做自动补全；标签做规范化（trim、大小写处理策略与 core 一致）与去重；非法字符按 core 校验拒绝。
+- 展示：主列表与详情页以彩色 chip 呈现，同名标签颜色稳定（按标签名哈希取色）。
+
+**标签分面筛选（tag facet，本次新增交互）**
+
+- 与自由文本搜索是两种不同机制：自由文本是**评分排序**（标签完全匹配得 350 分，见 §8.1），标签分面是**集合成员硬筛选**（只保留“拥有所选标签”的别名）。
+- 交互：搜索栏旁展示当前库中全部标签的 chip（可附计数）；点击一个或多个标签即加入筛选；再次点击取消；提供“清除全部”。
+- 组合语义：多标签默认 **AND（交集，必须同时拥有所有所选标签）**；自由文本查询与标签分面**同时生效**（先按标签硬筛选缩小集合，再在其上做文本评分排序）。OR（并集）语义留待后续，MVP 不做切换。
+- **必须经 core 执行：** 分面筛选通过 core `SearchQuery` 的标签筛选能力完成（见 §8.1），GUI 不在前端对全量结果做客户端过滤，以免与 CLI `list --tag` 行为分叉、并在大数据量下失效。空标签库时不显示分面区。
+
 ---
 
 ## 8. 搜索、排序、冲突和导入导出
@@ -890,6 +913,13 @@ GUI 使用 Tauri 2，所有业务操作调用 Rust 核心命令，不复制 CLI 
 | 编辑距离 ≤ 2            | 100  |
 
 相同评分按名称升序、再按 `updated_at` 降序稳定排序。`--limit` 默认 50（`--limit 0` 表示不限制），GUI 默认分页 100 条。排序字段：`name`、`updated_at`、`created_at`、`target_type`、`enabled`。
+
+**评分式匹配 vs 标签分面硬筛选（两种独立机制）：** 上表的“标签完全匹配 350”是**自由文本查询命中标签时的加分**；标签分面（tag facet）是**集合成员硬筛选**，与文本评分无关。`SearchQuery` 因此包含独立的 `tag_filter: Vec<String>` 字段：
+
+- `tag_filter` 非空时，只保留“拥有其中全部标签”的别名（AND / 交集语义），再对该子集做文本评分排序；
+- `tag_filter` 为空时不做标签硬筛选；
+- CLI `list --tag <tag>`（可重复，多个即 AND）与 GUI 的标签分面点选**共用**这一 `tag_filter`，保证两端行为一致；
+- 标签规范化（trim、大小写策略）在写入与筛选两侧必须使用同一规则，避免 `Work` 与 `work` 被当成两个标签。
 
 ### 8.2 名称校验
 
@@ -1257,14 +1287,6 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 【CI】建立 `crates/aliasmgr-tests` 空集成测试 crate，在 CI 上验证 `cargo test -p aliasmgr-tests` 能运行（确认集成测试不放在 workspace 根 `tests/`，否则不会被编译）。
 - [x] 提交 `chore: initialize Rust workspace`。
 
-#### Task 1 reconciliation
-- [ ] **总纲：Task 1 workspace initialization is complete.**
-  - [x] Workspace manifests, core smoke test, bundled SQLite, and dependency direction exist.
-  - [x] Linux/Windows fast CI builds and tests the workspace.
-  - [x] Cross-process fs4 lock smoke tests run in the integration matrix.
-  - [x] Tauri Linux dependency decision is documented.
-  - [ ] GUI npm cache is configured when GUI jobs enter CI.
-
 Task 1 CI enhancements adopted:
 - Rust cache: implemented with `Swatinem/rust-cache` in fast and integration workflows.
 - npm cache: deferred until GUI jobs enter CI; no frontend dependency install exists in the current workspace.
@@ -1304,13 +1326,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core model`，预期全部通过。
 - [x] 提交 `feat: add alias domain model`。
 
-#### Task 2 reconciliation
-- [ ] **总纲：Task 2 model, error, and serialization contract is complete.**
-  - [x] Domain structs/enums and serde round-trip tests exist.
-  - [x] Unknown enum values are rejected.
-  - [ ] `record_checksum` calculation is implemented and verified.
-  - [x] RFC3339 timestamps and UUID string serialization are tested.
-  - [x] Linux/Windows CI runs model tests.
+- [x] 已完成：领域结构、枚举、Serde 往返、未知枚举拒绝、RFC3339/UUID 序列化和 Linux/Windows CI 测试。
+- [ ] 待完成：`record_checksum` 计算、稳定性测试和篡改检测。
 
 ### Task 3：实现名称校验和冲突数据结构
 
@@ -1328,13 +1345,9 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core validation`，预期全部通过。
 - [x] 提交 `feat: add alias validation`。
 
-#### Task 3 reconciliation
-- [ ] **总纲：Task 3 validation and conflict contract is complete.**
-  - [x] Name syntax/length, target, shell, placeholder, and advanced-mode tests exist.
-  - [x] PowerShell reserved-name baseline exists.
-  - [x] PowerShell case-fold conflict query exists in storage.
-  - [ ] Validation directly rejects case-fold conflicts before persistence/update.
-  - [x] Linux/Windows CI runs validation tests.
+- [x] 已完成：名称、目标、Shell、占位符、高级模式和 PowerShell 保留名称基础校验。
+- [x] 已完成：PowerShell 大小写折叠冲突查询入口和 validation CI 测试。
+- [ ] 待完成：新增/更新持久化入口统一拒绝大小写折叠冲突。
 
 ### Task 4：实现 SQLite 存储和迁移
 
@@ -1362,15 +1375,9 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
 - [x] 提交 `feat: add transactional sqlite storage`。
 
-#### Task 4 reconciliation
-- [ ] **总纲：Task 4 SQLite storage and migration is complete.**
-  - [x] CRUD, migration, schema version, and rollback tests exist.
-  - [x] SchemaTooNew and migration backup behavior are tested.
-  - [x] JSON/Boolean/RFC3339 storage conversions are covered.
-  - [x] Shell state, retired names, override records, and folded-name APIs exist.
-  - [ ] Conflict errors distinguish exact-name and PowerShell case-fold conflicts.
-  - [ ] Unreliable filesystem detection and WAL fallback are fully implemented.
-  - [x] Linux/Windows workspace CI passes storage tests.
+- [x] 已完成：CRUD、迁移、SchemaTooNew、迁移备份、JSON/Boolean/RFC3339 转换、shell_state/retired_names/override/folded-name API 和 Linux/Windows CI。
+- [ ] 待完成：同名与大小写冲突错误语义完整区分。
+- [ ] 待完成：不可靠文件系统检测和 WAL 降级实现。
 
 ### Task 5：实现搜索和排序
 
@@ -1387,11 +1394,7 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core search`，预期全部通过。
 - [x] 提交 `feat: add alias search and sorting`。
 
-#### Task 5 reconciliation
-- [x] **总纲：Task 5 search and sorting is complete.**
-  - [x] Exact, prefix, substring, fuzzy, and target-field scoring tests exist.
-  - [x] SearchQuery, limits, stable ordering, and field selection exist.
-  - [x] Linux/Windows CI passes search tests.
+- [x] 已完成：完全、前缀、子串、模糊和目标字段评分；SearchQuery、limit、稳定排序和 Linux/Windows CI。
 
 ### Task 6：实现配置路径、权限和文件锁
 
@@ -1411,13 +1414,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core config` 与 `cargo test -p aliasmgr-core lock`（不要在一条命令里传两个过滤参数）。
 - [x] 提交 `feat: add platform paths and config lock`。
 
-#### Task 6 reconciliation
-- [ ] **总纲：Task 6 platform paths, config, permissions, and lock is complete.**
-  - [x] Config path precedence, defaults, directory creation, TOML defaults, and shell path overrides exist.
-  - [x] Rotation and Linux writable-path detection exist.
-  - [x] fs4 lock timeout, owner metadata, and process tests pass on Linux/Windows.
-  - [ ] Windows ACL writable-path detection is fully implemented.
-  - [x] Fast and integration CI evidence exists.
+- [x] 已完成：配置路径优先级、默认值、目录创建、TOML 默认值、Shell 路径覆盖、轮转、Linux writable 检测、fs4 锁和 Linux/Windows CI。
+- [ ] 待完成：Windows ACL writable-path 检测。
 
 ---
 
@@ -1440,12 +1438,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core executor`，预期全部通过。
 - [x] 提交 `feat: add structured command executors`。
 
-#### Task 7 reconciliation
-- [x] **总纲：Task 7 structured executor is complete for the supported MVP target set.**
-  - [x] Structured argv expansion and placeholder tests exist.
-  - [x] Batch safety rejection, working directory, environment, and missing-target tests exist.
-  - [x] Linux/Windows CI passes executor tests.
-  - [ ] Full platform-specific native command argument matrix remains integration/manual evidence.
+- [x] 已完成：结构化 argv、占位符、Batch 安全、工作目录、环境变量、缺失目标和 Linux/Windows CI。
+- [ ] 待完成：完整平台原生命令参数矩阵。
 
 ### Task 8：实现 Bash/Zsh 适配器
 
@@ -1472,13 +1466,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在安装 Bash/Zsh 的 Linux runner 执行真实语法检查，并补一个 oh-my-zsh 环境下的抢占测试。
 - [x] 提交 `feat: generate bash and zsh aliases`。
 
-#### Task 8 reconciliation
-- [ ] **总纲：Task 8 Bash/Zsh adapter is complete.**
-  - [x] POSIX quoting, functions, simple aliases, preemption, cleanup, and loader tests exist.
-  - [x] Bash/Zsh adapter unit tests pass in fast CI.
-  - [x] Integration matrix covers Bash/Zsh adapter paths and Zsh installation.
-  - [ ] Generated metadata, symlink RC handling, and line-ending preservation are complete.
-  - [ ] Real `bash -n`/`zsh -n` execution and oh-my-zsh plugin-order acceptance are complete.
+- [x] 已完成：POSIX quoting、函数、简单 alias、preemption、cleanup、loader 测试、fast CI 和 Bash/Zsh integration matrix。
+- [ ] 待完成：生成 metadata、symlink RC、行尾保持、真实 `bash -n`/`zsh -n` 和 oh-my-zsh 插件顺序验收。
 
 ### Task 9：实现 PowerShell 适配器
 
@@ -1504,12 +1493,8 @@ Task 1 CI enhancements adopted:
 - [ ] 【CI】在 Windows runner 上运行真实 Parser 检查与 PS 5.1/7 双版本参数矩阵（PS 7 已预装，无需安装）。
 - [x] 提交 `feat: generate powershell aliases`。
 
-#### Task 9 reconciliation
-- [ ] **总纲：Task 9 PowerShell 5.1/7 adapter is complete.**
-  - [x] Basic function/Set-Alias rendering, quoting, preemption, and cleanup tests exist.
-  - [x] Windows workspace and integration matrix compile/run adapter tests.
-  - [ ] Real PS 5.1/7 Parser and `Get-Command ls` preemption tests are complete.
-  - [ ] ReadOnly/Constant discovery, profile resolution, BOM/CRLF, ExecutionPolicy, and native argument-version diagnostics are complete.
+- [x] 已完成：基础 function/Set-Alias、quoting、preemption、cleanup、Windows workspace 和 integration adapter tests。
+- [ ] 待完成：真实 PS 5.1/7 Parser、`Get-Command ls`、ReadOnly/Constant discovery、Profile resolution、BOM/CRLF、ExecutionPolicy 和 native 参数版本诊断。
 
 ### Task 10：实现配置加载块管理
 
@@ -1532,13 +1517,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core loader`，预期全部通过。
 - [x] 提交 `feat: manage shell loader blocks safely`。
 
-#### Task 10 reconciliation
-- [ ] **总纲：Task 10 loader block management is complete.**
-  - [x] Paired marker parsing, append-at-end, idempotence, removal, absolute paths, and RC backup tests exist.
-  - [x] Fast CI passes loader tests.
-  - [ ] Generated-file manual-edit checksum decision is implemented.
-  - [ ] Fingerprint-protected tombstone cleanup and override recovery are implemented.
-  - [ ] Symlink and line-ending preservation are verified.
+- [x] 已完成：成对 marker、追加末尾、幂等、删除、绝对路径、RC 备份和 loader CI 测试。
+- [ ] 待完成：手工修改 checksum 决策、指纹保护、tombstone cleanup、override recovery、symlink 和行尾保持。
 
 ### Task 11：实现原子同步、journal 和回滚
 
@@ -1558,13 +1538,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core sync`，预期全部通过。
 - [x] 提交 `feat: add atomic shell synchronization and rollback`。
 
-#### Task 11 reconciliation
-- [ ] **总纲：Task 11 synchronization, journal, and rollback is complete.**
-  - [x] Temp-file atomic replacement, journal text, recovery entrypoint, per-shell receipt, and status helper exist.
-  - [x] Revision/checksum metadata and partial-result tests exist.
-  - [ ] Journal and shell state are bound to durable SQLite transactions.
-  - [ ] Recovery restores prior generated files from backups and supports committed-operation forward recovery.
-  - [ ] Partial failure persists `failed` and `ok` shell states with revision increment in the database.
+- [x] 已完成：临时文件原子替换、journal 文本、recovery 入口、per-shell receipt、status helper、revision/checksum metadata 和 partial-result tests。
+- [ ] 待完成：journal/shell_state 与 SQLite 事务绑定、备份恢复、提交后前滚，以及数据库中的 partial failure 状态持久化。
 
 ### Task 12：实现 Shell 检测和冲突检测
 
@@ -1582,14 +1557,10 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core detection`，预期全部通过。
 - [x] 提交 `feat: detect shells and report conflicts`。
 
-#### Task 12 reconciliation
-- [ ] **总纲：Task 12 shell detection and conflict detection is complete.**
-  - [x] Detection precedence, PATH conflicts, built-in conflicts, and source-line lookup exist.
-  - [x] Linux/Windows integration matrix runs detection-related core tests.
-  - [ ] Windows PowerShell executable discovery distinguishes powershell.exe/pwsh.exe and multiple PS 7 versions.
-  - [ ] Real user/plugin source ordering and reserved alias discovery are verified.
+- [x] 已完成：检测优先级、PATH 冲突、内置冲突、来源行号和 integration core tests。
+- [ ] 待完成：Windows PowerShell 可执行文件/多版本发现，以及真实用户插件来源顺序和保留 alias discovery。
 
----
+  ---
 
 ## 15. 阶段三：Linux CLI 和 Windows CLI 能力
 
@@ -1613,12 +1584,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test parse`，预期全部通过。
 - [x] 提交 `feat: add alias manager cli command model`。
 
-#### Task 13 reconciliation
-- [x] **总纲：Task 13 CLI argument/output layer is complete for the implemented command model.**
-  - [x] Clap command tree and global options are tested.
-  - [x] Stable exit-code mapping, messages, table, JSON, and non-TTY guard exist.
-  - [x] Fast CI passes parser/output tests.
-  - [ ] Every published exit-code row is mapped and regression-tested.
+- [x] 已完成：Clap 命令树、全局参数、退出码基础映射、文案、table、JSON、非 TTY guard 和 parser/output CI。
+- [ ] 待完成：发布退出码表逐行映射和回归测试。
 
 ### Task 14：实现增删改查、搜索、启用和禁用
 
@@ -1631,13 +1598,9 @@ Task 1 CI enhancements adopted:
 - [x] 删除操作默认交互确认，`--yes` 执行非交互删除，并逐 Shell 报告需要重新加载的命令与“当前会话可能仍有旧定义”的提示。
 - [x] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
-- [ ] **总纲：Task 14 CLI CRUD/search/enable/disable is complete.**
-  - [x] Isolated add/get/list/delete/enable/disable/update/rename/find tests exist.
-  - [x] Core delegation and retired-name insertion exist.
-  - [ ] Delete/disable output includes per-shell reload and residual-definition guidance.
-  - [ ] CLI find/list honor all requested fields, sorting, format, and limit options.
-  - [x] Fast CI passes CRUD tests.
-  - [x] 提交 `feat: add cli alias lifecycle commands`。
+- [x] 已完成：隔离 add/get/list/delete/enable/disable/update/rename/find 测试、core delegation、retired-name 插入和 CRUD CI。
+- [ ] 待完成：删除/禁用的逐 Shell reload/残留定义提示；find/list 全字段、排序、format、limit；repeatable `--tag` facet 交集。 
+- [x] 提交 `feat: add cli alias lifecycle commands`。
 
 ### Task 15：实现 sync、doctor 和 shell 子命令
 
@@ -1653,12 +1616,9 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `doctor` 检查：数据库与迁移版本、生成文件存在性、`shell_state` 是否过期（`applied_revision` 落后）、加载块存在性与**是否位于文件末尾**、语法、目标存在性、目标是否位于全局可写目录、权限、`file_checksum`、`.bashrc` 生效性（非交互守卫、login shell 链）、PowerShell ExecutionPolicy（分 5.1/7）、会话清理跳过清单、插件后置覆盖来源。
 - [x] 提供 Bash/Zsh/PowerShell 重新加载命令提示，但不宣称更新了已有父 Shell。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test diagnostics`，预期全部通过。
-- [ ] **总纲：Task 15 CLI sync/doctor/shell management is complete.**
-  - [x] Sync, dry-run, reload, shell detect, doctor, and reload guidance commands exist.
-  - [x] Isolated diagnostics tests and fast CI evidence exist.
-  - [ ] Doctor performs durable shell_state, loader-position, syntax, checksum, permission, and policy diagnostics.
-  - [ ] Shell install/uninstall modifies marked loader blocks idempotently.
-  - [x] 提交 `feat: add cli sync diagnostics and shell management`。
+- [x] 已完成：sync、dry-run、reload、shell detect、doctor、reload guidance、隔离 diagnostics 测试和 fast CI。
+- [ ] 待完成：doctor 的 durable shell_state/loader/syntax/checksum/permission/policy 诊断，以及 Shell install/uninstall 对 marked loader block 的真实幂等修改。
+- [x] 提交 `feat: add cli sync diagnostics and shell management`。
 
 ### Task 16：实现导入导出
 
@@ -1675,12 +1635,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test transfer`，预期全部通过。
 - [x] 提交 `feat: add safe alias import and export`。
 
-#### Task 16 reconciliation
-- [ ] **总纲：Task 16 safe import/export is complete.**
-  - [x] JSON/TOML metadata, sensitive filtering, conflict strategy baseline, unsupported/relative path reporting exist.
-  - [x] Transfer tests and CI evidence exist.
-  - [ ] CLI import/export persists approved records into the database after preview/confirmation.
-  - [ ] Full TOML conflict/safety report matrix is covered.
+- [x] 已完成：JSON/TOML metadata、敏感变量过滤、冲突策略基础、unsupported/relative path 报告、transfer 测试和 CI。
+- [ ] 待完成：CLI import/export 在预览确认后持久化记录，以及完整 TOML conflict/safety report 矩阵。
 
 ### Task 17：实现卸载清理
 
@@ -1699,12 +1655,8 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test uninstall`，预期全部通过。
 - [x] 提交 `feat: add safe uninstall cleanup modes`。
 
-#### Task 17 reconciliation
-- [ ] **总纲：Task 17 uninstall cleanup is complete.**
-  - [x] Retain/purge cleanup, loader removal, generated/database cleanup, and target-file protection tests exist.
-  - [x] Fast CI and integration evidence exist.
-  - [ ] CLI uninstall dispatch performs the core cleanup instead of only acknowledging the request.
-  - [ ] Package-manager postrm and Windows installer cleanup documentation is complete.
+- [x] 已完成：retain/purge cleanup、loader removal、generated/database cleanup、target protection、fast CI 和 integration evidence。
+- [ ] 待完成：CLI uninstall dispatch 真正调用 core cleanup，以及 package-manager postrm/Windows installer 文档。
 
 ---
 
@@ -1725,20 +1677,29 @@ Task 1 CI enhancements adopted:
 - [ ] 通过 `src-tauri/src/commands.rs` 暴露列表、保存、删除、同步、诊断和导入导出接口，所有命令调用 core。
 - [ ] 提交 `feat: initialize tauri gui shell`。
 
-### Task 19：实现列表、搜索和编辑向导
+### Task 19：实现列表、搜索、描述备忘、标签与编辑向导
 
 **Files:**
 - Create: `crates/aliasmgr-gui/ui/src/components/AliasTable.tsx`
 - Create: `crates/aliasmgr-gui/ui/src/components/AliasWizard.tsx`
 - Create: `crates/aliasmgr-gui/ui/src/components/SearchBar.tsx`
+- Create: `crates/aliasmgr-gui/ui/src/components/TagInput.tsx`
+- Create: `crates/aliasmgr-gui/ui/src/components/TagFacet.tsx`
 - Modify: `crates/aliasmgr-gui/ui/src/App.tsx`
+- Modify: `crates/aliasmgr-gui/src-tauri/src/commands.rs`
+- Modify: `crates/aliasmgr-core/src/search.rs`（若 `SearchQuery` 尚无 `tag_filter` 则补齐，见 §8.1）
 - Test: `crates/aliasmgr-gui/ui/tests/aliases.spec.ts`
 
 - [ ] 先写 UI 测试：显示列表、搜索名称、打开向导、拒绝非法名称、拒绝保留名称、选择 Shell、显示预览。
-- [ ] 实现状态、别名、目标、类型、Shell、参数透传、更新时间、冲突状态和 per-shell 同步状态（`ok`/`stale`/`failed`）列。
-- [ ] 向导分为名称、目标类型、结构化参数（含 `{{args}}` 占位符位置的可视化）、执行环境（工作目录 + 环境变量 + 标签）、Shell、预览和测试确认。
+- [ ] 实现状态、别名、描述备忘、目标、类型、Shell、参数透传、标签、更新时间、冲突状态和 per-shell 同步状态（`ok`/`stale`/`failed`）列；描述过长时列内截断 + tooltip 完整展示，标签以颜色稳定的 chip 呈现。
+- [ ] 向导分为名称、描述备忘（多行文本框）、目标类型、结构化参数（含 `{{args}}` 占位符位置的可视化）、执行环境（工作目录 + 环境变量 + 标签编辑）、Shell、预览和测试确认。
+- [ ] `TagInput`：chip 式增删标签，输入时对现有标签自动补全，写入前做 trim/去重/规范化并按 core 校验拒绝非法字符；规范化规则与 core 一致（§7.3、§8.1）。
+- [ ] **标签分面筛选（本次新增）：** `TagFacet` 展示当前库全部标签（可带计数）的可点选 chip，选中一个或多个即筛选，多选为 AND（交集），可清除全部；与自由文本搜索同时生效（先标签硬筛选、再文本评分）。
+- [ ] 分面筛选必须调用 core：经 `SearchQuery.tag_filter` 完成，GUI 不在前端对全量结果做客户端过滤；若 core `SearchQuery` 尚无 `tag_filter`（AND/交集成员筛选），在本任务中补齐 `search.rs` 并加单测，且保证 CLI `list --tag` 与之共用同一实现。
+- [ ] 通过 Tauri command 暴露“列出全部标签及计数”接口供 `TagFacet` 使用，实现仍在 core（如 `Database::tag_counts()`）。
+- [ ] UI 测试补充：编辑并保存描述后在列表/详情可见；标签增删与去重；点选标签分面后列表仅剩含该标签的别名；多标签 AND 生效；文本查询与标签分面组合生效；取消筛选恢复全量。
 - [ ] 文件选择器返回路径默认规范化为绝对路径，并记录 `path_mode = absolute`、`path_origin = gui_file_picker`；相对路径需用户显式勾选后才可保存。
-- [ ] 【CI】在 GitHub Actions 上执行 `npm test` 和 Tauri 类型检查，预期全部通过。
+- [ ] 【CI】在 GitHub Actions 上执行 `npm test`、`cargo test -p aliasmgr-core search`（若改动了 `search.rs`）和 Tauri 类型检查，预期全部通过。
 - [ ] 提交 `feat: add alias management gui workflow`。
 
 ### Task 20：实现诊断、导入导出和卸载设置页
@@ -1913,6 +1874,8 @@ Task 1 CI enhancements adopted:
 - [ ] `--config-dir` / `ALIASMGR_CONFIG_DIR` 覆盖生效，测试不写入真实用户目录。
 - [ ] `sync --dry-run` 不产生任何写入。
 - [ ] GUI 在 **Linux 与 Windows 双平台**完成主列表、向导、预览、测试、诊断和设置（MVP 基础需求）。
+- [ ] GUI 支持描述备忘的编辑与展示、标签的 chip 增删，以及标签分面（AND 交集）筛选，且与自由文本搜索可组合。
+- [ ] 标签分面与 CLI `--tag` 共用 core `SearchQuery.tag_filter`，GUI 不做客户端过滤。
 - [ ] GUI 不复制核心业务逻辑。
 
 ### 安全和生命周期
