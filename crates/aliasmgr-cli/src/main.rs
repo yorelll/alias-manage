@@ -25,9 +25,9 @@ fn main() {
         cli::Command::Shell { command: cli::ShellCommand::Detect } => Ok(format!("{:?}", commands::shell_detect())),
         cli::Command::Shell { command: cli::ShellCommand::Install { shell } } => Ok(format!("shell install requested: {shell}")),
         cli::Command::Shell { command: cli::ShellCommand::Uninstall { shell } } => Ok(format!("shell uninstall requested: {shell}")),
-        cli::Command::Import { file } => Ok(format!("import requested: {file}")),
-        cli::Command::Export { file } => Ok(format!("export requested: {file}")),
-        cli::Command::Uninstall { purge_aliases } => Ok(format!("uninstall requested: purge={purge_aliases}")),
+        cli::Command::Import { file } => commands::import_file(file).map(|report| format!("imported={} skipped={} unsupported={}", report.imported.len(), report.skipped.len(), report.unsupported.len())),
+        cli::Command::Export { file } => commands::export_file(cli.config_dir.as_deref(), file).map(|_| format!("exported to {file}")),
+        cli::Command::Uninstall { purge_aliases } => commands::uninstall(cli.config_dir.as_deref(), *purge_aliases).map(|_| "uninstall completed".into()),
     };
     match result { Ok(output) => println!("{output}"), Err(error) => { eprintln!("{error}"); std::process::exit(exit_code::exit_code(&error)); } }
 }

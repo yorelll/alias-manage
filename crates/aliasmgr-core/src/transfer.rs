@@ -11,6 +11,9 @@ pub enum ConflictStrategy { Skip, Overwrite, Rename, Ask }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportReport { pub imported: Vec<String>, pub skipped: Vec<String>, pub warnings: Vec<String>, pub unsupported: Vec<String> }
 
+pub fn export_toml(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasError> { fs::write(path, toml::to_string_pretty(&ExportFile { format_version: FORMAT_VERSION, exported_at: Utc::now().to_rfc3339(), exported_by_version: env!("CARGO_PKG_VERSION").into(), aliases: aliases.to_vec() }).map_err(|error| AliasError::Config(error.to_string()))?)?; Ok(()) }
+pub fn import_toml(path: &Path, existing: &BTreeMap<String, AliasRecord>, strategy: ConflictStrategy) -> Result<ImportReport, AliasError> { let content = fs::read_to_string(path)?; let file: ExportFile = toml::from_str(&content).map_err(|error| AliasError::Config(error.to_string()))?; if file.format_version != FORMAT_VERSION { return Err(AliasError::Config(format!("unsupported format_version: {}", file.format_version))); } let mut report = ImportReport { imported: vec![], skipped: vec![], warnings: vec![], unsupported: vec![] }; for alias in file.aliases { if existing.contains_key(&alias.name) && matches!(strategy, ConflictStrategy::Skip | ConflictStrategy::Ask) { report.skipped.push(alias.name); } else { report.imported.push(alias.name); } } Ok(report) }
+
 pub fn export_json(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasError> { fs::write(path, serde_json::to_string_pretty(&ExportFile { format_version: FORMAT_VERSION, exported_at: Utc::now().to_rfc3339(), exported_by_version: env!("CARGO_PKG_VERSION").into(), aliases: aliases.to_vec() })?)?; Ok(()) }
 pub fn import_json(path: &Path, existing: &BTreeMap<String, AliasRecord>, strategy: ConflictStrategy) -> Result<ImportReport, AliasError> {
     let content = fs::read_to_string(path)?; let file: ExportFile = serde_json::from_str(&content)?;
@@ -33,6 +36,8 @@ mod tests {
     use crate::model::AliasRecord;
     #[test]
     fn export_import_preserves_fields_and_filters_sensitive_values() { let root = std::env::temp_dir().join(format!("aliasmgr-transfer-{}.json", std::process::id())); let mut alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() }; alias.environment.insert("TOKEN".into(), "secret".into()); alias.environment.insert("MODE".into(), "test".into()); export_json(&root, &[alias.clone()]).unwrap(); let report = import_json(&root, &BTreeMap::new(), ConflictStrategy::Ask).unwrap(); assert_eq!(report.imported, vec!["gs"]); assert!(!report.warnings.is_empty()); let _ = fs::remove_file(root); }
+    #[test]
+    fn toml_round_trip_uses_same_metadata_and_conflicts() { let root = std::env::temp_dir().join(format!("aliasmgr-transfer-{}.toml", std::process::id())); let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() }; export_toml(&root, std::slice::from_ref(&alias)).unwrap(); let mut existing = BTreeMap::new(); existing.insert("gs".into(), alias); let report = import_toml(&root, &existing, ConflictStrategy::Skip).unwrap(); assert_eq!(report.skipped, vec!["gs"]); let _ = fs::remove_file(root); }
     #[test]
     fn rejects_unknown_or_missing_format_version() { let root = std::env::temp_dir().join(format!("aliasmgr-transfer-invalid-{}.json", std::process::id())); fs::write(&root, "{\"aliases\":[]}").unwrap(); assert!(import_json(&root, &BTreeMap::new(), ConflictStrategy::Ask).is_err()); let _ = fs::remove_file(root); }
 }
