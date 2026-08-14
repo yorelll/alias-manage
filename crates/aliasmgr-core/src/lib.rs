@@ -9,6 +9,7 @@ pub mod shells;
 pub mod sync;
 pub mod detection;
 pub mod transfer;
+pub mod uninstall;
 pub mod model;
 pub mod storage;
 pub mod validation;
