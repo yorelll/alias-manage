@@ -1330,7 +1330,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add alias domain model`。
 
 - [x] 已完成：领域结构、枚举、Serde 往返、未知枚举拒绝、RFC3339/UUID 序列化和 Linux/Windows CI 测试。
-- [ ] 待完成：`record_checksum` 计算、稳定性测试和篡改检测。
+- [x] 已完成：`record_checksum` 计算、稳定性/变更测试、持久化写入与读回篡改检测（`model.rs` 与 `storage.rs`，fast CI run `31786909449`）。
 
 ### Task 3：实现名称校验和冲突数据结构
 
@@ -1370,11 +1370,21 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `shell_state`、`retired_names`、`overridden_definitions` 的读写：`upsert_shell_state()`、`retire_name()`、`managed_name_set(shell)`、`prune_retired_names()`、`record_override()`。
 - [x] 维护 `name_folded` 列，并实现大小写折叠冲突查询（面向 PowerShell 的记录）。
   - [x] 基础列、查询 API 和 CI 单元测试。
-  - [ ] 新增/更新持久化入口统一拒绝大小写折叠冲突。
+  - [x] 新增/更新持久化入口统一拒绝大小写折叠冲突（`storage.rs` insert/update tests，fast CI run `31786909449`）。
 - [x] 所有 JSON 字段通过 Serde 编解码，布尔值使用 SQLite integer 映射，时间使用 RFC3339。
   - [x] AliasRecord CRUD round-trip tests.
   - [x] Linux/Windows workspace evidence.
-- [ ] 实现唯一名称冲突到 `AliasConflict` 的错误映射，并区分“同名”与“大小写冲突”两种消息。
+- [x] 实现唯一名称冲突到专用错误的映射，并区分“同名”与“大小写冲突”两种消息（`ExactNameConflict` / `CaseFoldConflict`，CLI 稳定冲突码 3；fast CI run `31786909449`）。
+  - [x] CLI exit-code regression tests cover both conflict variants and checksum storage errors.
+- [ ] 不可靠文件系统检测和 WAL 降级：SQLite 非 WAL 模式回退到 DELETE 已有测试覆盖；真实 NFS/CIFS/WSL 文件系统识别与 `UnreliableFilesystem` 诊断仍待实现。
+  - [x] SQLite PRAGMA、迁移备份、SchemaTooNew/恢复和父目录行为测试（fast CI run `31786909449`）。
+  - [x] Linux/Windows integration matrix green（integration run `31787162999`）。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
+- [x] 提交 `feat: add transactional sqlite storage`。
+
+- [x] 已完成：CRUD、迁移、SchemaTooNew、迁移备份、JSON/Boolean/RFC3339 转换、shell_state/retired_names/override/folded-name API 和 Linux/Windows CI。
+- [x] 已完成：同名与大小写冲突错误语义完整区分（fast CI run `31786909449`）。
+- [ ] 待完成：真实不可靠文件系统识别、`UnreliableFilesystem` 错误/诊断及相应降级报告。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
 - [x] 提交 `feat: add transactional sqlite storage`。
 
