@@ -507,12 +507,12 @@ mod tests {
             ..Default::default()
         };
         database.insert_alias(&bash_alias).unwrap();
-        bash_alias.name = "Build".into();
+        bash_alias.name = "build".into();
         bash_alias.shells = vec![crate::model::ShellKind::PowerShell5];
         bash_alias.record_checksum = record_checksum(&bash_alias).unwrap();
         assert!(matches!(
             database.update_alias(&bash_alias),
-            Err(AliasError::CaseFoldConflict(name)) if name == "Build"
+            Err(AliasError::CaseFoldConflict(name)) if name == "build"
         ));
     }
 
@@ -604,10 +604,10 @@ mod tests {
                 "INSERT INTO aliases (id,name,name_folded,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
                 params![
                     legacy.id.to_string(),
-                    legacy.name,
+                    "legacy",
                     "legacy",
                     serde_json::to_string(&legacy.target_type).unwrap(),
-                    legacy.executable,
+                    "tool",
                     serde_json::to_string(&legacy.fixed_args).unwrap(),
                     legacy.pass_args,
                     legacy.working_directory,
