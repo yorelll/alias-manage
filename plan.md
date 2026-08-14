@@ -1536,14 +1536,14 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-cli/src/output.rs`
 - Test: `crates/aliasmgr-cli/tests/diagnostics.rs`
 
-- [ ] 先写 `shell detect` 输出、`shell install`/`uninstall` 幂等、`doctor` 发现缺失文件和语法错误的测试。
-- [ ] 实现 `sync` 调用核心同步器，逐 Shell 输出结果；部分失败时返回退出码 10，全部失败按具体错误映射。
-- [ ] 实现 `sync --dry-run`：打印将生成的脚本内容与将修改的文件，不做任何写入。
-- [ ] 实现 `reload [--print]`：`--print` 输出可被父 Shell 求值的单行 source 命令，供 `eval "$(aliasmgr reload --print)"` 使用（见 §6.2）。
-- [ ] 实现 `doctor` 检查：数据库与迁移版本、生成文件存在性、`shell_state` 是否过期（`applied_revision` 落后）、加载块存在性与**是否位于文件末尾**、语法、目标存在性、目标是否位于全局可写目录、权限、`file_checksum`、`.bashrc` 生效性（非交互守卫、login shell 链）、PowerShell ExecutionPolicy（分 5.1/7）、会话清理跳过清单、插件后置覆盖来源。
-- [ ] 提供 Bash/Zsh/PowerShell 重新加载命令提示，但不宣称更新了已有父 Shell。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test diagnostics`，预期全部通过。
-- [ ] 提交 `feat: add cli sync diagnostics and shell management`。
+- [x] 先写 `shell detect` 输出、`shell install`/`uninstall` 幂等、`doctor` 发现缺失文件和语法错误的测试。
+- [x] 实现 `sync` 调用核心同步器，逐 Shell 输出结果；部分失败时返回退出码 10，全部失败按具体错误映射。
+- [x] 实现 `sync --dry-run`：打印将生成的脚本内容与将修改的文件，不做任何写入。
+- [x] 实现 `reload [--print]`：`--print` 输出可被父 Shell 求值的单行 source 命令，供 `eval "$(aliasmgr reload --print)"` 使用（见 §6.2）。
+- [x] 实现 `doctor` 检查：数据库与迁移版本、生成文件存在性、`shell_state` 是否过期（`applied_revision` 落后）、加载块存在性与**是否位于文件末尾**、语法、目标存在性、目标是否位于全局可写目录、权限、`file_checksum`、`.bashrc` 生效性（非交互守卫、login shell 链）、PowerShell ExecutionPolicy（分 5.1/7）、会话清理跳过清单、插件后置覆盖来源。
+- [x] 提供 Bash/Zsh/PowerShell 重新加载命令提示，但不宣称更新了已有父 Shell。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test diagnostics`，预期全部通过。
+- [x] 提交 `feat: add cli sync diagnostics and shell management`。
 
 ### Task 16：实现导入导出
 
