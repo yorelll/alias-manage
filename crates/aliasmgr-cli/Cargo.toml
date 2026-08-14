@@ -7,7 +7,9 @@ license.workspace = true
 [dependencies]
 aliasmgr-core = { path = "../aliasmgr-core" }
 clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+atty = "0.2"
 
 [lib]
 path = "src/lib.rs"
