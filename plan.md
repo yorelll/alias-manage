@@ -1567,15 +1567,15 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-cli/src/commands.rs`
 - Test: `crates/aliasmgr-cli/tests/uninstall.rs`
 
-- [ ] 先写保留别名、删除别名、删除数据库/备份可选项、保留用户配置和保护目标文件的测试。
-- [ ] 保留模式下移除加载块中对 tombstone 清理逻辑的依赖，确认生成文件可独立 source（原则 11）。
-- [ ] 覆盖“用户手工删除程序但未执行清理”的情形：加载块的 `[ -r ]` / `Test-Path` 守卫必须让缺失生成文件时 Shell 启动不报错。
-- [ ] 实现 `aliasmgr uninstall --purge-aliases`，只删除 Alias Manager 标记块、生成脚本和用户明确指定的数据。
-- [ ] 卸载清理必须把 EXE、BAT、CMD、Python、PowerShell、Shell、JAR 等目标路径视为只读引用，禁止删除、移动或修改这些文件。
-- [ ] 保留模式验证生成脚本只依赖目标解释器/程序，不引用 `aliasmgr invoke`。
+- [x] 先写保留别名、删除别名、删除数据库/备份可选项、保留用户配置和保护目标文件的测试。
+- [x] 保留模式下移除加载块中对 tombstone 清理逻辑的依赖，确认生成文件可独立 source（原则 11）。
+- [x] 覆盖“用户手工删除程序但未执行清理”的情形：加载块的 `[ -r ]` / `Test-Path` 守卫必须让缺失生成文件时 Shell 启动不报错。
+- [x] 实现 `aliasmgr uninstall --purge-aliases`，只删除 Alias Manager 标记块、生成脚本和用户明确指定的数据。
+- [x] 卸载清理必须把 EXE、BAT、CMD、Python、PowerShell、Shell、JAR 等目标路径视为只读引用，禁止删除、移动或修改这些文件。
+- [x] 保留模式验证生成脚本只依赖目标解释器/程序，不引用 `aliasmgr invoke`。
 - [ ] Linux 包卸载文档说明包管理器的 `postrm` 无法交互，不保证弹出 GUI，需引导用户先执行 `aliasmgr uninstall`；Windows 安装器（MSI 自定义动作）调用同一核心清理逻辑并在 UI 中提供保留/删除选项。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test uninstall`，预期全部通过。
-- [ ] 提交 `feat: add safe uninstall cleanup modes`。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test uninstall`，预期全部通过。
+- [x] 提交 `feat: add safe uninstall cleanup modes`。
 
 ---
 
