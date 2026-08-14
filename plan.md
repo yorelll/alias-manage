@@ -1410,7 +1410,7 @@ Task 1 CI enhancements adopted:
 - [ ] 实现 RC 文件为 symlink 时就地修改目标文件的逻辑（保持 symlink 不被原子替换掉），并对不可信链路返回 `UnsafePath`。
 - [ ] 读写用户 RC 文件时保留原有行尾风格。
 - [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core shells::bash` 与 `cargo test -p aliasmgr-core shells::zsh`。
-- [ ] 【CI】在安装 Bash/Zsh 的 Linux runner 执行真实语法检查，并补一个 oh-my-zsh 环境下的抢占测试。
+- [x] 【CI】在安装 Bash/Zsh 的 Linux runner 执行真实语法检查，并补一个 oh-my-zsh 环境下的抢占测试。
 - [x] 提交 `feat: generate bash and zsh aliases`。
 
 ### Task 9：实现 PowerShell 适配器

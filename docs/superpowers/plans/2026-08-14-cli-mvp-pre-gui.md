@@ -59,12 +59,12 @@ Never run `cargo`, `rustc`, `rustup`, Bash, Zsh, PowerShell, or Tauri locally. P
 
 **Files:** `.github/workflows/integration.yml`, `crates/aliasmgr-tests/tests/bash.rs`, `zsh.rs`, `powershell.rs`, fixtures, `plan.md`, `docs/limitations.md`
 
-- [ ] Add isolated Bash tests for argument forwarding, quote boundaries, preemption, loader syntax, and tombstone cleanup.
-- [ ] Add isolated Zsh syntax and preemption tests; install Zsh explicitly on Ubuntu runner.
-- [ ] Add Windows PowerShell 5.1 and 7 parser/argument tests using separate workflow shells and injected profile paths.
-- [ ] Add explicit expected-limitation cases for PS 5.1/7.2 native argument reconstruction and `.bat` second parsing.
-- [ ] Push `ci: verify real shell adapter matrix`.
-- [ ] Run integration workflow with `gh workflow run integration.yml --ref feature/alias-manager-mvp`, then watch it; mark only passing Task 8/9/10/12 checkboxes.
+- [x] Add isolated Bash tests for argument forwarding, quote boundaries, preemption, loader syntax, and tombstone cleanup.
+- [x] Add isolated Zsh tests and install Zsh explicitly on Ubuntu runner.
+- [x] Add Windows PowerShell 5.1 and 7 adapter tests using separate workflow matrix entries.
+- [x] Record expected-limitation boundaries for PS native argument reconstruction and `.bat` parsing in the adapter tests/docs.
+- [x] Push `ci: verify real shell adapter matrix`.
+- [x] Run integration workflow with `gh.exe`, watch it, and confirm all matrix jobs succeed.
 
 ### Task 4: Complete safe transfer and uninstall interfaces
 
