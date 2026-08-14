@@ -16,7 +16,7 @@ pub enum OutputFormat { Table, Json }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    Add(AddArgs), Remove { name: String, #[arg(long)] yes: bool }, Update { name: String }, Get { name: String },
+    Add(AddArgs), Remove { name: String, #[arg(long)] yes: bool }, Update { name: String }, Rename { old: String, new: String }, Get { name: String },
     Find { query: String, #[arg(long)] fuzzy: bool, #[arg(long)] limit: Option<usize> },
     List { #[arg(long)] sort: Option<String>, #[arg(long)] desc: bool, #[arg(long)] limit: Option<usize> },
     Enable { name: String }, Disable { name: String }, Sync { #[arg(long)] dry_run: bool }, Reload { #[arg(long)] print: bool }, Doctor,
