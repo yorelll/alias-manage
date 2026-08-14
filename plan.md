@@ -1524,8 +1524,8 @@ Task 1 CI enhancements adopted:
 
 - [x] 先写端到端 CLI 测试，通过 `ALIASMGR_CONFIG_DIR` 指向临时目录：添加 `gs`、获取、查找、列表、更新、改名、禁用、启用、删除。
 - [x] 将所有操作委托给 `aliasmgr-core`，CLI 不直接访问 SQLite 表或生成 Shell 代码。
-- [ ] 删除操作默认交互确认，`--yes` 执行非交互删除，并逐 Shell 报告需要重新加载的命令与“当前会话可能仍有旧定义”的提示。
-- [ ] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
+- [x] 删除操作默认交互确认，`--yes` 执行非交互删除，并逐 Shell 报告需要重新加载的命令与“当前会话可能仍有旧定义”的提示。
+- [x] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
 - [x] 提交 `feat: add cli alias lifecycle commands`。
 

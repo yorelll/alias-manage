@@ -36,13 +36,13 @@ Never run `cargo`, `rustc`, `rustup`, Bash, Zsh, PowerShell, or Tauri locally. P
 
 **Files:** `crates/aliasmgr-cli/src/commands.rs`, `crates/aliasmgr-cli/src/main.rs`, `crates/aliasmgr-cli/tests/crud.rs`, `plan.md`
 
-- [ ] Add failing isolated tests for `update`, rename, `retired_names`, delete/reload messaging, and `find`.
-- [ ] Implement core-delegating update and rename functions; rename must insert the old name into `retired_names` before changing the record.
-- [ ] Implement `find` through core search APIs and stable table/JSON output.
-- [ ] Ensure delete/disable output includes reload guidance and does not claim the parent Shell was changed.
-- [ ] Push the semantic commit `feat: complete cli alias lifecycle semantics`.
-- [ ] Run `gh run list --branch feature/alias-manager-mvp --limit 3`, then `gh run watch <run-id> --exit-status`; inspect failures with `gh run view <run-id> --log-failed`.
-- [ ] Mark corresponding Task 14 checkboxes in `plan.md` only after CI success.
+- [x] Add failing isolated tests for `update`, rename, `retired_names`, delete/reload messaging, and `find`.
+- [x] Implement core-delegating update and rename functions; rename must insert the old name into `retired_names` before changing the record.
+- [x] Implement `find` through core search APIs and stable table/JSON output.
+- [x] Ensure delete/disable output includes reload guidance and does not claim the parent Shell was changed.
+- [x] Push the semantic commit `feat: complete cli alias lifecycle semantics`.
+- [x] Run CI and inspect failures with `gh.exe --log-failed` until the workflow succeeds.
+- [x] Mark corresponding Task 14 checkboxes in `plan.md` only after CI success.
 
 ### Task 2: Bind synchronization to durable state
 
