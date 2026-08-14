@@ -1509,14 +1509,14 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-cli/src/main.rs`
 - Test: `crates/aliasmgr-cli/tests/parse.rs`
 
-- [ ] 先写命令树解析测试，覆盖 `add`、`remove`、`update`、`find`、`list`、`sync`、`reload`、`doctor`、`shell`、`import`、`export`、`uninstall`。
-- [ ] 使用 `clap` 定义全局 `--config-dir`、`--format table|json`、`--no-color`、`--verbose/--quiet`，以及 `--arg` 可重复参数、`--env KEY=VALUE`、`--tag`、`--cwd`、`--shell auto`、`--limit`、`--dry-run` 和 `--yes`。
-- [ ] 实现 `exit_code.rs`：按 §6.3 的表格把 `AliasError` 映射为固定退出码，并写一个覆盖表格每一行的测试，防止后续改动漂移。
-- [ ] 用户可见文案集中在 `messages.rs`，不散落在各命令实现中。
-- [ ] 非 TTY 且缺少 `--yes` 的交互命令返回 `NonInteractive`（退出码 14），不阻塞等待输入。
-- [ ] 实现稳定表格列和稳定 JSON 字段，错误输出到 stderr。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test parse`，预期全部通过。
-- [ ] 提交 `feat: add alias manager cli command model`。
+- [x] 先写命令树解析测试，覆盖 `add`、`remove`、`update`、`find`、`list`、`sync`、`reload`、`doctor`、`shell`、`import`、`export`、`uninstall`。
+- [x] 使用 `clap` 定义全局 `--config-dir`、`--format table|json`、`--no-color`、`--verbose/--quiet`，以及 `--arg` 可重复参数、`--env KEY=VALUE`、`--tag`、`--cwd`、`--shell auto`、`--limit`、`--dry-run` 和 `--yes`。
+- [x] 实现 `exit_code.rs`：按 §6.3 的表格把 `AliasError` 映射为固定退出码，并写一个覆盖表格每一行的测试，防止后续改动漂移。
+- [x] 用户可见文案集中在 `messages.rs`，不散落在各命令实现中。
+- [x] 非 TTY 且缺少 `--yes` 的交互命令返回 `NonInteractive`（退出码 14），不阻塞等待输入。
+- [x] 实现稳定表格列和稳定 JSON 字段，错误输出到 stderr。
+- [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test parse`，预期全部通过。
+- [x] 提交 `feat: add alias manager cli command model`。
 
 ### Task 14：实现增删改查、搜索、启用和禁用
 
