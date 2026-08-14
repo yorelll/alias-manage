@@ -1472,7 +1472,7 @@ Task 1 CI enhancements adopted:
 - [x] journal 记录 `revision_from`、`revision_to` 与 `backups_json`（多个备份路径的数组，覆盖每个 RC/Profile 与每个生成文件）。
 - [x] 实现启动恢复 `recover_pending_operations()`：依据 `revision_from`/`revision_to` 判断前滚（数据库已提交则重建生成文件）或回滚（未提交则按 `backups_json` 恢复并清理临时文件）。
 - [x] 每个 Shell 独立生成和替换，成功即更新该 Shell 的 `shell_state`；单 Shell 失败不回滚其他 Shell 的成功替换、不回滚数据库。
-- [ ] 实现 `shell_state.status` 计算（`ok`/`stale`/`failed`/`loader_missing`/`unknown`），供 `doctor` 报告派生文件过期。
+- [x] 实现 `shell_state.status` 计算（`ok`/`stale`/`failed`/`loader_missing`/`unknown`），供 `doctor` 报告派生文件过期。
 - [x] 写入 `retired_names` 并在同步成功后执行 `prune_retired_names()`。
 - [ ] 先写多 Shell 部分失败测试：PowerShell 检查失败、Bash 成功时，`shell_state` 分别为 `failed` 与 `ok`，且数据库 revision 已递增。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core sync`，预期全部通过。
