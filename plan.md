@@ -1257,6 +1257,14 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 【CI】建立 `crates/aliasmgr-tests` 空集成测试 crate，在 CI 上验证 `cargo test -p aliasmgr-tests` 能运行（确认集成测试不放在 workspace 根 `tests/`，否则不会被编译）。
 - [x] 提交 `chore: initialize Rust workspace`。
 
+#### Task 1 reconciliation
+- [ ] **总纲：Task 1 workspace initialization is complete.**
+  - [x] Workspace manifests, core smoke test, bundled SQLite, and dependency direction exist.
+  - [x] Linux/Windows fast CI builds and tests the workspace.
+  - [x] Cross-process fs4 lock smoke tests run in the integration matrix.
+  - [x] Tauri Linux dependency decision is documented.
+  - [ ] GUI npm cache is configured when GUI jobs enter CI.
+
 Task 1 CI enhancements adopted:
 - Rust cache: implemented with `Swatinem/rust-cache` in fast and integration workflows.
 - npm cache: deferred until GUI jobs enter CI; no frontend dependency install exists in the current workspace.
@@ -1296,6 +1304,14 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core model`，预期全部通过。
 - [x] 提交 `feat: add alias domain model`。
 
+#### Task 2 reconciliation
+- [ ] **总纲：Task 2 model, error, and serialization contract is complete.**
+  - [x] Domain structs/enums and serde round-trip tests exist.
+  - [x] Unknown enum values are rejected.
+  - [ ] `record_checksum` calculation is implemented and verified.
+  - [x] RFC3339 timestamps and UUID string serialization are tested.
+  - [x] Linux/Windows CI runs model tests.
+
 ### Task 3：实现名称校验和冲突数据结构
 
 **Files:**
@@ -1311,6 +1327,14 @@ Task 1 CI enhancements adopted:
 - [x] 实现大小写折叠冲突检查入口（目标 Shell 含 PowerShell 时生效）。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core validation`，预期全部通过。
 - [x] 提交 `feat: add alias validation`。
+
+#### Task 3 reconciliation
+- [ ] **总纲：Task 3 validation and conflict contract is complete.**
+  - [x] Name syntax/length, target, shell, placeholder, and advanced-mode tests exist.
+  - [x] PowerShell reserved-name baseline exists.
+  - [x] PowerShell case-fold conflict query exists in storage.
+  - [ ] Validation directly rejects case-fold conflicts before persistence/update.
+  - [x] Linux/Windows CI runs validation tests.
 
 ### Task 4：实现 SQLite 存储和迁移
 
@@ -1334,6 +1358,16 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
 - [x] 提交 `feat: add transactional sqlite storage`。
 
+#### Task 4 reconciliation
+- [ ] **总纲：Task 4 SQLite storage and migration is complete.**
+  - [x] CRUD, migration, schema version, and rollback tests exist.
+  - [x] SchemaTooNew and migration backup behavior are tested.
+  - [x] JSON/Boolean/RFC3339 storage conversions are covered.
+  - [x] Shell state, retired names, override records, and folded-name APIs exist.
+  - [ ] Conflict errors distinguish exact-name and PowerShell case-fold conflicts.
+  - [ ] Unreliable filesystem detection and WAL fallback are fully implemented.
+  - [x] Linux/Windows workspace CI passes storage tests.
+
 ### Task 5：实现搜索和排序
 
 **Files:**
@@ -1348,6 +1382,12 @@ Task 1 CI enhancements adopted:
 - [x] 在 SQLite 查询后进行可测试的评分排序，确保同分按名称升序、再按 `updated_at` 降序。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core search`，预期全部通过。
 - [x] 提交 `feat: add alias search and sorting`。
+
+#### Task 5 reconciliation
+- [x] **总纲：Task 5 search and sorting is complete.**
+  - [x] Exact, prefix, substring, fuzzy, and target-field scoring tests exist.
+  - [x] SearchQuery, limits, stable ordering, and field selection exist.
+  - [x] Linux/Windows CI passes search tests.
 
 ### Task 6：实现配置路径、权限和文件锁
 
@@ -1366,6 +1406,14 @@ Task 1 CI enhancements adopted:
 - [x] 实现跨平台全局锁：默认 10 秒超时返回 `LockTimeout`，锁文件记录 PID 与启动时间，仅在持有进程确认不存在时接管，不删除其他活跃进程的锁文件。
 - [x] 【CI】在 GitHub Actions 上分别执行 `cargo test -p aliasmgr-core config` 与 `cargo test -p aliasmgr-core lock`（不要在一条命令里传两个过滤参数）。
 - [x] 提交 `feat: add platform paths and config lock`。
+
+#### Task 6 reconciliation
+- [ ] **总纲：Task 6 platform paths, config, permissions, and lock is complete.**
+  - [x] Config path precedence, defaults, directory creation, TOML defaults, and shell path overrides exist.
+  - [x] Rotation and Linux writable-path detection exist.
+  - [x] fs4 lock timeout, owner metadata, and process tests pass on Linux/Windows.
+  - [ ] Windows ACL writable-path detection is fully implemented.
+  - [x] Fast and integration CI evidence exists.
 
 ---
 
@@ -1387,6 +1435,13 @@ Task 1 CI enhancements adopted:
 - [x] 对缺失目标提供显式 `TargetMissing`，由调用层决定阻止或允许保存。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core executor`，预期全部通过。
 - [x] 提交 `feat: add structured command executors`。
+
+#### Task 7 reconciliation
+- [x] **总纲：Task 7 structured executor is complete for the supported MVP target set.**
+  - [x] Structured argv expansion and placeholder tests exist.
+  - [x] Batch safety rejection, working directory, environment, and missing-target tests exist.
+  - [x] Linux/Windows CI passes executor tests.
+  - [ ] Full platform-specific native command argument matrix remains integration/manual evidence.
 
 ### Task 8：实现 Bash/Zsh 适配器
 
@@ -1413,6 +1468,14 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在安装 Bash/Zsh 的 Linux runner 执行真实语法检查，并补一个 oh-my-zsh 环境下的抢占测试。
 - [x] 提交 `feat: generate bash and zsh aliases`。
 
+#### Task 8 reconciliation
+- [ ] **总纲：Task 8 Bash/Zsh adapter is complete.**
+  - [x] POSIX quoting, functions, simple aliases, preemption, cleanup, and loader tests exist.
+  - [x] Bash/Zsh adapter unit tests pass in fast CI.
+  - [x] Integration matrix covers Bash/Zsh adapter paths and Zsh installation.
+  - [ ] Generated metadata, symlink RC handling, and line-ending preservation are complete.
+  - [ ] Real `bash -n`/`zsh -n` execution and oh-my-zsh plugin-order acceptance are complete.
+
 ### Task 9：实现 PowerShell 适配器
 
 **Files:**
@@ -1437,6 +1500,13 @@ Task 1 CI enhancements adopted:
 - [ ] 【CI】在 Windows runner 上运行真实 Parser 检查与 PS 5.1/7 双版本参数矩阵（PS 7 已预装，无需安装）。
 - [x] 提交 `feat: generate powershell aliases`。
 
+#### Task 9 reconciliation
+- [ ] **总纲：Task 9 PowerShell 5.1/7 adapter is complete.**
+  - [x] Basic function/Set-Alias rendering, quoting, preemption, and cleanup tests exist.
+  - [x] Windows workspace and integration matrix compile/run adapter tests.
+  - [ ] Real PS 5.1/7 Parser and `Get-Command ls` preemption tests are complete.
+  - [ ] ReadOnly/Constant discovery, profile resolution, BOM/CRLF, ExecutionPolicy, and native argument-version diagnostics are complete.
+
 ### Task 10：实现配置加载块管理
 
 **Files:**
@@ -1458,6 +1528,14 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core loader`，预期全部通过。
 - [x] 提交 `feat: manage shell loader blocks safely`。
 
+#### Task 10 reconciliation
+- [ ] **总纲：Task 10 loader block management is complete.**
+  - [x] Paired marker parsing, append-at-end, idempotence, removal, absolute paths, and RC backup tests exist.
+  - [x] Fast CI passes loader tests.
+  - [ ] Generated-file manual-edit checksum decision is implemented.
+  - [ ] Fingerprint-protected tombstone cleanup and override recovery are implemented.
+  - [ ] Symlink and line-ending preservation are verified.
+
 ### Task 11：实现原子同步、journal 和回滚
 
 **Files:**
@@ -1476,6 +1554,14 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core sync`，预期全部通过。
 - [x] 提交 `feat: add atomic shell synchronization and rollback`。
 
+#### Task 11 reconciliation
+- [ ] **总纲：Task 11 synchronization, journal, and rollback is complete.**
+  - [x] Temp-file atomic replacement, journal text, recovery entrypoint, per-shell receipt, and status helper exist.
+  - [x] Revision/checksum metadata and partial-result tests exist.
+  - [ ] Journal and shell state are bound to durable SQLite transactions.
+  - [ ] Recovery restores prior generated files from backups and supports committed-operation forward recovery.
+  - [ ] Partial failure persists `failed` and `ok` shell states with revision increment in the database.
+
 ### Task 12：实现 Shell 检测和冲突检测
 
 **Files:**
@@ -1491,6 +1577,13 @@ Task 1 CI enhancements adopted:
 - [x] 实现用户配置中同名定义的来源定位（文件 + 行号），用于 `doctor` 报告“插件在加载块之后重新定义”。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core detection`，预期全部通过。
 - [x] 提交 `feat: detect shells and report conflicts`。
+
+#### Task 12 reconciliation
+- [ ] **总纲：Task 12 shell detection and conflict detection is complete.**
+  - [x] Detection precedence, PATH conflicts, built-in conflicts, and source-line lookup exist.
+  - [x] Linux/Windows integration matrix runs detection-related core tests.
+  - [ ] Windows PowerShell executable discovery distinguishes powershell.exe/pwsh.exe and multiple PS 7 versions.
+  - [ ] Real user/plugin source ordering and reserved alias discovery are verified.
 
 ---
 
@@ -1516,6 +1609,13 @@ Task 1 CI enhancements adopted:
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test parse`，预期全部通过。
 - [x] 提交 `feat: add alias manager cli command model`。
 
+#### Task 13 reconciliation
+- [x] **总纲：Task 13 CLI argument/output layer is complete for the implemented command model.**
+  - [x] Clap command tree and global options are tested.
+  - [x] Stable exit-code mapping, messages, table, JSON, and non-TTY guard exist.
+  - [x] Fast CI passes parser/output tests.
+  - [ ] Every published exit-code row is mapped and regression-tested.
+
 ### Task 14：实现增删改查、搜索、启用和禁用
 
 **Files:**
@@ -1527,7 +1627,13 @@ Task 1 CI enhancements adopted:
 - [x] 删除操作默认交互确认，`--yes` 执行非交互删除，并逐 Shell 报告需要重新加载的命令与“当前会话可能仍有旧定义”的提示。
 - [x] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
-- [x] 提交 `feat: add cli alias lifecycle commands`。
+- [ ] **总纲：Task 14 CLI CRUD/search/enable/disable is complete.**
+  - [x] Isolated add/get/list/delete/enable/disable/update/rename/find tests exist.
+  - [x] Core delegation and retired-name insertion exist.
+  - [ ] Delete/disable output includes per-shell reload and residual-definition guidance.
+  - [ ] CLI find/list honor all requested fields, sorting, format, and limit options.
+  - [x] Fast CI passes CRUD tests.
+  - [x] 提交 `feat: add cli alias lifecycle commands`。
 
 ### Task 15：实现 sync、doctor 和 shell 子命令
 
@@ -1543,7 +1649,12 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `doctor` 检查：数据库与迁移版本、生成文件存在性、`shell_state` 是否过期（`applied_revision` 落后）、加载块存在性与**是否位于文件末尾**、语法、目标存在性、目标是否位于全局可写目录、权限、`file_checksum`、`.bashrc` 生效性（非交互守卫、login shell 链）、PowerShell ExecutionPolicy（分 5.1/7）、会话清理跳过清单、插件后置覆盖来源。
 - [x] 提供 Bash/Zsh/PowerShell 重新加载命令提示，但不宣称更新了已有父 Shell。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test diagnostics`，预期全部通过。
-- [x] 提交 `feat: add cli sync diagnostics and shell management`。
+- [ ] **总纲：Task 15 CLI sync/doctor/shell management is complete.**
+  - [x] Sync, dry-run, reload, shell detect, doctor, and reload guidance commands exist.
+  - [x] Isolated diagnostics tests and fast CI evidence exist.
+  - [ ] Doctor performs durable shell_state, loader-position, syntax, checksum, permission, and policy diagnostics.
+  - [ ] Shell install/uninstall modifies marked loader blocks idempotently.
+  - [x] 提交 `feat: add cli sync diagnostics and shell management`。
 
 ### Task 16：实现导入导出
 
@@ -1559,6 +1670,13 @@ Task 1 CI enhancements adopted:
 - [x] 不执行导入文件中的高级命令；缺失目标、网络路径、全局可写目录目标和危险命令只生成警告或阻止同步。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test transfer`，预期全部通过。
 - [x] 提交 `feat: add safe alias import and export`。
+
+#### Task 16 reconciliation
+- [ ] **总纲：Task 16 safe import/export is complete.**
+  - [x] JSON/TOML metadata, sensitive filtering, conflict strategy baseline, unsupported/relative path reporting exist.
+  - [x] Transfer tests and CI evidence exist.
+  - [ ] CLI import/export persists approved records into the database after preview/confirmation.
+  - [ ] Full TOML conflict/safety report matrix is covered.
 
 ### Task 17：实现卸载清理
 
@@ -1576,6 +1694,13 @@ Task 1 CI enhancements adopted:
 - [ ] Linux 包卸载文档说明包管理器的 `postrm` 无法交互，不保证弹出 GUI，需引导用户先执行 `aliasmgr uninstall`；Windows 安装器（MSI 自定义动作）调用同一核心清理逻辑并在 UI 中提供保留/删除选项。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test uninstall`，预期全部通过。
 - [x] 提交 `feat: add safe uninstall cleanup modes`。
+
+#### Task 17 reconciliation
+- [ ] **总纲：Task 17 uninstall cleanup is complete.**
+  - [x] Retain/purge cleanup, loader removal, generated/database cleanup, and target-file protection tests exist.
+  - [x] Fast CI and integration evidence exist.
+  - [ ] CLI uninstall dispatch performs the core cleanup instead of only acknowledging the request.
+  - [ ] Package-manager postrm and Windows installer cleanup documentation is complete.
 
 ---
 
