@@ -17,8 +17,8 @@ pub enum OutputFormat { Table, Json }
 #[derive(Debug, Subcommand)]
 pub enum Command {
     Add(AddArgs), Remove { name: String, #[arg(long)] yes: bool }, Update { name: String }, Rename { old: String, new: String }, Get { name: String },
-    Find { query: String, #[arg(long)] fuzzy: bool, #[arg(long)] limit: Option<usize> },
-    List { #[arg(long)] sort: Option<String>, #[arg(long)] desc: bool, #[arg(long)] limit: Option<usize> },
+    Find { query: String, #[arg(long)] fuzzy: bool, #[arg(long)] limit: Option<usize>, #[arg(long = "tag")] tags: Vec<String> },
+    List { #[arg(long)] sort: Option<String>, #[arg(long)] desc: bool, #[arg(long)] limit: Option<usize>, #[arg(long = "tag")] tags: Vec<String> },
     Enable { name: String }, Disable { name: String }, Sync { #[arg(long)] dry_run: bool }, Reload { #[arg(long)] print: bool }, Doctor,
     Shell { #[command(subcommand)] command: ShellCommand }, Import { file: String }, Export { file: String }, Uninstall { #[arg(long)] purge_aliases: bool },
 }

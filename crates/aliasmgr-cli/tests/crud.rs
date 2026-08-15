@@ -10,7 +10,7 @@ fn cli_lifecycle_supports_update_rename_find_and_retirement() {
     assert!(commands::update(Some(&cfg), "gs", "git", vec!["diff".into()]).unwrap());
     assert!(commands::rename(Some(&cfg), "gs", "gd").unwrap());
     assert!(commands::get(Some(&cfg), "gd").unwrap().is_some());
-    assert!(commands::find(Some(&cfg), "gd").unwrap().iter().any(|a| a.name == "gd"));
+    assert!(commands::find(Some(&cfg), "gd", false, None, Vec::new()).unwrap().iter().any(|a| a.name == "gd"));
     assert!(commands::retired_names(Some(&cfg), "bash").unwrap().contains(&"gs".into()));
     let _ = std::fs::remove_dir_all(root);
 }

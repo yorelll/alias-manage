@@ -22,11 +22,11 @@ pub struct SearchQuery {
     pub limit: usize,
     pub sort: SortField,
     pub descending: bool,
-}
+    pub tag_filter: Vec<String>,
 
 impl Default for SearchQuery {
     fn default() -> Self {
-        Self { query: String::new(), fuzzy: false, field: SearchField::All, limit: 50, sort: SortField::Name, descending: false }
+        Self { query: String::new(), fuzzy: false, field: SearchField::All, limit: 50, sort: SortField::Name, descending: false, tag_filter: Vec::new() }
     }
 }
 
@@ -39,6 +39,8 @@ pub fn score(alias: &AliasRecord, query: &str) -> i32 {
 
 pub fn search(aliases: &[AliasRecord], query: &SearchQuery) -> Vec<SearchResult> {
     let mut results: Vec<_> = aliases.iter().filter_map(|alias| {
+        let tags_match = query.tag_filter.iter().all(|wanted| alias.tags.iter().any(|tag| tag.eq_ignore_ascii_case(wanted)));
+        if !tags_match { return None; }
         let score = score_field(alias, &query.query, query.field, query.fuzzy);
         (query.query.is_empty() || score > 0).then(|| SearchResult { alias: alias.clone(), score })
     }).collect();
@@ -98,5 +100,16 @@ mod tests {
         let results = search(&[alias("zeta", "python3"), alias("alpha", "python3")], &query);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].alias.name, "alpha");
+    }
+
+    #[test]
+    fn tag_filter_requires_all_requested_tags() {
+        let mut both = alias("both", "tool");
+        both.tags = vec!["git".into(), "work".into()];
+        let mut one = alias("one", "tool");
+        one.tags = vec!["git".into()];
+        let query = SearchQuery { tag_filter: vec!["git".into(), "work".into()], ..Default::default() };
+        let results = search(&[both, one], &query);
+        assert_eq!(results.iter().map(|result| result.alias.name.as_str()).collect::<Vec<_>>(), vec!["both"]);
     }
 }

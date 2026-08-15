@@ -18,7 +18,7 @@ fn main() {
         cli::Command::Disable { name } => commands::enable(cli.config_dir.as_deref(), name, false).map(|_| messages::ALIAS_REMOVED.to_string()),
         cli::Command::Update { name } => commands::update(cli.config_dir.as_deref(), name, "git", Vec::new()).map(|_| "别名已更新。".to_string()),
         cli::Command::Rename { old, new } => commands::rename(cli.config_dir.as_deref(), old, new).map(|_| "别名已改名。".to_string()),
-        cli::Command::Find { query, .. } => commands::find(cli.config_dir.as_deref(), query).map(|values| output::table(&values.iter().map(|value| output::AliasRow { name: value.name.clone(), target: value.executable.clone(), enabled: value.enabled }).collect::<Vec<_>>())),
+        cli::Command::Find { query, fuzzy, limit, tags } => commands::find(cli.config_dir.as_deref(), query, *fuzzy, *limit, tags.clone()).map(|values| output::table(&values.iter().map(|value| output::AliasRow { name: value.name.clone(), target: value.executable.clone(), enabled: value.enabled }).collect::<Vec<_>>())),
         cli::Command::Sync { dry_run } => commands::sync(cli.config_dir.as_deref(), *dry_run),
         cli::Command::Reload { print } => Ok(if *print { commands::reload_print(cli.config_dir.as_deref(), "bash") } else { messages::RELOAD_REQUIRED.to_string() }),
         cli::Command::Doctor => commands::doctor(cli.config_dir.as_deref()).map(|findings| findings.join("\n")),
