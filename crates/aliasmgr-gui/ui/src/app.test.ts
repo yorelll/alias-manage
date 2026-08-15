@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { NAV_ITEMS, statusSummaryText, setTauriInvoke, tauriInvoke } from "./lib.ts";
+import { NAV_ITEMS, statusSummaryText, setTauriInvoke, tauriInvoke } from "./lib";
 
 test("approved sidebar navigation is ordered and complete", () => {
   assert.deepEqual(NAV_ITEMS.map((item) => item.label), ["Aliases", "Sync", "Doctor", "Settings"]);
