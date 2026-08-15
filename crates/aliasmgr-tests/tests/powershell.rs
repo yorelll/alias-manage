@@ -10,8 +10,6 @@ fn discovers_available_powershell_executables_and_versions() {
     assert!(installations.iter().all(|item| !item.executable.as_os_str().is_empty() && item.version.is_some()));
 }
 
-#[test]
-use std::{fs, process::Command};
 
 fn powershell_command() -> Option<&'static str> {
     if cfg!(windows) { Some("powershell") } else { None }
