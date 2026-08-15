@@ -1,0 +1,25 @@
+* { box-sizing: border-box; }
+html, body, #root { margin: 0; min-height: 100%; font-family: system-ui, sans-serif; color: #172033; background: #f4f6fa; }
+.app-layout { display: flex; min-height: 100vh; }
+.sidebar { width: 220px; flex: 0 0 220px; padding: 24px 12px; color: #dbe5f4; background: #162033; }
+.sidebar-title { display: block; padding: 0 12px 24px; font-weight: 700; letter-spacing: .04em; }
+.sidebar-nav { margin: 0; padding: 0; list-style: none; }
+.sidebar-nav-item { width: 100%; padding: 11px 12px; border: 0; border-radius: 8px; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.sidebar-nav-item:hover, .sidebar-nav-item.active { color: #fff; background: #263a59; }
+.main-content { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.page-area { flex: 1; padding: 32px; }
+.page-header { display: flex; align-items: center; justify-content: space-between; }
+.page-title { margin: 0; font-size: 28px; }
+.btn-add-alias { padding: 10px 16px; border: 0; border-radius: 8px; color: #fff; background: #3269d6; }
+.btn-add-alias:disabled { opacity: .55; cursor: not-allowed; }
+.alias-list { margin: 28px 0; padding: 0; list-style: none; }
+.alias-list-empty { display: grid; justify-items: center; gap: 12px; padding: 80px 24px; border: 1px dashed #b9c4d6; border-radius: 14px; color: #63708a; background: #fff; }
+.placeholder-page { display: grid; min-height: 240px; place-items: center; color: #63708a; }
+.status-drawer { border-top: 1px solid #d5dce8; background: #fff; }
+.status-drawer-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 20px; cursor: pointer; }
+.status-drawer-summary { color: #63708a; font-size: 13px; }
+.status-drawer-toggle { border: 0; color: #63708a; background: transparent; }
+.status-drawer-body { display: grid; grid-template-columns: max-content 1fr; gap: 8px 20px; padding: 14px 20px 18px; border-top: 1px solid #edf0f5; font-size: 13px; }
+.status-label { color: #63708a; font-weight: 600; }
+.status-value { overflow-wrap: anywhere; }
+.status-unavailable { grid-column: 1 / -1; color: #a33; }
