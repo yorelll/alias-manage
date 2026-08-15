@@ -1,5 +1,8 @@
 use crate::{error::AliasError, model::{Conflict, ShellKind}};
-use std::{env, fs, path::{Path, PathBuf}};
+use std::{env, fs, path::{Path, PathBuf}, process::Command};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PowerShellInstallation { pub kind: ShellKind, pub executable: PathBuf, pub version: Option<String> }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectionContext { pub explicit: Option<ShellKind>, pub parent_shell: Option<ShellKind>, pub shell_env: Option<String>, pub login_shell: Option<ShellKind> }
@@ -22,6 +25,18 @@ pub fn installed_shells() -> Vec<ShellKind> {
     result
 }
 
+pub fn installed_powershells() -> Vec<PowerShellInstallation> {
+    [
+        ("powershell", ShellKind::PowerShell5),
+        ("pwsh", ShellKind::PowerShell7),
+    ].into_iter().filter_map(|(name, kind)| {
+        let executable = command_path(name)?;
+        let output = Command::new(&executable).args(["-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"]).output().ok()?;
+        let version = String::from_utf8(output.stdout).ok()?.trim().to_string();
+        Some(PowerShellInstallation { kind, executable, version: (!version.is_empty()).then_some(version) })
+    }).collect()
+}
+
 pub fn conflicts(name: &str) -> Result<Vec<Conflict>, AliasError> {
     let mut result = Vec::new();
     if ["ls", "cp", "mv", "rm", "cat", "gc", "cd", "pwd"].iter().any(|reserved| reserved.eq_ignore_ascii_case(name)) { result.push(Conflict { name: name.into(), reason: "NameReserved or built-in command".into() }); }
@@ -35,7 +50,17 @@ pub fn find_definition_source(paths: &[PathBuf], name: &str) -> Result<Option<De
 }
 
 fn parse_shell_name(value: &str) -> Option<ShellKind> { match Path::new(value).file_name()?.to_str()? { "bash" => Some(ShellKind::Bash), "zsh" => Some(ShellKind::Zsh), "powershell" => Some(ShellKind::PowerShell5), "pwsh" => Some(ShellKind::PowerShell7), _ => None } }
-fn command_on_path(name: &str) -> bool { env::var_os("PATH").map(|paths| env::split_paths(&paths).any(|path| path.join(name).is_file() || cfg!(windows) && [".exe", ".cmd", ".bat"].iter().any(|ext| path.join(format!("{name}{ext}")).is_file()))).unwrap_or(false) }
+fn command_path(name: &str) -> Option<PathBuf> {
+    env::var_os("PATH").and_then(|paths| env::split_paths(&paths).find_map(|path| {
+        let direct = path.join(name);
+        if direct.is_file() { return Some(direct); }
+        if cfg!(windows) {
+            [".exe", ".cmd", ".bat"].iter().map(|ext| path.join(format!("{name}{ext}"))).find(|candidate| candidate.is_file())
+        } else { None }
+    }))
+}
+
+fn command_on_path(name: &str) -> bool { command_path(name).is_some() }
 
 #[cfg(test)]
 mod tests {

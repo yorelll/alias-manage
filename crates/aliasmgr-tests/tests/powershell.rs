@@ -1,4 +1,16 @@
-use aliasmgr_core::{model::{AliasRecord, ManagedNameSet, ShellKind}, shells::powershell};
+use aliasmgr_core::{detection::installed_powershells, model::{AliasRecord, ManagedNameSet, ShellKind}, shells::powershell};
+use std::{fs, process::Command};
+
+#[cfg(windows)]
+#[test]
+fn discovers_available_powershell_executables_and_versions() {
+    let installations = installed_powershells();
+    assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell5));
+    assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell7));
+    assert!(installations.iter().all(|item| !item.executable.as_os_str().is_empty() && item.version.is_some()));
+}
+
+#[test]
 use std::{fs, process::Command};
 
 fn powershell_command() -> Option<&'static str> {
