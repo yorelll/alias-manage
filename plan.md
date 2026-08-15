@@ -1566,15 +1566,15 @@ Task 1 CI enhancements adopted:
 
 - [x] 先写显式 Shell 优先、父进程优先于 `$SHELL`、默认 Shell 回退和已安装 Shell 扫描测试。
 - [x] 实现 Linux `/proc` 父链读取，并在不可用时安全回退，不把 `$SHELL` 当作当前 Shell 的绝对事实。
-- [ ] 实现 Windows `powershell.exe`/`pwsh.exe` 发现和版本区分（含 PS 7 的多版本并存）。
+- [x] 实现 Windows `powershell.exe`/`pwsh.exe` 发现和版本区分（`installed_powershells()` 返回 executable/version；Windows workspace CI `31874784574`，integration `31874843321`）。PS 7 多版本并存及真实用户 PATH 优先级仍待人工/后续增强。
 - [x] 实现 PATH 可执行文件冲突报告；Windows 必须按 `PATHEXT` 逐后缀查找，不只查 `.exe`。
 - [x] 实现已知内置命令、Cmdlet、内置 alias 与保留名称（`ReadOnly`/`Constant`）的冲突报告，保留名称直接判定为 `NameReserved`。
 - [x] 实现用户配置中同名定义的来源定位（文件 + 行号），用于 `doctor` 报告“插件在加载块之后重新定义”。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core detection`，预期全部通过。
 - [x] 提交 `feat: detect shells and report conflicts`。
 
-- [x] 已完成：检测优先级、PATH 冲突、内置冲突、来源行号和 integration core tests。
-- [ ] 待完成：Windows PowerShell 可执行文件/多版本发现，以及真实用户插件来源顺序和保留 alias discovery。
+- [x] 已完成：检测优先级、PATH 冲突、内置冲突、来源行号、Windows PowerShell executable/version discovery 和 integration core tests（fast CI `31874784574`，integration `31874843321`）。
+- [ ] 待完成：PS 7 多版本并存优先级、真实用户插件来源顺序和保留 alias discovery。
 
   ---
 
