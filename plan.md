@@ -1668,12 +1668,13 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `aliasmgr uninstall --purge-aliases`，只删除 Alias Manager 标记块、生成脚本和用户明确指定的数据。
 - [x] 卸载清理必须把 EXE、BAT、CMD、Python、PowerShell、Shell、JAR 等目标路径视为只读引用，禁止删除、移动或修改这些文件。
 - [x] 保留模式验证生成脚本只依赖目标解释器/程序，不引用 `aliasmgr invoke`。
-- [ ] Linux 包卸载文档说明包管理器的 `postrm` 无法交互，不保证弹出 GUI，需引导用户先执行 `aliasmgr uninstall`；Windows 安装器（MSI 自定义动作）调用同一核心清理逻辑并在 UI 中提供保留/删除选项。
+- [x] Linux 包卸载文档已明确 `postrm` 无法交互、不保证 GUI，并引导用户先执行 `aliasmgr uninstall`；Windows MSI 自定义动作的设计边界已记录，但实现仍待安装器阶段（`docs/uninstall.md`）。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test uninstall`，预期全部通过。
 - [x] 提交 `feat: add safe uninstall cleanup modes`。
 
-- [x] 已完成：retain/purge cleanup、loader removal、generated/database cleanup、target protection、fast CI 和 integration evidence。
-- [ ] 待完成：CLI uninstall dispatch 真正调用 core cleanup，以及 package-manager postrm/Windows installer 文档。
+- [x] 已完成：retain/purge cleanup、loader removal、generated/database cleanup、target protection、CLI dispatch、fast CI 和 integration evidence。
+- [x] package-manager postrm 与 Windows MSI 边界文档已补充到 `docs/uninstall.md`。
+- [ ] 待完成：真实安装器/package hook 集成实现与人工验收。
 
 ---
 
