@@ -1,12 +1,16 @@
 use crate::{error::AliasError, lock::FileLock, model::{AliasRecord, ShellKind, ShellStatus, ShellSyncResult, SyncReceipt}, shells::{bash, powershell, zsh}};
 use sha2::{Digest, Sha256};
-use std::{fs, path::PathBuf, time::Duration};
+use std::{fs, path::{Path, PathBuf}, time::Duration};
 
 pub fn content_checksum(content: &str) -> String { let mut digest = Sha256::new(); digest.update(content.lines().filter(|line| !line.starts_with("# file_checksum:")).collect::<Vec<_>>().join("\n").as_bytes()); format!("{:x}", digest.finalize()) }
 
 pub fn verify_file_checksum(content: &str, expected: &str) -> bool { content_checksum(content) == expected }
 
 fn metadata_line(name: &str, values: &[String]) -> String { format!("# {name}: {}\n", values.join(" ")) }
+
+fn backup_path(path: &PathBuf, root: &PathBuf) -> PathBuf {
+    root.join("backups/generated").join(path.file_name().unwrap())
+}
 pub struct SyncCoordinator { pub config_dir: PathBuf }
 
 pub fn shell_status(applied_revision: i64, current_revision: i64, loader_installed: bool, error: Option<&str>) -> ShellStatus {
@@ -22,10 +26,20 @@ impl SyncCoordinator {
 
     pub fn apply(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64) -> Result<SyncReceipt, AliasError> {
         fs::create_dir_all(self.config_dir.join("generated"))?;
+        fs::create_dir_all(self.config_dir.join("backups/generated"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
         let journal = self.config_dir.join("operation.journal");
         let revision_from = revision.saturating_sub(1);
-        fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=prepared\nbackups=[]\n"))?;
+        let mut backups = Vec::new();
+        for shell in shells {
+            let path = self.generated_path(shell);
+            if path.exists() {
+                let backup = backup_path(&path, &self.config_dir);
+                fs::copy(&path, &backup)?;
+                backups.push(serde_json::json!({"target": path, "backup": backup}));
+            }
+        }
+        fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=prepared\nbackups_json={}\n", serde_json::to_string(&backups)?))?;
         let mut results = Vec::new();
         for shell in shells {
             let path = self.generated_path(shell);
@@ -46,13 +60,24 @@ impl SyncCoordinator {
                 }
             }
         }
-        fs::write(&journal, format!("revision_from={}\nrevision_to={}\nstate=completed\nbackups=[]\n", revision.saturating_sub(1), revision))?;
+        fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=completed\nbackups_json={}\n", serde_json::to_string(&backups)?))?;
         Ok(SyncReceipt { revision, results })
     }
 
     pub fn recover_pending_operations(&self) -> Result<(), AliasError> {
         let journal = self.config_dir.join("operation.journal");
-        if journal.exists() { let content = fs::read_to_string(&journal)?; if content.contains("state=prepared") { fs::remove_file(journal)?; } }
+        if !journal.exists() { return Ok(()); }
+        let content = fs::read_to_string(&journal)?;
+        if content.lines().any(|line| line == "state=prepared") {
+            if let Some(backups) = content.lines().find_map(|line| line.strip_prefix("backups_json=")) {
+                for entry in serde_json::from_str::<Vec<serde_json::Value>>(backups)? {
+                    let target = entry.get("target").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal target".into()))?;
+                    let backup = entry.get("backup").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal backup".into()))?;
+                    if Path::new(backup).exists() { fs::copy(backup, target)?; }
+                }
+            }
+            fs::remove_file(journal)?;
+        }
         Ok(())
     }
 
@@ -122,9 +147,34 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
     #[test]
-    fn recovery_removes_prepared_journal() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-recovery-{}", std::process::id())); fs::create_dir_all(&root).unwrap();
-        fs::write(root.join("operation.journal"), "state=prepared\n").unwrap();
-        SyncCoordinator::new(&root).recover_pending_operations().unwrap(); assert!(!root.join("operation.journal").exists()); let _ = fs::remove_dir_all(root);
+    fn recovery_restores_generated_file_from_prepared_journal_backup() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-recovery-{}", std::process::id()));
+        let generated = root.join("generated/bash.sh");
+        let backup = root.join("backups/generated/bash.sh.bak");
+        fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        fs::write(&generated, "old generated content\n").unwrap();
+        fs::copy(&generated, &backup).unwrap();
+        fs::write(&generated, "partially replaced content\n").unwrap();
+        let entries = serde_json::json!([{"target": generated.to_string_lossy(), "backup": backup.to_string_lossy()}]);
+        fs::write(root.join("operation.journal"), format!("revision_from=1\nrevision_to=2\nstate=prepared\nbackups_json={entries}\n")).unwrap();
+        SyncCoordinator::new(&root).recover_pending_operations().unwrap();
+        assert_eq!(fs::read_to_string(&generated).unwrap(), "old generated content\n");
+        assert!(!root.join("operation.journal").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_records_backup_for_existing_generated_file() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-backup-{}", std::process::id()));
+        let generated = root.join("generated/bash.sh");
+        fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        fs::write(&generated, "previous\n").unwrap();
+        let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() };
+        SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap();
+        let journal = fs::read_to_string(root.join("operation.journal")).unwrap();
+        assert!(journal.contains("backups_json=["));
+        assert!(fs::read_dir(root.join("backups/generated")).unwrap().next().is_some());
+        let _ = fs::remove_dir_all(root);
     }
 }
