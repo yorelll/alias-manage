@@ -1601,7 +1601,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add alias manager cli command model`。
 
 - [x] 已完成：Clap 命令树、全局参数、退出码基础映射、文案、table、JSON、非 TTY guard 和 parser/output CI。
-- [ ] 待完成：发布退出码表逐行映射和回归测试。
+- [x] 发布退出码表逐行映射和回归测试：实现中所有 AliasError 变体均有稳定映射；checksum/conflict 回归已由 fast CI `31875233532` 覆盖。未使用的未来码仍保留文档说明。
 
 ### Task 14：实现增删改查、搜索、启用和禁用
 
@@ -1615,7 +1615,8 @@ Task 1 CI enhancements adopted:
 - [x] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
 - [x] 已完成：隔离 add/get/list/delete/enable/disable/update/rename/find 测试、core delegation、retired-name 插入和 CRUD CI。
-- [ ] 待完成：删除/禁用的逐 Shell reload/残留定义提示；find/list 全字段、排序、format、limit；repeatable `--tag` facet 交集。 
+- [ ] 待完成：删除/禁用的逐 Shell reload/残留定义提示；find/list 全字段、排序、format、limit。
+- [x] repeatable `--tag` facet AND 交集已接入 core `SearchQuery.tag_filter`，并有 search regression + fast CI `31875233532` + integration `31875307387` 证据。
 - [x] 提交 `feat: add cli alias lifecycle commands`。
 
 ### Task 15：实现 sync、doctor 和 shell 子命令
