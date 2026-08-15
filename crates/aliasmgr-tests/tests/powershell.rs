@@ -1,4 +1,6 @@
-use aliasmgr_core::{detection::installed_powershells, model::{AliasRecord, ManagedNameSet, ShellKind}, shells::powershell};
+use aliasmgr_core::{model::{AliasRecord, ManagedNameSet, ShellKind}, shells::powershell};
+#[cfg(windows)]
+use aliasmgr_core::detection::installed_powershells;
 use std::{fs, process::Command};
 
 #[cfg(windows)]
