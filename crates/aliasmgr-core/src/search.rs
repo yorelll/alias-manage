@@ -23,6 +23,7 @@ pub struct SearchQuery {
     pub sort: SortField,
     pub descending: bool,
     pub tag_filter: Vec<String>,
+}
 
 impl Default for SearchQuery {
     fn default() -> Self {
