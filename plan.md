@@ -1825,7 +1825,7 @@ Task 1 CI enhancements adopted:
 - [x] `docs/ci-workflow.md` 补充 §11.9 能力边界、隔离/日志规则和 GUI/release deferred jobs。
 - [ ] 在干净 Linux 用户目录和干净 Windows 用户配置中执行安装、创建、重启 Shell、删除、升级和卸载验收（必须由用户人工完成，CI 无法替代）。
 - [x] `docs/release-checklist.md` 区分 CI evidence、非 GUI CLI boundary 和 manual machine acceptance；未宣称 GUI MVP 完成。
-- [ ] 提交 semantic release-boundary commit after CI rerun.
+- [x] 提交 `docs: document pre-gui cli mvp boundary` (`574f128`)；fresh Fast CI `31876307564` 与 Integration `31876364983` 均成功。
 - [ ] 验证卸载不删除用户未托管内容，保留模式不依赖 Alias Manager 可执行文件。
 - [ ] 提交 `docs: document architecture security and lifecycle`。
 
