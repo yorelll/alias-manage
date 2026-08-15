@@ -1807,12 +1807,25 @@ Task 1 CI enhancements adopted:
 - Modify: `docs/ci-workflow.md`
 - Create: Windows installer and Linux packaging files
 
-- [ ] 文档说明 Bash/Zsh/Fish 是 Shell，不是终端类型，并统一使用 `alias` 拼写。
-- [ ] 文档说明 Profile/RC 加载块、重新加载限制、备份位置、执行策略和卸载保留/删除行为。
-- [ ] `docs/exit-codes.md` 与 §6.3 表格逐行一致，并声明退出码含义发布后不再变更。
-- [ ] `docs/limitations.md` 记录已知限制：PS 5.1/7.2 原生参数传递缺陷、`.bat` 二次解析、别名不递归解析、只在交互式 Shell 生效、`AllSigned`/ConstrainedLanguage 不支持、名称全局唯一（不支持跨 Shell 同名不同义）。
-- [ ] `docs/ci-workflow.md` 补充 §11.9 的能力边界，明确 CI 绿灯不等于 GUI 交互、真实用户配置兼容性与真实终端行为已验证。
-- [ ] 在干净 Linux 用户目录和干净 Windows 用户配置中执行安装、创建、重启 Shell、删除、升级和卸载验收。**该项必须在真实机器上人工完成，CI 无法替代（§11.9）。**
+- [x] Pre-GUI slice 5 documentation boundary is implemented in `README.md`, `docs/cli-commands.md`, `docs/release-checklist.md`, and the existing architecture/security/testing/limitations/exit-code/CI/uninstall documents. Fast CI `31875233532` and Integration `31875307387` are the current verification baseline.
+- Create: `README.md`
+- Create: `docs/architecture.md`
+- Create: `docs/security.md`
+- Create: `docs/testing.md`
+- Create: `docs/uninstall.md`
+- Create: `docs/exit-codes.md`
+- Create: `docs/limitations.md`
+- Modify: `docs/ci-workflow.md`
+- Create: Windows installer and Linux packaging files
+
+- [x] 文档说明 Bash/Zsh/Fish 是 Shell，不是终端类型，并统一使用 `alias` 拼写（`README.md`、`docs/cli-commands.md`）。
+- [x] 文档说明 Profile/RC 加载块、重新加载限制、备份位置、执行策略和卸载保留/删除行为（`README.md`、`docs/cli-commands.md`、`docs/uninstall.md`）。
+- [x] `docs/exit-codes.md` 与当前实现逐行对齐，并声明退出码含义发布后不再变更；未实现的 dedicated mappings 已明确标注。
+- [x] `docs/limitations.md` 记录 PS 5.1/7.2 原生参数、`.bat` 二次解析、非递归 alias、交互式 Shell、`AllSigned`/ConstrainedLanguage 和全局唯一名称限制。
+- [x] `docs/ci-workflow.md` 补充 §11.9 能力边界、隔离/日志规则和 GUI/release deferred jobs。
+- [ ] 在干净 Linux 用户目录和干净 Windows 用户配置中执行安装、创建、重启 Shell、删除、升级和卸载验收（必须由用户人工完成，CI 无法替代）。
+- [x] `docs/release-checklist.md` 区分 CI evidence、非 GUI CLI boundary 和 manual machine acceptance；未宣称 GUI MVP 完成。
+- [ ] 提交 semantic release-boundary commit after CI rerun.
 - [ ] 验证卸载不删除用户未托管内容，保留模式不依赖 Alias Manager 可执行文件。
 - [ ] 提交 `docs: document architecture security and lifecycle`。
 

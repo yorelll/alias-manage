@@ -35,6 +35,10 @@ This is the final non-GUI evidence reconciliation for Tasks 1–17. The broad Ta
 
 GUI implementation and GUI validation; visual acceptance; Tauri build jobs; frontend tests; real terminal experience; real user PowerShell profiles; oh-my-zsh/plugin ordering; symlink behavior on the user’s Windows installation; and installer/package-hook execution.
 
+## Documentation slice 5 status
+
+The pre-GUI documentation/release-boundary slice is implemented across `README.md`, `docs/cli-commands.md`, `docs/release-checklist.md`, `docs/architecture.md`, `docs/security.md`, `docs/testing.md`, `docs/limitations.md`, `docs/exit-codes.md`, `docs/ci-workflow.md`, and `docs/uninstall.md`. The remaining clean-machine and real-user acceptance items are intentionally unchecked.
+
 ## Security gate
 
 The normal path continues to reject advanced shell mode and `RawShellCommand`, does not use `eval` or `Invoke-Expression` in ordinary generated paths, filters sensitive import environment keys, preserves structured argv boundaries, and protects referenced target files during uninstall.
