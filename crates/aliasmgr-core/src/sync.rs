@@ -8,7 +8,7 @@ pub fn verify_file_checksum(content: &str, expected: &str) -> bool { content_che
 
 fn metadata_line(name: &str, values: &[String]) -> String { format!("# {name}: {}\n", values.join(" ")) }
 
-fn backup_path(path: &PathBuf, root: &PathBuf) -> PathBuf {
+fn backup_path(path: &Path, root: &Path) -> PathBuf {
     root.join("backups/generated").join(path.file_name().unwrap())
 }
 pub struct SyncCoordinator { pub config_dir: PathBuf }
