@@ -1686,7 +1686,7 @@ Task 1 CI enhancements adopted:
 | 2 | 已实现并 CI 验证 | `model.rs`、`record_checksum`、序列化和 workspace CI；GUI 依赖项不在本阶段。 |
 | 3 | 已实现并 CI 验证 | validation、PowerShell 保留名基础校验、case-fold 查询和存储入口测试；真实用户保留 alias discovery 仍是环境边界。 |
 | 4 | 部分完成，CI 已验证 | CRUD、迁移备份、SchemaTooNew、checksum、冲突语义和 PRAGMA 已验证；NFS/CIFS/WSL 识别及 `UnreliableFilesystem` 仍未实现。 |
-| 5 | 部分完成，CI 已验证 | 评分、模糊搜索、limit、tag filter 已验证；`SortField`/descending 尚未接入排序逻辑。 |
+| 5 | 部分完成，CI 已验证 | 评分、模糊搜索、limit、tag filter、`SortField`/descending 已由 core 搜索测试和 fast CI `32001624885` 验证；真实 CLI/GUI 全量查询验收仍按 Task 21-2 执行。 |
 | 6 | 部分完成，CI 已验证 | 配置路径、轮转、Linux writable 检查和跨进程锁已验证；Windows ACL writable-path 检测未实现。 |
 | 7 | 部分完成，CI 已验证 | 结构化 argv、占位符、Batch 安全和环境参数已验证；完整平台原生命令参数矩阵未完成。 |
 | 8 | 部分完成，CI 已验证 | Bash/Zsh quoting、loader、真实语法、symlink/CRLF 边界和 cleanup 已验证；oh-my-zsh 顺序及 Windows 用户配置人工验收未完成。 |
@@ -1695,7 +1695,7 @@ Task 1 CI enhancements adopted:
 | 11 | 部分完成，CI 已验证 | atomic write、`backups_json`、prepared journal 恢复和 per-shell receipt 已验证；SQLite transaction binding、提交后前滚、崩溃注入和 durable `shell_state` 未完成。 |
 | 12 | 部分完成，CI 已验证 | 检测优先级、PATH 冲突和 PowerShell executable/version discovery 已验证；PS7 多版本优先级、真实插件顺序和保留 alias discovery 未完成。 |
 | 13 | 部分完成，CI 已验证 | clap parser、table/JSON 基础输出、冲突/存储退出码已验证；非交互稳定码 14 与文档/实现尚未一致。 |
-| 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter 已验证；逐 Shell reload 提示、完整 list/find 字段、排序、format/limit 输出未完成。 |
+| 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter、完整 list/find 字段以及排序、format/limit 请求传播已由 CLI 测试和 fast CI `32001624885` 验证；逐 Shell reload 提示与真实 Shell 会话仍按 Task 21-2 验收。 |
 | 15 | 部分完成，CI 已验证 | sync、dry-run 非写入、reload 基础输出和基础 doctor 已验证；durable doctor 诊断及 marked loader install/uninstall 未完成。 |
 | 16 | 部分完成，CI 已验证 | JSON/TOML metadata、敏感变量过滤、unsupported/relative-path 报告已验证；导入确认后持久化及完整 TOML safety/conflict matrix 未完成。 |
 | 17 | 部分完成，CI 已验证 | core retain/purge、target protection、CLI dispatch 和 uninstall 边界文档已验证；真实 package hook/MSI 集成与人工验收未完成。 |

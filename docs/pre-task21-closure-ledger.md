@@ -7,7 +7,7 @@ This ledger classifies unchecked items before Task 21. It is an audit record, no
 | GUI npm cache | implementation-feasible | lockfile + pinned GUI CI cache | Deferred until lockfile is committed |
 | Filesystem reliability / `UnreliableFilesystem` | implementation-feasible where APIs are reliable; otherwise environment-blocked | core tests + platform CI | Fallback exists; filesystem-type certainty incomplete |
 | Windows ACL writable path | implementation-feasible | Windows core test | Incomplete |
-| Search sort/descending and complete CLI output | implementation-feasible | core/CLI tests + fast CI | Incomplete |
+| Search sort/descending and complete CLI output | implementation-feasible | core/CLI tests + fast CI | Core sorting plus CLI field/sort/descending/limit/tag propagation and complete JSON rows implemented; CI run `32001624885` passed |
 | Native argument matrix | CI-verifiable | Linux/Windows fixtures + integration jobs | Incomplete |
 | Tombstone fingerprint/override recovery | CI-verifiable | Shell integration tests | Incomplete |
 | SQLite sync transaction/forward recovery | CI-verifiable | sync/storage tests | Incomplete |

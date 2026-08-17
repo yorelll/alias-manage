@@ -72,21 +72,21 @@ git push origin feature/alias-manager-mvp
 - Test: `crates/aliasmgr-cli/tests/crud.rs`
 - Test: `crates/aliasmgr-cli/tests/parse.rs`
 
-- [ ] **Step 1: Write failing sort tests**
+- [x] **Step 1: Write failing sort tests**
 
-Add aliases with different `updated_at`, `created_at`, `target_type`, and `enabled` values. Assert each `SortField` and `descending` order. Add a CLI parse test for repeated `--tag`, `--sort`, `--desc`, `--limit`, and `--format json`.
+Added core explicit sort coverage and CLI parse/lifecycle tests for repeated `--tag`, `--field`, `--sort`, `--desc`, `--limit`, and JSON output.
 
-- [ ] **Step 2: Implement stable sort behavior**
+- [x] **Step 2: Implement stable sort behavior**
 
-After scoring/filtering, sort by the selected field, apply descending only to the selected field, then use stable name/updated-at tie breakers. Preserve query score ordering when a text query is present unless an explicit sort field was supplied.
+Core sorting supports `Name`, `UpdatedAt`, `CreatedAt`, `TargetType`, and `Enabled`, with descending order and stable tie breakers (`crates/aliasmgr-core/src/search.rs`).
 
-- [ ] **Step 3: Implement CLI list/find request propagation**
+- [x] **Step 3: Implement CLI list/find request propagation**
 
-Pass `fuzzy`, `limit`, `tags`, sort field, descending, and output format from `cli::Command` into `SearchQuery`. Render complete JSON DTO fields when `--format json`; keep table output stable.
+CLI now propagates field, fuzzy, limit, tags, sort, descending, and output format through `list_query`/`find_query`; JSON rows include complete alias fields (`crates/aliasmgr-cli/src/commands.rs`, `output.rs`, `main.rs`).
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
-Push a semantic commit and verify fast CI plus integration CLI jobs. Record run IDs in the ledger before checking the subordinate items.
+Commits `ae6ebeb`, `f0d4a8a`, and `c4d2040`; fast CI run `32001624885` passed on Linux/Windows, lint, and GUI frontend jobs. Integration baseline `31999366350` remains green; a fresh integration rerun is still required before final Phase A closure.
 
 ---
 
