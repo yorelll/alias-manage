@@ -103,21 +103,21 @@ Commits `ae6ebeb`, `f0d4a8a`, and `c4d2040`; fast CI run `32001624885` passed on
 - Test: `crates/aliasmgr-core/src/config.rs`
 - Test: `crates/aliasmgr-cli/src/exit_code.rs`
 
-- [ ] **Step 1: Write failing platform tests**
+- [x] **Step 1: Write failing platform tests**
 
-On Unix, test a known temporary directory and an explicitly other-writable directory. On Windows, test the ACL helper against a temporary directory and assert the result is a structured `PermissionDenied`/unsafe-path result rather than a panic. Add a filesystem reliability result type that can represent `reliable`, `fallback-delete`, and `unknown`.
+Added explicit `FilesystemReliability` and `PathSafety` tests covering conservative local/remote/unknown outcomes and ensuring Windows ACL uncertainty is never treated as safe.
 
-- [ ] **Step 2: Implement conservative filesystem detection**
+- [x] **Step 2: Implement conservative filesystem detection**
 
-Add a helper that identifies supported local filesystem behavior where platform APIs make it reliable. If detection cannot be made reliable, return `unknown` and use the existing safe journal-mode fallback; do not claim NFS/CIFS/WSL certainty. Add `UnreliableFilesystem` only if it is mapped consistently through CLI exit codes and doctor output.
+`config.rs` classifies known Linux local filesystems as `Reliable`, known network/remote mounts as `FallbackDelete`, and unknown types as `Unknown`. `UnreliableFilesystem` is mapped to CLI code 13 and documented; Windows filesystem certainty remains environment-blocked.
 
-- [ ] **Step 3: Implement Windows ACL writable-path check**
+- [x] **Step 3: Implement Windows ACL writable-path check**
 
-Use a Windows-only API boundary or a conservative documented fallback. The function must never grant safety based on an unverified ACL. Keep Linux permission logic unchanged.
+The Windows boundary returns `PathSafety::Unknown` until a verified native ACL implementation is available; it never grants safety based on an unverified ACL. Linux other-writable checks remain unchanged.
 
-- [ ] **Step 4: Verify Linux/Windows CI and commit**
+- [x] **Step 4: Verify Linux/Windows CI and commit**
 
-Record platform-specific results separately. If a platform API cannot be safely verified on the runner, classify it as environment-blocked instead of checking it.
+Commits `c4ec953`, `89ccd4d`, and `821d56f`; CI run `32003275982` passed lint, Linux/Windows workspace tests, and GUI frontend jobs. Windows ACL/native filesystem certainty is explicitly classified as environment-blocked rather than checked.
 
 ---
 

@@ -1376,7 +1376,7 @@ Task 1 CI enhancements adopted:
   - [x] Linux/Windows workspace evidence.
 - [x] 实现唯一名称冲突到专用错误的映射，并区分“同名”与“大小写冲突”两种消息（`ExactNameConflict` / `CaseFoldConflict`，CLI 稳定冲突码 3；fast CI run `31786909449`）。
   - [x] CLI exit-code regression tests cover both conflict variants and checksum storage errors.
-- [ ] 不可靠文件系统检测和 WAL 降级：SQLite 非 WAL 模式回退到 DELETE 已有测试覆盖；真实 NFS/CIFS/WSL 文件系统识别与 `UnreliableFilesystem` 诊断仍待实现。
+- [x] 不可靠文件系统检测和 WAL 降级：`config.rs` 对已知 Linux 本地/网络文件系统保守分类，未知类型返回 `Unknown`；`UnreliableFilesystem` 映射稳定退出码 13 并写入限制文档；CI run `32003275982` 验证。Windows/真实 NFS/CIFS/WSL runner 场景仍属环境边界。
   - [x] SQLite PRAGMA、迁移备份、SchemaTooNew/恢复和父目录行为测试（fast CI run `31786909449`）。
   - [x] Linux/Windows integration matrix green（integration run `31787162999`）。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
@@ -1384,13 +1384,13 @@ Task 1 CI enhancements adopted:
 
 - [x] 已完成：CRUD、迁移、SchemaTooNew、迁移备份、JSON/Boolean/RFC3339 转换、shell_state/retired_names/override/folded-name API 和 Linux/Windows CI。
 - [x] 已完成：同名与大小写冲突错误语义完整区分（fast CI run `31786909449`）。
-- [ ] 待完成：真实不可靠文件系统识别、`UnreliableFilesystem` 错误/诊断及相应降级报告。
+- [x] 已完成：已知 Linux 文件系统分类、未知/Windows 保守降级、`UnreliableFilesystem` 错误与 CLI 映射；真实 Windows ACL/NFS/CIFS/WSL 验收保留为环境边界。证据：CI `32003275982`。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core storage`，预期全部通过。
 - [x] 提交 `feat: add transactional sqlite storage`。
 
 - [x] 已完成：CRUD、迁移、SchemaTooNew、迁移备份、JSON/Boolean/RFC3339 转换、shell_state/retired_names/override/folded-name API 和 Linux/Windows CI。
 - [ ] 待完成：同名与大小写冲突错误语义完整区分。
-- [ ] 待完成：不可靠文件系统检测和 WAL 降级实现。
+- [x] 已完成：不可靠文件系统检测和 WAL 降级分类已实现；真实网络文件系统与 Windows ACL 结果仍按环境边界记录。证据：CI `32003275982`。
 
 ### Task 5：实现搜索和排序
 
@@ -1428,7 +1428,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add platform paths and config lock`。
 
 - [x] 已完成：配置路径优先级、默认值、目录创建、TOML 默认值、Shell 路径覆盖、轮转、Linux writable 检测、fs4 锁和 Linux/Windows CI。
-- [ ] 待完成：Windows ACL writable-path 检测。
+- [ ] 环境阻塞：Windows ACL writable-path 检测保守返回 `Unknown`，当前未接入可验证的 Windows 原生 ACL API；不得据此声称安全。Task 21-2/Windows runner 需补充真实 ACL 验收。
 
 ---
 
@@ -1687,7 +1687,7 @@ Task 1 CI enhancements adopted:
 | 3 | 已实现并 CI 验证 | validation、PowerShell 保留名基础校验、case-fold 查询和存储入口测试；真实用户保留 alias discovery 仍是环境边界。 |
 | 4 | 部分完成，CI 已验证 | CRUD、迁移备份、SchemaTooNew、checksum、冲突语义和 PRAGMA 已验证；NFS/CIFS/WSL 识别及 `UnreliableFilesystem` 仍未实现。 |
 | 5 | 部分完成，CI 已验证 | 评分、模糊搜索、limit、tag filter、`SortField`/descending 已由 core 搜索测试和 fast CI `32001624885` 验证；真实 CLI/GUI 全量查询验收仍按 Task 21-2 执行。 |
-| 6 | 部分完成，CI 已验证 | 配置路径、轮转、Linux writable 检查和跨进程锁已验证；Windows ACL writable-path 检测未实现。 |
+| 6 | 部分完成，CI 已验证 | 配置路径、轮转、Linux writable 检查和跨进程锁已验证；Windows ACL 目前保守返回 `Unknown`，属于环境/原生 API 边界，未将其误标为通过。 |
 | 7 | 部分完成，CI 已验证 | 结构化 argv、占位符、Batch 安全和环境参数已验证；完整平台原生命令参数矩阵未完成。 |
 | 8 | 部分完成，CI 已验证 | Bash/Zsh quoting、loader、真实语法、symlink/CRLF 边界和 cleanup 已验证；oh-my-zsh 顺序及 Windows 用户配置人工验收未完成。 |
 | 9 | 部分完成，CI 已验证 | PS 5.1/7 parser、preemption、安装版本发现已验证；Profile/OneDrive、BOM/CRLF、ExecutionPolicy、native 参数版本策略和真实 `Get-Command` 会话仍未完成。 |
