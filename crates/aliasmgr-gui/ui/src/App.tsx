@@ -4,6 +4,10 @@ import { AliasTable } from "./components/AliasTable";
 import { SearchBar } from "./components/SearchBar";
 import { TagFacet } from "./components/TagFacet";
 import { AliasWizard } from "./components/AliasWizard";
+import { DoctorPanel } from "./components/DoctorPanel";
+import { ImportPanel } from "./components/ImportPanel";
+import { SettingsPanel } from "./components/SettingsPanel";
+import { UninstallPanel } from "./components/UninstallPanel";
 import type { AliasDto } from "./lib";
 import {
   type StartupStatus,
@@ -99,7 +103,10 @@ export function App() {
       <div className="main-content">
         <div className="page-area">
           {page === "aliases" && <AliasesPage />}
-          {page !== "aliases" && <PlaceholderPage name={NAV_ITEMS.find((item) => item.id === page)?.label ?? page} />}
+          {page === "doctor" && <DoctorPanel />}
+          {page === "settings" && <SettingsPanel />}
+          {page === "sync" && <ImportPanel />}
+          {page !== "aliases" && page !== "doctor" && page !== "settings" && page !== "sync" && <PlaceholderPage name={NAV_ITEMS.find((item) => item.id === page)?.label ?? page} />}
         </div>
         <StatusDrawer status={status} error={statusError} />
       </div>

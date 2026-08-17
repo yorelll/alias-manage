@@ -163,6 +163,45 @@ pub fn update_alias(alias: AliasDto) -> Result<AliasDto, String> {
     AliasService::new(&database).update(dto_to_alias(alias)?).map(|saved| alias_to_dto(&saved)).map_err(|error| error.to_string())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DoctorFindingDto { pub shell: Option<String>, pub severity: String, pub code: String, pub message: String, pub action: Option<String> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportPreviewDto { pub imported: Vec<String>, pub skipped: Vec<String>, pub warnings: Vec<String>, pub unsupported: Vec<String> }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SettingsDto { pub config_directory: String, pub default_shell: String, pub backup_keep: usize, pub log_keep: usize, pub allow_relative_paths: bool }
+
+#[tauri::command]
+pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> { Ok(Vec::new()) }
+
+#[tauri::command]
+pub fn generated_preview(_shell: String) -> Result<String, String> { Ok(String::new()) }
+
+#[tauri::command]
+pub fn reload_command(shell: String) -> Result<String, String> { Ok(match shell.as_str() { "zsh" => "source generated/zsh.sh", "powershell5" => ". generated/powershell5.ps1", "powershell7" => ". generated/powershell7.ps1", _ => ". generated/bash.sh" }.into()) }
+
+#[tauri::command]
+pub fn import_preview(_file: String) -> Result<ImportPreviewDto, String> { Ok(ImportPreviewDto { imported: vec![], skipped: vec![], warnings: vec![], unsupported: vec![] }) }
+
+#[tauri::command]
+pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> { import_preview(file) }
+
+#[tauri::command]
+pub fn config_get() -> Result<SettingsDto, String> { let paths = AppPaths::discover(None); Ok(SettingsDto { config_directory: paths.root.to_string_lossy().into_owned(), default_shell: "bash".into(), backup_keep: 10, log_keep: 7, allow_relative_paths: false }) }
+
+#[tauri::command]
+pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> { Ok(settings) }
+
+#[tauri::command]
+pub fn uninstall_preview(_purge: bool) -> Result<Vec<String>, String> { Ok(vec!["Referenced target files are protected".into()]) }
+
+#[tauri::command]
+pub fn uninstall_confirm(_purge: bool) -> Result<Vec<String>, String> { Ok(vec![]) }
+
+#[tauri::command]
+pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> { Ok(vec![]) }
+
 #[cfg(test)]
 mod tests {
     use super::*;
