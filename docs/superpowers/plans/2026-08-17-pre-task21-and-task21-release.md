@@ -86,7 +86,7 @@ CLI now propagates field, fuzzy, limit, tags, sort, descending, and output forma
 
 - [x] **Step 4: Verify and commit**
 
-Commits `ae6ebeb`, `f0d4a8a`, and `c4d2040`; fast CI run `32001624885` passed on Linux/Windows, lint, and GUI frontend jobs. Integration baseline `31999366350` remains green; a fresh integration rerun is still required before final Phase A closure.
+Commits `ae6ebeb`, `f0d4a8a`, and `c4d2040`; fast CI run `32001624885` passed on Linux/Windows, lint, and GUI frontend jobs. Fresh integration run `32001809714` passed across Bash, Zsh, PowerShell 5.1/7, lock, core, and CLI layers.
 
 ---
 

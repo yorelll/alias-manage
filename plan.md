@@ -1695,7 +1695,7 @@ Task 1 CI enhancements adopted:
 | 11 | 部分完成，CI 已验证 | atomic write、`backups_json`、prepared journal 恢复和 per-shell receipt 已验证；SQLite transaction binding、提交后前滚、崩溃注入和 durable `shell_state` 未完成。 |
 | 12 | 部分完成，CI 已验证 | 检测优先级、PATH 冲突和 PowerShell executable/version discovery 已验证；PS7 多版本优先级、真实插件顺序和保留 alias discovery 未完成。 |
 | 13 | 部分完成，CI 已验证 | clap parser、table/JSON 基础输出、冲突/存储退出码已验证；非交互稳定码 14 与文档/实现尚未一致。 |
-| 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter、完整 list/find 字段以及排序、format/limit 请求传播已由 CLI 测试和 fast CI `32001624885` 验证；逐 Shell reload 提示与真实 Shell 会话仍按 Task 21-2 验收。 |
+| 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter、完整 list/find 字段以及排序、format/limit 请求传播已由 CLI 测试、fast CI `32001624885` 和 integration `32001809714` 验证；逐 Shell reload 提示与真实 Shell 会话仍按 Task 21-2 验收。 |
 | 15 | 部分完成，CI 已验证 | sync、dry-run 非写入、reload 基础输出和基础 doctor 已验证；durable doctor 诊断及 marked loader install/uninstall 未完成。 |
 | 16 | 部分完成，CI 已验证 | JSON/TOML metadata、敏感变量过滤、unsupported/relative-path 报告已验证；导入确认后持久化及完整 TOML safety/conflict matrix 未完成。 |
 | 17 | 部分完成，CI 已验证 | core retain/purge、target protection、CLI dispatch 和 uninstall 边界文档已验证；真实 package hook/MSI 集成与人工验收未完成。 |
