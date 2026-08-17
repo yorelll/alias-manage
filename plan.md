@@ -1752,6 +1752,10 @@ Task 1 CI enhancements adopted:
 - [ ] 【CI】在 GitHub Actions 上执行 `npm test`、`cargo test -p aliasmgr-core search`（若改动了 `search.rs`）和 Tauri 类型检查，预期全部通过。
 - [ ] 提交 `feat: add alias management gui workflow`。
 
+- [x] 设计已确认：真实 core-backed 数据流、`AliasService` service boundary、A Add/Edit + Save persistence、C basic/advanced wizard、A direct conflict rejection；设计文档：`docs/superpowers/specs/2026-08-15-task19-gui-list-search-wizard-design.md`。
+- [x] 实现计划已创建并完成自审：`docs/superpowers/plans/2026-08-15-task19-gui-list-search-wizard.md`。
+- [ ] 原始 Task 19 broad checkbox 仍保持未完成，直到代码、CI 和 manual boundary 均完成。 
+
 ### Task 20：实现诊断、导入导出和卸载设置页
 
 **Files:**

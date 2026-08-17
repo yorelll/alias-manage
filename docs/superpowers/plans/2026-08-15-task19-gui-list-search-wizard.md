@@ -46,6 +46,10 @@
 - Create: `crates/aliasmgr-core/src/service.rs`
 - Modify: `crates/aliasmgr-core/src/lib.rs`
 
+- [x] **Design approved:** real core-backed data flow, `AliasService` boundary, Add/Edit+Save scope, basic/advanced wizard, and direct conflict rejection are documented in `docs/superpowers/specs/2026-08-15-task19-gui-list-search-wizard-design.md`.
+
+- [x] **Design approved:** real core-backed data flow, `AliasService` boundary, Add/Edit+Save scope, basic/advanced wizard, and direct conflict rejection are documented in `docs/superpowers/specs/2026-08-15-task19-gui-list-search-wizard-design.md`.
+
 - [ ] **Step 1: Write failing service tests**
 
 Create tests using `Database::open_in_memory()` and real `AliasRecord` values. The tests must express the service API before implementation:
