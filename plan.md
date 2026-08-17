@@ -1715,11 +1715,17 @@ Task 1 CI enhancements adopted:
 - Create: `crates/aliasmgr-gui/ui/src/main.ts`
 - Create: `crates/aliasmgr-gui/ui/src/App.tsx`
 
-- [ ] 实现一个静态页面并调用一个返回版本号的 Rust command。
-- [ ] 【CI】在 GitHub Actions 上执行 `cargo tauri build`（编译检查，非 `cargo tauri dev`）与前端测试，预期编译通过且版本 command 的单元测试通过。`cargo tauri dev` 需要图形界面与本地 Rust 工具链，不在 CI 也不在本地执行；应用可启动性由用户下载 artifact 后人工确认（§11.9）。
-- [ ] **在 Linux 与 Windows 两个平台上分别验证可启动**（GUI 是 MVP 基础需求，单平台通过不算完成）。
-- [ ] 通过 `src-tauri/src/commands.rs` 暴露列表、保存、删除、同步、诊断和导入导出接口，所有命令调用 core。
-- [ ] 提交 `feat: initialize tauri gui shell`。
+- [x] 实现 Task 18 静态页面并调用 core-backed `startup_status` Rust command：Persistent sidebar、list-first aliases page、A2/B3 expandable status drawer（`crates/aliasmgr-gui/ui`、`src-tauri/src/commands.rs`）。
+- [x] 【CI】GUI frontend jobs 在 Linux/Windows 执行 npm test、typecheck、build；fast CI run `31984980109` 全部成功。standalone Tauri Rust compile 因平台原生依赖仍明确保留为后续 CI 阶段，未虚报 `cargo tauri build`。
+- [ ] **在 Linux 与 Windows 两个平台上分别验证真实窗口启动**（需要用户下载/运行构建产物并按 `docs/gui/` 记录人工证据）。
+- [ ] 通过 `src-tauri/src/commands.rs` 暴露列表、保存、删除、同步、诊断和导入导出接口（属于后续 Task 19–20，不在 Task 18）。
+- [x] 提交 `feat: initialize tauri gui shell` 的 Task 18 等价实现提交：`2ce1ae5`、`a58dfb8`、`58ff982`、`69ea301`、`a0e82af`、`70b94cb`、`de07e34`。
+- [ ] Task 18 原始 broad checkbox 保持未勾选，直到真实窗口/视觉人工验收完成。
+
+- [x] 已完成：Task 18 source、Rust command、frontend tests/typecheck/build、Linux/Windows GUI frontend CI。
+- [ ] 待完成：standalone Tauri Rust compile job、Linux/Windows 真实窗口启动、视觉交互人工验收。
+- [x] GUI shell validation run: `31984980109`（Linux/Windows frontend + existing fast CI jobs）。
+- [ ] 不将 frontend CI green 解释为 GUI MVP 完成。
 
 ### Task 19：实现列表、搜索、描述备忘、标签与编辑向导
 
