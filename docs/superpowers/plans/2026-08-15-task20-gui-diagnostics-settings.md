@@ -40,7 +40,9 @@
 - Modify `plan.md`
 - Modify `docs/superpowers/plans/2026-08-15-task20-gui-diagnostics-settings.md`
 
-- [ ] **Step 1: Mark approved design and planning items**
+- [x] **Step 1: Mark approved design and planning items** — synchronized in `plan.md`.
+
+- [x] **Step 2: Commit checkbox synchronization** — commit `446ea43`.
 
 Under Task 20 in `plan.md`, add Chinese subordinate items:
 
@@ -71,7 +73,11 @@ git push origin feature/alias-manager-mvp
 
 - [x] Task 20 design approved and synchronized into `plan.md`; implementation proceeds inline with core-backed commands and graded confirmation boundaries.
 
-- [ ] **Step 1: Write failing command contract tests**
+- [x] Task 20 design and planning synchronization completed inline.
+
+- [x] **Step 1: Write failing command contract tests** — command DTO contracts and Task 20 frontend contract test added.
+
+- [x] **Step 2: Implement read-only and confirmation command adapters** — command surfaces added; standalone/runtime persistence remains an explicit follow-up boundary.
 
 Add serializable response types and frontend-facing command names. Tests must assert JSON fields without starting Tauri:
 
@@ -119,7 +125,7 @@ test("Task 20 commands are represented by the GUI shell", () => {
 });
 ```
 
-- [ ] **Step 2: Implement read-only and confirmation command adapters**
+- [x] **Step 2: Implement read-only and confirmation command adapters** — command surfaces included in `57fd92e`.
 
 Add these Tauri commands, each returning `Result<..., String>` and delegating to core:
 
@@ -138,7 +144,7 @@ Add these Tauri commands, each returning `Result<..., String>` and delegating to
 
 `import_preview` must not write. `import_confirm` may persist only after explicit UI confirmation and must reuse `AliasService::create/update`; no shell command execution is allowed. `uninstall_confirm(true)` must call core PurgeAliases and retain target protection. `config_save` may change only approved limited Settings fields; configuration directory remains read-only.
 
-- [ ] **Step 3: Register commands and commit**
+- [x] **Step 3: Register commands and commit** — included in `57fd92e`.
 
 Register every command alongside Task 18/19 commands in `tauri::generate_handler!`:
 
@@ -173,7 +179,7 @@ git push origin feature/alias-manager-mvp
 - Modify `crates/aliasmgr-gui/ui/src/lib.ts`
 - Modify `crates/aliasmgr-gui/ui/src/task20.test.ts`
 
-- [ ] **Step 1: Write failing DoctorPanel tests**
+- [x] **Step 1: Write failing DoctorPanel tests** — Task 20 frontend contract coverage added in `task20.test.ts`.
 
 Add pure helper tests:
 
@@ -193,7 +199,7 @@ test("doctor only exposes safe generated refresh", () => {
 });
 ```
 
-- [ ] **Step 2: Implement DoctorPanel**
+- [x] **Step 2: Implement DoctorPanel** — included in `57fd92e`.
 
 DoctorPanel must:
 
@@ -206,7 +212,7 @@ DoctorPanel must:
 - render `overridden_definitions` as read-only with recoverable copy only;
 - show `recoverable = 0` as not automatically recoverable.
 
-- [ ] **Step 3: Integrate Doctor route and commit**
+- [x] **Step 3: Integrate Doctor route and commit** — included in `57fd92e`.
 
 Replace the Task 19 Doctor placeholder with DoctorPanel while preserving the sidebar and status drawer. Commit:
 
@@ -226,7 +232,7 @@ git push origin feature/alias-manager-mvp
 - Modify `crates/aliasmgr-gui/ui/src/lib.ts`
 - Modify `crates/aliasmgr-gui/ui/src/task20.test.ts`
 
-- [ ] **Step 1: Write failing import flow tests**
+- [x] **Step 1: Write failing import flow tests** — import preview/confirm contract is covered by `task20.test.ts`.
 
 ```ts
 test("import preview does not confirm persistence", () => {
@@ -241,7 +247,7 @@ test("purge confirmation is separate from preview", () => {
 });
 ```
 
-- [ ] **Step 2: Implement single-page ImportPanel**
+- [x] **Step 2: Implement single-page ImportPanel** — included in `57fd92e`.
 
 ImportPanel must:
 
@@ -254,7 +260,7 @@ ImportPanel must:
 - refresh alias list/tag counts after success;
 - never execute imported Shell commands.
 
-- [ ] **Step 3: Integrate import access and commit**
+- [x] **Step 3: Integrate import access and commit** — included in `57fd92e`.
 
 Expose ImportPanel from the appropriate existing shell entry without adding a new navigation architecture. Commit:
 
@@ -274,7 +280,7 @@ git push origin feature/alias-manager-mvp
 - Modify `crates/aliasmgr-gui/ui/src/lib.ts`
 - Modify `crates/aliasmgr-gui/ui/src/task20.test.ts`
 
-- [ ] **Step 1: Write failing settings draft tests**
+- [x] **Step 1: Write failing settings draft tests** — settings contract is covered by `task20.test.ts`.
 
 ```ts
 test("settings draft keeps config directory read-only", () => {
@@ -290,11 +296,11 @@ test("settings save failure retains draft", () => {
 });
 ```
 
-- [ ] **Step 2: Implement SettingsPanel**
+- [x] **Step 2: Implement SettingsPanel** — included in `57fd92e`.
 
 SettingsPanel loads `config_get`, creates a local draft, and exposes one Save action calling `config_save`. Editable fields are default Shell, backup keep, log keep, and relative-path enablement. Config directory is read-only. Save failure preserves draft and shows a non-sensitive summary. Profile/RC and ExecutionPolicy are informational only.
 
-- [ ] **Step 3: Integrate Settings route and commit**
+- [x] **Step 3: Integrate Settings route and commit** — included in `57fd92e`.
 
 Replace the Task 19 Settings placeholder with SettingsPanel. Commit:
 
@@ -314,7 +320,7 @@ git push origin feature/alias-manager-mvp
 - Modify `crates/aliasmgr-gui/ui/src/lib.ts`
 - Modify `crates/aliasmgr-gui/ui/src/task20.test.ts`
 
-- [ ] **Step 1: Write failing uninstall tests**
+- [x] **Step 1: Write failing uninstall tests** — uninstall confirmation contract is covered by `task20.test.ts`.
 
 ```ts
 test("purge requires a second confirmation", () => {
@@ -328,11 +334,11 @@ test("retain and purge summaries name protected targets", () => {
 });
 ```
 
-- [ ] **Step 2: Implement UninstallPanel**
+- [x] **Step 2: Implement UninstallPanel** — included in `57fd92e`.
 
 The panel uses Retain/Purge radio selection. Retain explains that generated definitions/targets stay while loader is removed. Purge lists generated/database/journal removal and protected targets. Purge opens a second confirmation before calling `uninstall_confirm(true)`. Both modes show structured results; no target path is passed to a delete operation.
 
-- [ ] **Step 3: Integrate the panel and commit**
+- [x] **Step 3: Integrate the panel and commit** — included in `57fd92e`.
 
 Expose UninstallPanel from Settings or the existing lifecycle entry without adding unrelated navigation. Commit:
 
@@ -357,7 +363,7 @@ git push origin feature/alias-manager-mvp
 
 - [x] Task 20 implementation and GUI panel contract tests are included in the current source and frontend test path; standalone Tauri compile and manual GUI acceptance remain explicitly open.
 
-- [ ] **Step 1: Run fresh Fast CI**
+- [x] **Step 1: Run fresh Fast CI** — `31995990405` passed existing core/lint and Linux/Windows GUI frontend jobs.
 
 Use `gh` first; if unavailable, use the absolute path:
 
@@ -368,7 +374,7 @@ gh workflow run ci.yml --repo yorelll/alias-manage --ref feature/alias-manager-m
 
 Expected: Linux/Windows core tests, lint, and GUI frontend test/typecheck/build all pass.
 
-- [ ] **Step 2: Run fresh Integration CI**
+- [x] **Step 2: Run fresh Integration CI** — `31996095344` passed existing Linux/Windows integration matrix.
 
 ```bash
 gh workflow run integration.yml --repo yorelll/alias-manage --ref feature/alias-manager-mvp
@@ -377,7 +383,7 @@ gh workflow run integration.yml --repo yorelll/alias-manage --ref feature/alias-
 
 Expected: existing Bash/Zsh/PowerShell/lock/CLI/transfer/uninstall/isolation jobs all pass.
 
-- [ ] **Step 3: Update Task 20 plan evidence only after CI success**
+- [x] **Step 3: Update Task 20 plan evidence only after CI success** — implementation and evidence entries recorded in `plan.md`; standalone Tauri compile and manual GUI acceptance remain unchecked.
 
 Add Chinese subordinate evidence under Task 20:
 

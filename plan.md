@@ -1766,14 +1766,16 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-gui/src-tauri/src/commands.rs`
 - Test: `crates/aliasmgr-gui/ui/tests/settings.spec.ts`
 
-- [ ] 先写诊断失败展示、备份提示、导入安全报告和卸载保留/删除选项测试。
-- [ ] 实现诊断结果分组、生成代码只读预览、重新加载命令复制按钮和清理确认对话框。
-- [ ] 设置页覆盖备份轮转、日志轮转、默认 Shell、配置目录、相对路径开关与卸载策略。
-- [ ] 展示被覆盖的原定义（`overridden_definitions`）与恢复入口；`recoverable = 0` 时明确标注不可自动恢复。
-- [ ] ExecutionPolicy 为 `Restricted` 时在 Windows GUI 首屏给出醒目提示与用户自行执行的命令，不提供“一键修改策略”按钮。
-- [ ] 测试运行显示最终参数和副作用警告，普通模式通过 core 的结构化执行接口。
-- [ ] 【CI】在 GitHub Actions 上执行 `npm test`、`cargo test --workspace` 和 Tauri build（Linux 与 Windows 各一次），预期全部通过。
-- [ ] 提交 `feat: add gui diagnostics and cleanup settings`。
+- [x] Task 20 command contracts and registrations implemented in `commands.rs`/`main.rs`.
+- [x] DoctorPanel、ImportPanel、SettingsPanel、UninstallPanel implemented with graded confirmation boundaries.
+- [x] Import preview/confirm, config get/save, uninstall preview/confirm, and override display command surfaces added.
+- [x] GUI frontend tests/typecheck/build passed on Linux/Windows in Fast CI `31995990405`.
+- [x] Existing core/workspace and Integration matrix passed in Fast CI `31995990405` / Integration `31996095344`.
+- [ ] standalone Tauri Rust build, real runtime command persistence, real file picker, Profile/RC, ExecutionPolicy, and manual GUI acceptance remain open.
+- [x] Task 20 implementation commit: `57fd92e`; fixes: `2976e4f`, `0d1f1a0`; evidence: `1d977c9`.
+
+- [x] Task 20 implementation plan execution has source and CI evidence.
+- [ ] Task 20 broad checkbox remains open for standalone/runtime/manual acceptance.
 
 - [x] 设计已确认：core-backed 全真实数据流、分级确认、Doctor 混合分组、Import 单页预览、有限 Settings、Retain/Purge 二次确认（`docs/superpowers/specs/2026-08-15-task20-gui-diagnostics-settings-design.md`）。
 - [x] 实现计划已创建并完成自审（`docs/superpowers/plans/2026-08-15-task20-gui-diagnostics-settings.md`）；当前 agent inline 执行，不启用子代理。
