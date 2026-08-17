@@ -40,7 +40,23 @@ pub fn import_file(file: &str) -> Result<aliasmgr_core::transfer::ImportReport, 
 pub fn import_preview(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { let path = Path::new(file); let existing = if config_dir.is_some() { list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect() } else { std::collections::BTreeMap::new() }; let aliases = if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::read_toml(path)? } else { aliasmgr_core::transfer::read_json(path)? }; aliasmgr_core::transfer::import_records(aliases, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask).map(|report| report.into_public()) }
 #[allow(dead_code)] pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { let path = Path::new(file); let existing = list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect(); let aliases = if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::read_toml(path)? } else { aliasmgr_core::transfer::read_json(path)? }; let mut report = aliasmgr_core::transfer::import_records(aliases, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask)?; let database = database(config_dir)?; for alias in report.accepted_records.drain(..) { database.insert_alias(&alias)?; } Ok(report.into_public()) }
 pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> { let root = config_dir.map(Path::new).unwrap_or_else(|| Path::new(".alias-manager")); aliasmgr_core::uninstall::uninstall(root, if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases }, None).map(|_| ()) }
-pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> { let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new)); let mut findings = Vec::new(); if !paths.root.join("aliases.db").exists() { findings.push("数据库文件缺失".into()); } if !paths.generated_path("bash").exists() { findings.push("Bash 生成文件缺失".into()); } Ok(findings) }
+pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
+    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
+    let database = database(config_dir)?;
+    let mut findings = Vec::new();
+    if !paths.root.join("aliases.db").exists() { findings.push("数据库文件缺失".into()); }
+    for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] {
+        if !paths.generated_path(match shell { ShellKind::Bash => "bash", ShellKind::Zsh => "zsh", ShellKind::PowerShell5 => "powershell5", ShellKind::PowerShell7 => "powershell7", _ => "unsupported" }).exists() { findings.push(format!("生成文件缺失: {shell:?}")); }
+    }
+    let revision = database.list_aliases()?.iter().map(|alias| alias.revision).max().unwrap_or(0);
+    for state in database.shell_states()? {
+        if state.applied_revision < revision { findings.push(format!("Shell {:?} 生成文件过期", state.shell)); }
+        if let Some(error) = state.last_error { findings.push(format!("Shell {:?} 同步失败: {error}", state.shell)); }
+        if !state.loader_installed { findings.push(format!("Shell {:?} 加载块未安装", state.shell)); }
+    }
+    if let Some(error) = database.reliability_error() { findings.push(error.to_string()); }
+    Ok(findings)
+}
 
 #[cfg(test)]
 mod tests { use super::*; #[test] fn dry_run_and_reload_are_non_mutating_helpers() { assert!(reload_print(Some("cfg"), "bash").contains("generated/bash.sh")); } }

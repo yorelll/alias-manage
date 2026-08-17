@@ -169,6 +169,37 @@ impl Database {
             .query_row("PRAGMA user_version", [], |row| row.get(0))?)
     }
 
+    #[test]
+    fn shell_state_round_trips_for_durable_doctor_reads() {
+        let database = Database::open_in_memory().unwrap();
+        let state = crate::model::ShellState {
+            shell: crate::model::ShellKind::Bash,
+            applied_revision: 1,
+            file_checksum: "abc".into(),
+            loader_installed: true,
+            status: crate::model::ShellStatus::Stale,
+            last_error: Some("generated file is old".into()),
+        };
+        database.upsert_shell_state(&state).unwrap();
+        let states = database.shell_states().unwrap();
+        assert_eq!(states, vec![state]);
+    }
+
+    pub fn shell_states(&self) -> Result<Vec<crate::model::ShellState>, AliasError> {
+        let mut statement = self.conn.prepare("SELECT shell, applied_revision, file_checksum, loader_installed, status, last_error FROM shell_state ORDER BY shell")?;
+        let rows = statement.query_map([], |row| {
+            Ok(crate::model::ShellState {
+                shell: serde_json::from_str(&row.get::<_, String>(0)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?,
+                applied_revision: row.get(1)?,
+                file_checksum: row.get(2)?,
+                loader_installed: row.get::<_, i64>(3)? != 0,
+                status: serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(error)))?,
+                last_error: row.get(5)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AliasError::from)
+    }
+
     pub fn upsert_shell_state(
         &self,
         state: &crate::model::ShellState,
