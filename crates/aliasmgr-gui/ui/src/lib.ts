@@ -23,12 +23,12 @@ export function statusSummaryText(status: StartupStatus | null, error: boolean):
   return "loading…";
 }
 
-export let tauriInvoke: (command: string) => Promise<unknown> = (command) => {
-  const tauri = (globalThis as { __TAURI__?: { core?: { invoke?: (name: string) => Promise<unknown> } } }).__TAURI__;
-  if (tauri?.core?.invoke) return tauri.core.invoke(command);
-  return import("@tauri-apps/api/core").then((module) => module.invoke(command));
+export let tauriInvoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> = (command, args) => {
+  const tauri = (globalThis as { __TAURI__?: { core?: { invoke?: (name: string, args?: Record<string, unknown>) => Promise<unknown> } } }).__TAURI__;
+  if (tauri?.core?.invoke) return tauri.core.invoke(command, args);
+  return import("@tauri-apps/api/core").then((module) => module.invoke(command, args));
 };
 
-export function setTauriInvoke(invoke: (command: string) => Promise<unknown>): void {
+export function setTauriInvoke(invoke: (command: string, args?: Record<string, unknown>) => Promise<unknown>): void {
   tauriInvoke = invoke;
 }
