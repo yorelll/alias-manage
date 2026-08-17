@@ -1756,7 +1756,7 @@ Task 1 CI enhancements adopted:
 
 - [x] 设计已确认：真实 core-backed 数据流、`AliasService` service boundary、A Add/Edit + Save persistence、C basic/advanced wizard、A direct conflict rejection；设计文档：`docs/superpowers/specs/2026-08-15-task19-gui-list-search-wizard-design.md`。
 - [x] 实现计划已创建并完成自审：`docs/superpowers/plans/2026-08-15-task19-gui-list-search-wizard.md`。
-- [ ] 原始 Task 19 broad checkbox 仍保持未完成，直到代码、CI 和 manual boundary 均完成。 
+- [ ] 原始 Task 19 broad checkbox 仍保持未完成，直到代码、CI 和 manual boundary 均完成。
 
 ### Task 20：实现诊断、导入导出和卸载设置页
 
@@ -1774,6 +1774,16 @@ Task 1 CI enhancements adopted:
 - [ ] 测试运行显示最终参数和副作用警告，普通模式通过 core 的结构化执行接口。
 - [ ] 【CI】在 GitHub Actions 上执行 `npm test`、`cargo test --workspace` 和 Tauri build（Linux 与 Windows 各一次），预期全部通过。
 - [ ] 提交 `feat: add gui diagnostics and cleanup settings`。
+
+- [x] 设计已确认：core-backed 全真实数据流、分级确认、Doctor 混合分组、Import 单页预览、有限 Settings、Retain/Purge 二次确认（`docs/superpowers/specs/2026-08-15-task20-gui-diagnostics-settings-design.md`）。
+- [x] 实现计划已创建并完成自审（`docs/superpowers/plans/2026-08-15-task20-gui-diagnostics-settings.md`）；当前 agent inline 执行，不启用子代理。
+- [ ] Task 20 原始 broad checkbox保持未完成，直到代码、CI 和 GUI/manual boundary 证据全部完成。
+
+- [x] Task 20设计与实施计划已同步到本计划。
+- [ ] Task 20 implementation、CI 和 manual acceptance待完成。
+
+- [x] Task 20 scope confirmed: no automatic Profile/RC/ExecutionPolicy change, no MSI/package hook integration, no visual acceptance in CI.
+- [ ] Task 20 original broad checkbox remains unchecked.
 
 ---
 
