@@ -6,9 +6,9 @@ pub fn render(alias: &AliasRecord, names: &ManagedNameSet) -> Result<String, Ali
     let command = argv.iter().map(|value| quote_posix(value)).collect::<Vec<_>>().join(" ");
     let mut output = render_cleanup(names);
     output.push_str(&render_preemption(&alias.name));
-    if is_simple_alias(alias) { output.push_str(&format!("alias {}={}\n", alias.name, quote_posix(&alias.executable))); }
-    else if alias.target_type == crate::model::TargetType::ChangeDirectory { output.push_str(&format!("{}() {{ cd -- {}; }}\n", alias.name, quote_posix(alias.working_directory.as_deref().unwrap_or(&alias.executable)))); }
-    else { output.push_str(&format!("{}() {{ command {} \"$@\"; }}\n", alias.name, command)); }
+    if is_simple_alias(alias) { output.push_str(&format!("{}\n", crate::shells::common::managed_definition(&alias.name, &format!("alias {}={}", alias.name, quote_posix(&alias.executable))))); }
+    else if alias.target_type == crate::model::TargetType::ChangeDirectory { output.push_str(&format!("{}\n", crate::shells::common::managed_definition(&alias.name, &format!("{}() {{ cd -- {}; }}", alias.name, quote_posix(alias.working_directory.as_deref().unwrap_or(&alias.executable)))))); }
+    else { output.push_str(&format!("{}\n", crate::shells::common::managed_definition(&alias.name, &format!("{}() {{ command {} \"$@\"; }}", alias.name, command)))); }
     Ok(output)
 }
 

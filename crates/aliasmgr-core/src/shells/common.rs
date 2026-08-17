@@ -2,7 +2,18 @@
 
 use crate::error::AliasError;
 use crate::model::{AliasRecord, ManagedNameSet};
+use sha2::{Digest, Sha256};
 use std::{fs, path::Path};
+
+pub fn fingerprint_marker(name: &str) -> String {
+    let mut digest = Sha256::new();
+    digest.update(name.as_bytes());
+    format!("# aliasmgr fingerprint:{:x}", digest.finalize())
+}
+
+pub fn managed_definition(name: &str, definition: &str) -> String {
+    format!("{definition} {}", fingerprint_marker(name))
+}
 
 pub const START_MARKER: &str = "# >>> Alias Manager >>>";
 pub const END_MARKER: &str = "# <<< Alias Manager <<<";
@@ -30,6 +41,13 @@ pub fn _filesystem_exists(path: &Path) -> bool { path.exists() }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fingerprint_marker_is_stable_and_embedded_in_managed_definition() {
+        assert_eq!(fingerprint_marker("cm"), fingerprint_marker("cm"));
+        assert_ne!(fingerprint_marker("cm"), fingerprint_marker("other"));
+        assert!(managed_definition("cm", "cm() { true; }").contains("aliasmgr fingerprint:"));
+    }
+
     #[test]
     fn loader_install_is_idempotent_and_appends() {
         let loader = render_loader(Path::new("/tmp/generated.sh"));
@@ -110,7 +128,7 @@ pub fn managed_names(names: &ManagedNameSet) -> Vec<String> {
 }
 
 pub fn render_cleanup(names: &ManagedNameSet) -> String {
-    managed_names(names).iter().map(|name| format!("unalias {} 2>/dev/null\nunset -f {} 2>/dev/null\n", quote_posix(name), quote_posix(name))).collect()
+    managed_names(names).iter().map(|name| format!("# aliasmgr cleanup:{}\nunalias {} 2>/dev/null\nunset -f {} 2>/dev/null\n", fingerprint_marker(name), quote_posix(name), quote_posix(name))).collect()
 }
 
 pub fn is_simple_alias(alias: &AliasRecord) -> bool {

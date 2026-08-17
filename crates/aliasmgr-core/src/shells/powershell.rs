@@ -9,10 +9,10 @@ pub fn render(alias: &AliasRecord, shell: ShellKind, names: &ManagedNameSet) -> 
     if !matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7) { return Err(AliasError::ShellNotInstalled); }
     let mut output = render_cleanup(names);
     output.push_str(&render_preemption(&alias.name));
-    if is_simple_alias(alias) { output.push_str(&format!("Set-Alias -Name {} -Value {} -Scope Global -Force\n", alias.name, quote(&alias.executable))); return Ok(output); }
+    if is_simple_alias(alias) { output.push_str(&format!("{}\n", crate::shells::common::managed_definition(&alias.name, &format!("Set-Alias -Name {} -Value {} -Scope Global -Force", alias.name, quote(&alias.executable))))); return Ok(output); }
     let argv = render_argv(alias, &[])?;
     let command = argv.iter().map(|value| quote(value)).collect::<Vec<_>>().join(" ");
-    output.push_str(&format!("function global:{} {{ & {} @args }}\n", alias.name, command));
+    output.push_str(&format!("{}\n", crate::shells::common::managed_definition(&alias.name, &format!("function global:{} {{ & {} @args }}", alias.name, command))));
     Ok(output)
 }
 
