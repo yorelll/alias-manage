@@ -129,6 +129,8 @@ impl<'a> AliasService<'a> {
 
 The service must not import Tauri or frontend types. Existing storage conflict and checksum behavior remains authoritative.
 
+- [x] Task 1 core service slice implemented in `8b97c09`; fast CI `31991047603` and integration `31991181943` passed.
+
 - [ ] **Step 3: Export the service and commit**
 
 Add `pub mod service;` to `crates/aliasmgr-core/src/lib.rs`. Inspect that `SearchQuery` already includes `tag_filter`; do not duplicate it. Commit only the core service slice:
@@ -190,7 +192,11 @@ pub fn update_alias(alias: AliasDto) -> Result<AliasDto, String>;
 
 `SearchRequest` contains `query`, `fuzzy`, `limit`, and `tag_filter`. Commands resolve the configured database path using `AppPaths::discover(None)`/the existing config boundary, construct `AliasService`, and convert `AliasError` to non-sensitive strings. Do not put validation, search scoring, or SQLite SQL in commands.
 
+- [x] Task 2 GUI commands implemented in `8b97c09`; command registration and DTO conversion are included in the same slice.
+
 - [ ] **Step 3: Register commands and commit**
+
+> The planned standalone command commit step is represented by `8b97c09`; remaining plan checkboxes below track implementation evidence, not a second duplicate commit.
 
 Register all five commands in `tauri::generate_handler!` next to `startup_status`:
 
@@ -269,7 +275,11 @@ export function truncateDescription(full: string, max: number): { display: strin
 }
 ```
 
+- [x] Task 3 frontend list/search/tag components implemented in `cf1cdea`; frontend CI evidence is recorded below.
+
 - [ ] **Step 3: Implement the components**
+
+> The implementation is already included in `cf1cdea`; this checklist remains as the task-level source steps.
 
 `AliasTable` receives `AliasDto[]`, renders name/target/Shell/description/tags/revision/enabled, uses `title={description}` for truncated descriptions, and uses stable chip classes based on tag order. It must not issue database calls.
 
@@ -340,7 +350,11 @@ test("draft conversion keeps advanced structured fields", () => {
 - never save invalid/empty tags;
 - keep changes in the draft until save succeeds.
 
+- [x] Task 4 basic/advanced wizard and TagInput implementation included in `cf1cdea`; frontend tests/typecheck/build passed in Fast CI `31991047603`.
+
 - [ ] **Step 3: Implement AliasWizard basic/advanced sections**
+
+> The implementation is already included in `cf1cdea`; this checklist remains as the task-level source steps.
 
 Basic fields: name, description, target type, executable/script path, Shell, tags.
 
@@ -377,6 +391,12 @@ git push origin feature/alias-manager-mvp
 - Modify: `.github/workflows/ci.yml` only if the existing GUI jobs need a focused Task 19 command.
 - Modify: `plan.md`
 - Modify: `docs/gui/README.md` only to link the Task 19 manual cases if needed.
+
+- [x] **Step 1: Run fresh fast CI** — `31991047603` passed Linux/Windows core, lint, and GUI frontend jobs.
+
+- [x] **Step 2: Run fresh integration workflow** — `31991181943` passed the full existing integration matrix.
+
+- [x] **Step 3: Update Task 19 checkboxes only with evidence** — `plan.md` records the implemented core/frontend evidence and leaves runtime/manual gaps unchecked.
 
 - [ ] **Step 1: Run fresh fast CI**
 

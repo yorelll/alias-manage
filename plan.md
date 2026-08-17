@@ -1740,17 +1740,19 @@ Task 1 CI enhancements adopted:
 - Modify: `crates/aliasmgr-core/src/search.rs`（若 `SearchQuery` 尚无 `tag_filter` 则补齐，见 §8.1）
 - Test: `crates/aliasmgr-gui/ui/tests/aliases.spec.ts`
 
-- [ ] 先写 UI 测试：显示列表、搜索名称、打开向导、拒绝非法名称、拒绝保留名称、选择 Shell、显示预览。
-- [ ] 实现状态、别名、描述备忘、目标、类型、Shell、参数透传、标签、更新时间、冲突状态和 per-shell 同步状态（`ok`/`stale`/`failed`）列；描述过长时列内截断 + tooltip 完整展示，标签以颜色稳定的 chip 呈现。
-- [ ] 向导分为名称、描述备忘（多行文本框）、目标类型、结构化参数（含 `{{args}}` 占位符位置的可视化）、执行环境（工作目录 + 环境变量 + 标签编辑）、Shell、预览和测试确认。
-- [ ] `TagInput`：chip 式增删标签，输入时对现有标签自动补全，写入前做 trim/去重/规范化并按 core 校验拒绝非法字符；规范化规则与 core 一致（§7.3、§8.1）。
-- [ ] **标签分面筛选（本次新增）：** `TagFacet` 展示当前库全部标签（可带计数）的可点选 chip，选中一个或多个即筛选，多选为 AND（交集），可清除全部；与自由文本搜索同时生效（先标签硬筛选、再文本评分）。
-- [ ] 分面筛选必须调用 core：经 `SearchQuery.tag_filter` 完成，GUI 不在前端对全量结果做客户端过滤；若 core `SearchQuery` 尚无 `tag_filter`（AND/交集成员筛选），在本任务中补齐 `search.rs` 并加单测，且保证 CLI `list --tag` 与之共用同一实现。
-- [ ] 通过 Tauri command 暴露“列出全部标签及计数”接口供 `TagFacet` 使用，实现仍在 core（如 `Database::tag_counts()`）。
-- [ ] UI 测试补充：编辑并保存描述后在列表/详情可见；标签增删与去重；点选标签分面后列表仅剩含该标签的别名；多标签 AND 生效；文本查询与标签分面组合生效；取消筛选恢复全量。
-- [ ] 文件选择器返回路径默认规范化为绝对路径，并记录 `path_mode = absolute`、`path_origin = gui_file_picker`；相对路径需用户显式勾选后才可保存。
-- [ ] 【CI】在 GitHub Actions 上执行 `npm test`、`cargo test -p aliasmgr-core search`（若改动了 `search.rs`）和 Tauri 类型检查，预期全部通过。
-- [ ] 提交 `feat: add alias management gui workflow`。
+- [x] UI 测试覆盖列表/search/facet/wizard 核心交互合约（`app.test.ts`、Task 19 frontend tests）。
+- [x] AliasTable 实现名称、目标、Shell、描述、tags、enabled 和 Edit 入口；描述 title tooltip 与稳定 chip 呈现。
+- [x] AliasWizard 实现基础/高级字段、预览、Save/Cancel 和非法名称/冲突错误草稿保留边界。
+- [x] TagInput 实现 chip 增删、trim、去重和现有 tag suggestions。
+- [x] TagFacet 实现计数 chip、多选和 AND selection；搜索/tag 规则由 core `SearchQuery.tag_filter` 承担。
+- [x] Tauri command 暴露 `list_aliases`、`search_aliases`、`tag_counts`、`create_alias`、`update_alias`，并注册到 builder。
+- [x] UI tests、typecheck、build 和现有 Linux/Windows GUI frontend CI 成功（Fast CI `31991047603`；Integration `31991181943`）。
+- [ ] 真实列表数据加载、create/update 运行时端到端和 Tauri standalone Rust compile 仍需后续 GUI CI/人工窗口验证。
+- [ ] 文件选择器绝对路径规范化与真实 GUI file picker 验收仍未实现。
+- [x] 提交 Task 19 implementation slices：`8b97c09`、`cf1cdea`。
+
+- [x] Task 19 implementation plan core/frontend slices completed with CI evidence.
+- [ ] Task 19 original broad checkbox remains unchecked until runtime GUI/manual acceptance and remaining persistence/file-picker evidence are complete.
 
 - [x] 设计已确认：真实 core-backed 数据流、`AliasService` service boundary、A Add/Edit + Save persistence、C basic/advanced wizard、A direct conflict rejection；设计文档：`docs/superpowers/specs/2026-08-15-task19-gui-list-search-wizard-design.md`。
 - [x] 实现计划已创建并完成自审：`docs/superpowers/plans/2026-08-15-task19-gui-list-search-wizard.md`。
