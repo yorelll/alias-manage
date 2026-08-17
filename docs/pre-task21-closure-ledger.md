@@ -8,7 +8,7 @@ This ledger classifies unchecked items before Task 21. It is an audit record, no
 | Filesystem reliability / `UnreliableFilesystem` | implementation-feasible where APIs are reliable; otherwise environment-blocked | core tests + platform CI | `config.rs` classifies known Linux local/remote filesystem types conservatively; CI run `32003275982` passed; Windows filesystem/ACL certainty remains environment-blocked |
 | Windows ACL writable path | implementation-feasible | Windows core test | Incomplete |
 | Search sort/descending and complete CLI output | implementation-feasible | core/CLI tests + fast CI | Core sorting plus CLI field/sort/descending/limit/tag propagation and complete JSON rows implemented; CI run `32001624885` passed; integration run `32001809714` passed |
-| Native argument matrix | CI-verifiable | Linux/Windows fixtures + integration jobs | Incomplete |
+| Native argument matrix | CI-verifiable | Linux/Windows fixtures + integration jobs | Structured exact-boundary and Batch metacharacter tests plus fixtures implemented; fast CI `32004704944` and integration `32004874576` passed; host-specific PS native argv limits remain documented/manual |
 | Tombstone fingerprint/override recovery | CI-verifiable | Shell integration tests | Incomplete |
 | SQLite sync transaction/forward recovery | CI-verifiable | sync/storage tests | Incomplete |
 | CLI reload/doctor/transfer persistence | CI-verifiable | CLI integration tests | Incomplete |

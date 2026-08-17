@@ -1452,7 +1452,8 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add structured command executors`。
 
 - [x] 已完成：结构化 argv、占位符、Batch 安全、工作目录、环境变量、缺失目标和 Linux/Windows CI。
-- [ ] 待完成：完整平台原生命令参数矩阵。
+- [x] 已完成：完整结构化参数边界矩阵（空参数、空格、引号、反斜杠、CJK、通配符、固定/用户/中间 `{{args}}`、Python/PowerShell/JAR/Native/ChangeDirectory、Batch 元字符拒绝）及 CI fixtures；fast CI `32004704944`、integration `32004874576`。
+- [ ] 已知限制：PS 5.1/7.0–7.2 的宿主原生命令重构行为仍按 `docs/limitations.md` 标记为 expected-limitation，不通过字符串求值规避。
 
 ### Task 8：实现 Bash/Zsh 适配器
 
@@ -1688,7 +1689,7 @@ Task 1 CI enhancements adopted:
 | 4 | 部分完成，CI 已验证 | CRUD、迁移备份、SchemaTooNew、checksum、冲突语义和 PRAGMA 已验证；NFS/CIFS/WSL 识别及 `UnreliableFilesystem` 仍未实现。 |
 | 5 | 部分完成，CI 已验证 | 评分、模糊搜索、limit、tag filter、`SortField`/descending 已由 core 搜索测试和 fast CI `32001624885` 验证；真实 CLI/GUI 全量查询验收仍按 Task 21-2 执行。 |
 | 6 | 部分完成，CI 已验证 | 配置路径、轮转、Linux writable 检查和跨进程锁已验证；Windows ACL 目前保守返回 `Unknown`，属于环境/原生 API 边界，未将其误标为通过。 |
-| 7 | 部分完成，CI 已验证 | 结构化 argv、占位符、Batch 安全和环境参数已验证；完整平台原生命令参数矩阵未完成。 |
+| 7 | 部分完成，CI 已验证 | 结构化 argv、占位符、Batch 安全、完整边界矩阵和 Linux/Windows 分版本 CI 已验证（fast `32004704944`、integration `32004874576`）；PS 宿主原生命令重构限制仍按文档和 Task 21-2 标记。 |
 | 8 | 部分完成，CI 已验证 | Bash/Zsh quoting、loader、真实语法、symlink/CRLF 边界和 cleanup 已验证；oh-my-zsh 顺序及 Windows 用户配置人工验收未完成。 |
 | 9 | 部分完成，CI 已验证 | PS 5.1/7 parser、preemption、安装版本发现已验证；Profile/OneDrive、BOM/CRLF、ExecutionPolicy、native 参数版本策略和真实 `Get-Command` 会话仍未完成。 |
 | 10 | 部分完成，CI 已验证 | loader、metadata、checksum 检测已验证；doctor 决策、fingerprint、真实 tombstone reload 和 override recovery 未完成。 |

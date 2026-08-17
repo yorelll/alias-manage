@@ -133,17 +133,17 @@ Commits `c4ec953`, `89ccd4d`, and `821d56f`; CI run `32003275982` passed lint, L
 - Create/modify: `crates/aliasmgr-tests/fixtures/argument-dumper.ps1`
 - Create/modify: `crates/aliasmgr-tests/fixtures/argument-dumper.bat`
 
-- [ ] **Step 1: Write exact-boundary argv tests**
+- [x] **Step 1: Write exact-boundary argv tests**
 
-Cover empty strings, spaces, quotes, backslashes, CJK, wildcard characters, fixed args, user args, middle `{{args}}`, working directory, environment values, Python, PowerShell, JAR, native executable, and Batch/CMD metacharacters. Assert argv element count and exact boundaries without printing secrets.
+Added executor coverage for empty strings, spaces, quotes, backslashes, CJK, wildcards, fixed/user/middle `{{args}}`, escaped placeholders, working directory, environment values, Python/PowerShell/JAR/change-directory target metadata, and Batch/CMD metacharacter rejection. Assertions inspect argv boundaries without logging secrets.
 
-- [ ] **Step 2: Implement only missing target-specific behavior**
+- [x] **Step 2: Implement only missing target-specific behavior**
 
-Keep structured arrays. Reject unsafe Batch/CMD characters as currently specified. Do not add string evaluation, `eval`, `Invoke-Expression`, or concatenated command lines.
+Kept structured arrays and rejected unsafe Batch/CMD characters; no string evaluation, `eval`, `Invoke-Expression`, or concatenated command lines were added. Added Python, PowerShell, and Batch dumper fixtures for CI boundaries.
 
-- [ ] **Step 3: Verify separate PS 5.1/7 and Linux Shell matrix**
+- [x] **Step 3: Verify separate PS 5.1/7 and Linux Shell matrix**
 
-Run through integration workflow with separate jobs and record the exact matrix entries. Update limitations for unsupported host-specific native argument reconstruction.
+Fast CI `32004704944` and integration `32004874576` passed on Linux/Windows, Bash/Zsh, PowerShell 5.1/7, lock, core, and CLI jobs. Host-native PowerShell argv reconstruction remains an expected limitation documented in `docs/limitations.md`.
 
 ---
 
