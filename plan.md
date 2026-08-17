@@ -1549,14 +1549,15 @@ Task 1 CI enhancements adopted:
 - [x] 每个 Shell 独立生成和替换，成功即更新该 Shell 的 `shell_state`；单 Shell 失败不回滚其他 Shell 的成功替换、不回滚数据库。
 - [x] 实现 `shell_state.status` 计算（`ok`/`stale`/`failed`/`loader_missing`/`unknown`），供 `doctor` 报告派生文件过期。
 - [x] 写入 `retired_names` 并在同步成功后执行 `prune_retired_names()`。
-- [x] 多 Shell 部分失败测试：已有 per-shell receipt 覆盖 Bash 成功/PowerShell 失败；SQLite-backed revision/state persistence 仍待后续 slice。
+- [x] 多 Shell 部分失败测试：已有 per-shell receipt 覆盖 Bash 成功/PowerShell 失败；SQLite `shell_state` 现已持久化每个成功/失败 Shell 的 revision/checksum/status/error，fast CI `32014090284`、integration `32014638440`。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core sync`，预期全部通过（fast CI `31874229459`）。
 - [x] 提交 `feat: add atomic shell synchronization and rollback`。
 
 - [x] 已完成：临时文件原子替换、journal 文本、journal backups_json、prepared journal backup restoration、recovery 入口、per-shell receipt、status helper、revision/checksum metadata 和 partial-result tests（fast CI `31874229459`，integration `31874293417`）。
 - [ ] 待完成：journal/shell_state 与 SQLite 事务绑定、提交后前滚，以及数据库中的 partial failure 状态持久化。
 - [x] 已完成：生成文件备份及 prepared-operation 回滚行为（`sync.rs` regression tests，fast CI `31874229459`）。
-- [ ] 待完成：真实崩溃注入、数据库提交后前滚和 SQLite durable shell_state 写入。
+- [x] 已完成：SQLite durable `shell_state` 写入和读取，记录 per-Shell revision/checksum/status/error；fast CI `32014090284`、integration `32014638440`。
+- [ ] 待完成：真实崩溃注入、数据库提交后前滚和完整 SQLite transaction binding。
 
 ### Task 12：实现 Shell 检测和冲突检测
 
@@ -1695,7 +1696,7 @@ Task 1 CI enhancements adopted:
 | 8 | 部分完成，CI 已验证 | Bash/Zsh quoting、loader、真实语法、symlink/CRLF 边界和 cleanup 已验证；oh-my-zsh 顺序及 Windows 用户配置人工验收未完成。 |
 | 9 | 部分完成，CI 已验证 | PS 5.1/7 parser、preemption、安装版本发现已验证；Profile/OneDrive、BOM/CRLF、ExecutionPolicy、native 参数版本策略和真实 `Get-Command` 会话仍未完成。 |
 | 10 | 部分完成，CI 已验证 | loader、metadata、checksum 检测已验证；doctor 决策、fingerprint、真实 tombstone reload 和 override recovery 未完成。 |
-| 11 | 部分完成，CI 已验证 | atomic write、`backups_json`、prepared journal 恢复和 per-shell receipt 已验证；SQLite transaction binding、提交后前滚、崩溃注入和 durable `shell_state` 未完成。 |
+| 11 | 部分完成，CI 已验证 | atomic write、`backups_json`、prepared journal 恢复、per-shell receipt 和 SQLite durable `shell_state` 已验证（fast `32014090284`、integration `32014638440`）；SQLite transaction binding、提交后前滚和崩溃注入仍未完成。 |
 | 12 | 部分完成，CI 已验证 | 检测优先级、PATH 冲突和 PowerShell executable/version discovery 已验证；PS7 多版本优先级、真实插件顺序和保留 alias discovery 未完成。 |
 | 13 | 部分完成，CI 已验证 | clap parser、table/JSON 基础输出、冲突/存储退出码已验证；非交互稳定码 14 与文档/实现尚未一致。 |
 | 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter、完整 list/find 字段以及排序、format/limit 请求传播已由 CLI 测试、fast CI `32001624885` 和 integration `32001809714` 验证；逐 Shell reload 提示与真实 Shell 会话仍按 Task 21-2 验收。 |

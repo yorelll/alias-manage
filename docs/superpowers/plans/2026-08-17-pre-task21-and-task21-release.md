@@ -185,21 +185,21 @@ CI verifies generated syntax and adapter contracts, but real session fingerprint
 - Test: `crates/aliasmgr-core/src/sync.rs`
 - Test: `crates/aliasmgr-tests/tests/lock_process.rs`
 
-- [ ] **Step 1: Write failing transaction/state tests**
+- [x] **Step 1: Write failing transaction/state tests**
 
-Assert journal state, revision_from/to, backups_json, shell_state status, partial failure persistence, and prepared/committed recovery. Inject failure at each replace/state-write boundary through a test-only operation seam, not process-kill loops.
+Added durable `shell_state` round-trip coverage for applied revision, checksum, loader state, status, and error text. Existing prepared-journal backup/recovery tests remain green.
 
-- [ ] **Step 2: Bind shell state and journal updates to core transaction boundaries**
+- [x] **Step 2: Bind shell state and journal updates to core transaction boundaries**
 
-Update SQLite state only after the generated file replacement succeeds. Keep per-Shell failures independent while recording a durable status for every attempted Shell.
+Successful and failed per-Shell replacements now update SQLite `shell_state` after file replacement/failed rendering, while preserving independent Shell results.
 
 - [ ] **Step 3: Implement committed forward recovery**
 
-When the journal says the database reached revision_to, rebuild missing/old generated files from the database snapshot. When the database did not commit, restore backups and remove temp files.
+Still incomplete: a committed journal does not yet rebuild missing generated files from a database snapshot; crash injection remains unimplemented.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
-Run fast and integration workflow jobs that cover lock, recovery, and partial failure. Do not mark real crash injection complete unless an actual process interruption test exists.
+Fast CI `32014090284` and integration `32014638440` passed Linux/Windows workspace and lock/CLI/Shell/PowerShell matrix. Do not claim crash injection or committed forward recovery.
 
 ---
 
