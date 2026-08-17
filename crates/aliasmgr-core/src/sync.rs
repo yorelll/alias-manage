@@ -36,6 +36,7 @@ impl SyncCoordinator {
     fn apply_internal(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> {
         fs::create_dir_all(self.config_dir.join("generated"))?;
         fs::create_dir_all(self.config_dir.join("backups/generated"))?;
+        let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
         let journal = self.config_dir.join("operation.journal");
         let revision_from = revision.saturating_sub(1);
@@ -59,13 +60,17 @@ impl SyncCoordinator {
                     let body = format!("{body}# file_checksum: {checksum}\n");
                     fs::write(&temp, &body)?;
                     fs::rename(&temp, &path)?;
-                    results.push(ShellSyncResult { shell: shell.clone(), status: shell_status(revision, revision, true, None), error: None });
+                    let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision, file_checksum: checksum.clone(), loader_installed: true, status: ShellStatus::Ok, last_error: None };
+                    database.upsert_shell_state(&state)?;
+                    results.push(ShellSyncResult { shell: shell.clone(), status: ShellStatus::Ok, error: None });
                     fs::write(self.config_dir.join(format!("shell_state.{shell:?}")), format!("applied_revision={revision}\nfile_checksum={checksum}\nstatus=ok\n"))?;
                 }
                 Err(error) => {
                     let message = error.to_string();
                     let _ = fs::remove_file(&temp);
-                    results.push(ShellSyncResult { shell: shell.clone(), status: shell_status(revision.saturating_sub(1), revision, true, Some(&message)), error: Some(message) });
+                    let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision.saturating_sub(1), file_checksum: String::new(), loader_installed: true, status: ShellStatus::Failed, last_error: Some(message.clone()) };
+                    database.upsert_shell_state(&state)?;
+                    results.push(ShellSyncResult { shell: shell.clone(), status: ShellStatus::Failed, error: Some(message) });
                 }
             }
         }
