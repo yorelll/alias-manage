@@ -88,7 +88,7 @@ pub fn filesystem_reliability(path: &Path) -> FilesystemReliability {
                 candidate.starts_with(&mount).then_some(kind.to_owned())
             }).max_by_key(|mount| mount.len())
         });
-        return match filesystem.as_deref() {
+        match filesystem.as_deref() {
             Some("nfs") | Some("nfs4") | Some("cifs") | Some("smbfs") | Some("9p") | Some("fuse.sshfs") => FilesystemReliability::FallbackDelete,
             Some("ext2") | Some("ext3") | Some("ext4") | Some("xfs") | Some("btrfs") | Some("tmpfs") | Some("overlay") => FilesystemReliability::Reliable,
             Some(_) | None => FilesystemReliability::Unknown,
@@ -102,7 +102,7 @@ pub fn path_safety(path: &Path) -> PathSafety {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        return std::fs::metadata(path).map(|metadata| if metadata.permissions().mode() & 0o002 != 0 { PathSafety::OtherWritable } else { PathSafety::Safe }).unwrap_or(PathSafety::Unknown);
+        std::fs::metadata(path).map(|metadata| if metadata.permissions().mode() & 0o002 != 0 { PathSafety::OtherWritable } else { PathSafety::Safe }).unwrap_or(PathSafety::Unknown)
     }
     #[cfg(windows)]
     { let _ = path; PathSafety::Unknown }
