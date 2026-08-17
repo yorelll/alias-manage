@@ -67,7 +67,25 @@ pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasErro
 }
 pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String { let root = config_dir.unwrap_or(".alias-manager"); match shell { "zsh" => format!("source '{root}/generated/zsh.sh'"), "powershell5" => format!(". '{root}/generated/powershell5.ps1'"), "powershell7" => format!(". '{root}/generated/powershell7.ps1'"), _ => format!(". '{root}/generated/bash.sh'"), } }
 pub fn export_file(config_dir: Option<&str>, file: &str) -> Result<(), AliasError> { let aliases = list(config_dir)?; let path = Path::new(file); if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::export_toml(path, &aliases) } else { aliasmgr_core::transfer::export_json(path, &aliases) } }
-pub fn import_file(file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { let path = Path::new(file); if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::import_toml(path, &std::collections::BTreeMap::new(), aliasmgr_core::transfer::ConflictStrategy::Ask) } else { aliasmgr_core::transfer::import_json(path, &std::collections::BTreeMap::new(), aliasmgr_core::transfer::ConflictStrategy::Ask) } }
+pub fn import_file(file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { import_preview(None, file) }
+
+pub fn import_preview(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> {
+    let path = Path::new(file);
+    let existing = list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<std::collections::BTreeMap<_, _>>();
+    if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::import_toml(path, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask) } else { aliasmgr_core::transfer::import_json(path, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask) }
+}
+
+pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> {
+    let path = Path::new(file);
+    let existing = list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<std::collections::BTreeMap<_, _>>();
+    let aliases = if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::read_toml(path)? } else { aliasmgr_core::transfer::read_json(path)? };
+    let mut report = aliasmgr_core::transfer::import_records(aliases, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask)?;
+    if !report.imported.is_empty() {
+        let database = database(config_dir)?;
+        for alias in report.accepted_records.drain(..) { database.insert_alias(&alias)?; }
+    }
+    Ok(report.into_public())
+}
 pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> { let root = config_dir.map(Path::new).unwrap_or_else(|| Path::new(".alias-manager")); aliasmgr_core::uninstall::uninstall(root, if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases }, None).map(|_| ()) }
 pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> { let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new)); let mut findings = Vec::new(); if !paths.root.join("aliases.db").exists() { findings.push("数据库文件缺失".into()); } if !paths.generated_path("bash").exists() { findings.push("Bash 生成文件缺失".into()); } Ok(findings) }
 
