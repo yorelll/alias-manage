@@ -1,4 +1,4 @@
-use crate::{error::AliasError, lock::FileLock, model::{AliasRecord, ShellKind, ShellStatus, ShellSyncResult, SyncReceipt}, shells::{bash, powershell, zsh}};
+use crate::{error::AliasError, lock::FileLock, model::{AliasRecord, ManagedNameSet, ShellKind, ShellStatus, ShellSyncResult, SyncReceipt}, shells::{bash, powershell, zsh}};
 use sha2::{Digest, Sha256};
 use std::{fs, path::{Path, PathBuf}, time::Duration};
 
