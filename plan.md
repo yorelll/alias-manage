@@ -1780,7 +1780,7 @@ Task 1 CI enhancements adopted:
 - [ ] Task 20 原始 broad checkbox保持未完成，直到代码、CI 和 GUI/manual boundary 证据全部完成。
 
 - [x] Task 20设计与实施计划已同步到本计划。
-- [ ] Task 20 implementation、CI 和 manual acceptance待完成。
+- [x] Task 20 implementation 与 CI 已完成：fast CI `31995990405`、integration `31996095344`；manual acceptance仍待完成。
 
 - [x] Task 20 scope confirmed: no automatic Profile/RC/ExecutionPolicy change, no MSI/package hook integration, no visual acceptance in CI.
 - [ ] Task 20 original broad checkbox remains unchecked.

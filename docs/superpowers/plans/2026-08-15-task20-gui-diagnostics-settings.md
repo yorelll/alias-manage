@@ -69,6 +69,8 @@ git push origin feature/alias-manager-mvp
 - Modify `crates/aliasmgr-gui/src-tauri/src/main.rs`
 - Create/modify `crates/aliasmgr-gui/ui/src/task20.test.ts`
 
+- [x] Task 20 design approved and synchronized into `plan.md`; implementation proceeds inline with core-backed commands and graded confirmation boundaries.
+
 - [ ] **Step 1: Write failing command contract tests**
 
 Add serializable response types and frontend-facing command names. Tests must assert JSON fields without starting Tauri:
@@ -348,6 +350,12 @@ git push origin feature/alias-manager-mvp
 - Modify `plan.md`
 - Modify `docs/superpowers/plans/2026-08-15-task20-gui-diagnostics-settings.md`
 - Modify `.github/workflows/ci.yml` only if the existing GUI jobs need a focused test command.
+
+- [x] **Step 1: Run fresh Fast CI** — `31995990405` passed existing core/lint and Linux/Windows GUI frontend jobs.
+
+- [x] **Step 2: Run fresh Integration CI** — `31996095344` passed existing Linux/Windows integration matrix.
+
+- [x] Task 20 implementation and GUI panel contract tests are included in the current source and frontend test path; standalone Tauri compile and manual GUI acceptance remain explicitly open.
 
 - [ ] **Step 1: Run fresh Fast CI**
 
