@@ -109,8 +109,57 @@ mod tests {
     }
 
     #[test]
+    fn preserves_exact_argument_boundaries_for_special_values() {
+        let mut value = alias(TargetType::NativeExecutable);
+        value.fixed_args = vec!["{{args}}".into()];
+        let args = ["".into(), "a b".into(), "quote\"value".into(), r"C:\dir\".into(), "通配*?".into()];
+        let spec = executor_for(&value).unwrap().render_argv(&value, &args).unwrap();
+        assert_eq!(&spec.argv[1..], args.as_slice());
+        assert_eq!(spec.argv.len(), 1 + args.len());
+    }
+
+    #[test]
+    fn rejects_batch_metacharacters_in_user_arguments() {
+        let value = alias(TargetType::Batch);
+        for argument in ["%PATH%", "bang!", "left&right", "a|b", "a^b", "a<b", "a>b"] {
+            assert!(matches!(executor_for(&value).unwrap().render_argv(&value, &[argument.into()]), Err(AliasError::InvalidArgTemplate)));
+        }
+    }
+
+    #[test]
+    fn preserves_escaped_args_placeholder_as_literal_argument() {
+        let mut value = alias(TargetType::NativeExecutable);
+        value.fixed_args = vec!["{{{{args}}}}".into()];
+        let spec = executor_for(&value).unwrap().render_argv(&value, &[]).unwrap();
+        assert_eq!(spec.argv, vec!["tool", "{{args}}"]);
+    }
+
+    #[test]
+    fn rejects_repeated_or_disabled_args_placeholders_through_validation() {
+        let mut repeated = alias(TargetType::NativeExecutable);
+        repeated.fixed_args = vec!["{{args}}".into(), "{{args}}".into()];
+        assert!(matches!(crate::validation::validate_alias(&repeated), Err(AliasError::InvalidArgTemplate)));
+        let mut disabled = alias(TargetType::NativeExecutable);
+        disabled.pass_args = false;
+        disabled.fixed_args = vec!["{{args}}".into()];
+        assert!(matches!(crate::validation::validate_alias(&disabled), Err(AliasError::InvalidArgTemplate)));
+    }
+
+    #[test]
+    fn carries_target_specific_fixed_arguments_without_reparsing() {
+        for target in [TargetType::PythonScript, TargetType::PowerShellScript, TargetType::JavaJar, TargetType::ChangeDirectory] {
+            let mut value = alias(target.clone());
+            value.fixed_args = vec!["script path.py".into()];
+            let spec = executor_for(&value).unwrap().render_argv(&value, &["参数".into()]).unwrap();
+            assert_eq!(spec.argv[0], "tool");
+            assert_eq!(spec.argv[1], "script path.py");
+        }
+    }
+
+    #[test]
     fn reports_missing_path_targets() {
         let value = AliasRecord { executable: "/definitely/missing/aliasmgr-target".into(), ..Default::default() };
         assert!(matches!(executor_for(&value).unwrap().render_argv(&value, &[]), Err(AliasError::TargetMissing(_))));
     }
+
 }
