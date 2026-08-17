@@ -8,7 +8,7 @@ pub fn exit_code(error: &AliasError) -> i32 {
         AliasError::PermissionDenied => 7,
         AliasError::LockTimeout => 8,
         AliasError::SchemaTooNew | AliasError::ShellNotInstalled => 12,
-        AliasError::ChecksumMismatch | AliasError::Database(_) | AliasError::Serialization(_) | AliasError::Io(_) => 13,
+        AliasError::ChecksumMismatch | AliasError::Database(_) | AliasError::Serialization(_) | AliasError::Io(_) | AliasError::UnreliableFilesystem => 13,
         AliasError::Config(_) => 1,
     }
 }
@@ -24,6 +24,7 @@ mod tests {
         assert_eq!(exit_code(&AliasError::TargetMissing("x".into())), 6);
         assert_eq!(exit_code(&AliasError::InvalidArgTemplate), 5);
         assert_eq!(exit_code(&AliasError::ChecksumMismatch), 13);
+        assert_eq!(exit_code(&AliasError::UnreliableFilesystem), 13);
         assert_eq!(exit_code(&AliasError::PermissionDenied), 7);
         assert_eq!(exit_code(&AliasError::LockTimeout), 8);
         assert_eq!(exit_code(&AliasError::SchemaTooNew), 12);

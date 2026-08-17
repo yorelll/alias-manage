@@ -68,6 +68,46 @@ impl AppPaths {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilesystemReliability { Reliable, FallbackDelete, Unknown }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathSafety { Safe, OtherWritable, Unknown }
+
+pub fn filesystem_reliability(path: &Path) -> FilesystemReliability {
+    if !path.exists() { return FilesystemReliability::Unknown; }
+    #[cfg(unix)]
+    {
+        let filesystem = std::fs::read_to_string("/proc/mounts").ok().and_then(|mounts| {
+            let candidate = path.canonicalize().ok()?;
+            mounts.lines().filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let _device = fields.next()?;
+                let mount = PathBuf::from(fields.next()?);
+                let kind = fields.next()?;
+                candidate.starts_with(&mount).then_some(kind.to_owned())
+            }).max_by_key(|mount| mount.len())
+        });
+        return match filesystem.as_deref() {
+            Some("nfs") | Some("nfs4") | Some("cifs") | Some("smbfs") | Some("9p") | Some("fuse.sshfs") => FilesystemReliability::FallbackDelete,
+            Some("ext2") | Some("ext3") | Some("ext4") | Some("xfs") | Some("btrfs") | Some("tmpfs") | Some("overlay") => FilesystemReliability::Reliable,
+            Some(_) | None => FilesystemReliability::Unknown,
+        };
+    }
+    #[cfg(windows)]
+    { let _ = path; FilesystemReliability::Unknown }
+}
+
+pub fn path_safety(path: &Path) -> PathSafety {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        return std::fs::metadata(path).map(|metadata| if metadata.permissions().mode() & 0o002 != 0 { PathSafety::OtherWritable } else { PathSafety::Safe }).unwrap_or(PathSafety::Unknown);
+    }
+    #[cfg(windows)]
+    { let _ = path; PathSafety::Unknown }
+}
+
 impl AppConfig {
     pub fn save(&self, paths: &AppPaths) -> Result<(), AliasError> {
         paths.ensure_directories()?;
@@ -114,5 +154,20 @@ mod tests {
         let paths = AppPaths { root: PathBuf::from("config") };
         assert_ne!(paths.generated_path("powershell5"), paths.generated_path("powershell7"));
         assert_eq!(paths.generated_path("powershell5").extension().unwrap(), "ps1");
+    }
+
+    #[test]
+    fn filesystem_reliability_is_explicit_and_conservative() {
+        let result = filesystem_reliability(&std::env::temp_dir());
+        assert!(matches!(result, FilesystemReliability::Reliable | FilesystemReliability::FallbackDelete | FilesystemReliability::Unknown));
+    }
+
+    #[test]
+    fn unverified_windows_acl_is_not_reported_as_safe() {
+        let result = path_safety(&std::env::temp_dir());
+        #[cfg(windows)]
+        assert_eq!(result, PathSafety::Unknown);
+        #[cfg(not(windows))]
+        assert!(matches!(result, PathSafety::Safe | PathSafety::OtherWritable | PathSafety::Unknown));
     }
 }

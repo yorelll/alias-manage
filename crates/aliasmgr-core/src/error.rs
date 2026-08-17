@@ -28,6 +28,8 @@ pub enum AliasError {
     PermissionDenied,
     #[error("unsafe path")]
     UnsafePath,
+    #[error("filesystem reliability cannot be established")]
+    UnreliableFilesystem,
     #[error("configuration error: {0}")]
     Config(String),
     #[error("shell is not installed")]

@@ -7,3 +7,5 @@
 - Definitions are intended for interactive shells.
 - AllSigned and ConstrainedLanguage environments are not supported by the MVP.
 - Alias names are globally unique; different meanings per Shell are not supported.
+- Filesystem reliability is conservative: known local Linux filesystems use WAL, known network/remote mounts use DELETE fallback, and unknown or Windows ACL cases remain explicitly unverified rather than being treated as safe.
+- Windows ACL writable-path detection is intentionally reported as unknown until a verified native ACL boundary is available; unknown paths must not receive a safety grant.
