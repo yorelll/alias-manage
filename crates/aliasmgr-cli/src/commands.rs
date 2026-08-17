@@ -42,9 +42,10 @@ pub fn import_preview(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_c
 pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> { let root = config_dir.map(Path::new).unwrap_or_else(|| Path::new(".alias-manager")); aliasmgr_core::uninstall::uninstall(root, if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases }, None).map(|_| ()) }
 pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let database = database(config_dir)?;
+    let database_path_exists = paths.root.join("aliases.db").exists();
     let mut findings = Vec::new();
-    if !paths.root.join("aliases.db").exists() { findings.push("数据库文件缺失".into()); }
+    if !database_path_exists { findings.push("数据库文件缺失".into()); }
+    let database = database(config_dir)?;
     for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] {
         if !paths.generated_path(match shell { ShellKind::Bash => "bash", ShellKind::Zsh => "zsh", ShellKind::PowerShell5 => "powershell5", ShellKind::PowerShell7 => "powershell7", _ => "unsupported" }).exists() { findings.push(format!("生成文件缺失: {shell:?}")); }
     }
