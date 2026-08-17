@@ -1655,7 +1655,8 @@ Task 1 CI enhancements adopted:
 
 - [x] 已完成：JSON/TOML metadata、敏感变量过滤、冲突策略基础、unsupported/relative path 报告、transfer 测试和 CI。
 - [x] 已完成：CLI import preview 保持只读，confirmed import 持久化 accepted records；fast CI `32011753420` 验证 Linux/Windows。
-- [ ] 待完成：完整 TOML conflict/safety report 矩阵、真实 CLI loader install/uninstall 与 durable doctor findings。
+- [x] 已完成：doctor 读取 durable `shell_state` 并报告缺失/过期/失败/loader 状态；fast CI `32013771136`、integration `32010337861`。
+- [ ] 待完成：完整 TOML conflict/safety report 矩阵、真实 CLI loader install/uninstall。
 
 ### Task 17：实现卸载清理
 
