@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
 import "./styles.css";
+import { AliasTable } from "./components/AliasTable";
+import { SearchBar } from "./components/SearchBar";
+import { TagFacet } from "./components/TagFacet";
+import { AliasWizard } from "./components/AliasWizard";
+import type { AliasDto } from "./lib";
 import {
   type StartupStatus,
   type Page,

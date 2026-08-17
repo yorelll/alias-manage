@@ -14,6 +14,9 @@ export const NAV_ITEMS = [
   { id: "settings", label: "Settings" },
 ] as const;
 
+export interface AliasDto { id: string; name: string; description: string; executable: string; target_type: string; fixed_args: string[]; pass_args: boolean; working_directory: string | null; environment: Record<string, string>; shells: string[]; enabled: boolean; tags: string[]; revision: number }
+export function normalizeTags(values: string[]): string[] { return [...new Set(values.map((value) => value.trim()).filter(Boolean))]; }
+export function truncateDescription(full: string, max: number): { display: string; full: string; truncated: boolean } { return full.length <= max ? { display: full, full, truncated: false } : { display: full.slice(0, max), full, truncated: true }; }
 export function statusSummaryText(status: StartupStatus | null, error: boolean): string {
   if (status) return `v${status.version} · ${status.detected_shell ?? "no shell detected"}`;
   if (error) return "status unavailable";
