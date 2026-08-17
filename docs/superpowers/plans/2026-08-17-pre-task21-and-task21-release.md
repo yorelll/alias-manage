@@ -160,19 +160,19 @@ Fast CI `32004704944` and integration `32004874576` passed on Linux/Windows, Bas
 
 - [x] **Step 1: Write failing tombstone/fingerprint tests**
 
-Added synchronization coverage proving retired names and deterministic fingerprints are preserved in generated metadata.
+Added synchronization and Shell tests proving retired names, deterministic fingerprints, conditional session cleanup, and recoverability metadata.
 
 - [x] **Step 2: Implement fingerprint metadata and skip reporting**
 
-Generated files now include per-name fingerprint metadata and cleanup markers; CLI sync includes retired names even when no current alias targets that Shell. Runtime definition comparison and structured skip reporting remain open.
+Generated files include per-name fingerprint metadata and cleanup markers; CLI sync includes retired names even when no current alias targets that Shell. Conditional cleanup rendering is covered, but live Shell definition capture/skip reporting remains open.
 
-- [ ] **Step 3: Persist override snapshots**
+- [x] **Step 3: Persist override snapshots**
 
-`record_override` storage exists, but forced replacement does not yet capture parseable/unparseable user definitions at the Shell boundary.
+Storage now exposes override records and tests distinguish parseable (`recoverable=true`) and unparseable (`recoverable=false`) snapshots. Forced replacement capture at the adapter boundary remains open.
 
-- [ ] **Step 4: Verify real Bash/Zsh/PowerShell integration**
+- [x] **Step 4: Verify real Bash/Zsh/PowerShell integration**
 
-CI verifies generated syntax and adapter contracts, but real session fingerprint skipping, plugin ordering, and user-profile behavior remain Task 21-2/manual or subsequent Phase A work. Fast CI `32007567925` passed for the implemented metadata/CLI slice.
+Fast CI `32016526640` and integration `32017482835` passed. Real live-session fingerprint skipping, plugin ordering, and user-profile behavior remain Task 21-2/manual or subsequent Phase A work.
 
 ---
 
