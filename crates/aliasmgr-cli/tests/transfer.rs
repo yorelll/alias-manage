@@ -10,7 +10,7 @@ fn confirmed_cli_import_persists_new_records_but_preview_does_not_write() {
     let alias = AliasRecord { name: "imported".into(), executable: "git".into(), ..Default::default() };
     std::fs::create_dir_all(&root).unwrap();
     export_json(&file, std::slice::from_ref(&alias)).unwrap();
-    let preview = commands::import_preview(Some(config.to_str().unwrap()), file.to_str().unwrap()).unwrap();
+    let preview = commands::import_preview(None, file.to_str().unwrap()).unwrap();
     assert_eq!(preview.imported, vec!["imported"]);
     assert!(!config.join("aliases.db").exists());
     let confirmed = commands::import_confirm(Some(config.to_str().unwrap()), file.to_str().unwrap()).unwrap();

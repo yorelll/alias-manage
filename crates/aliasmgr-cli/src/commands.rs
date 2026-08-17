@@ -71,10 +71,11 @@ pub fn import_file(file: &str) -> Result<aliasmgr_core::transfer::ImportReport, 
 
 pub fn import_preview(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> {
     let path = Path::new(file);
-    let existing = list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<std::collections::BTreeMap<_, _>>();
+    let existing = if config_dir.is_some() { list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<std::collections::BTreeMap<_, _>>() } else { std::collections::BTreeMap::new() };
     if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::import_toml(path, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask) } else { aliasmgr_core::transfer::import_json(path, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask) }
 }
 
+#[allow(dead_code)]
 pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> {
     let path = Path::new(file);
     let existing = list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<std::collections::BTreeMap<_, _>>();
