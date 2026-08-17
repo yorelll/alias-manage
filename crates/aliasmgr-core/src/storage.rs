@@ -65,6 +65,8 @@ impl Database {
         Ok(())
     }
 
+    pub fn reliability_error(&self) -> Option<AliasError> { None }
+
     pub fn journal_mode(&self) -> Result<String, AliasError> {
         Ok(self
             .conn
