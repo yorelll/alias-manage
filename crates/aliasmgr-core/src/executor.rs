@@ -137,9 +137,11 @@ mod tests {
     #[test]
     fn rejects_repeated_or_disabled_args_placeholders_through_validation() {
         let mut repeated = alias(TargetType::NativeExecutable);
+        repeated.name = "repeated".into();
         repeated.fixed_args = vec!["{{args}}".into(), "{{args}}".into()];
         assert!(matches!(crate::validation::validate_alias(&repeated), Err(AliasError::InvalidArgTemplate)));
         let mut disabled = alias(TargetType::NativeExecutable);
+        disabled.name = "disabled".into();
         disabled.pass_args = false;
         disabled.fixed_args = vec!["{{args}}".into()];
         assert!(matches!(crate::validation::validate_alias(&disabled), Err(AliasError::InvalidArgTemplate)));
