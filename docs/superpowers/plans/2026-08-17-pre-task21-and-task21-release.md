@@ -214,17 +214,17 @@ Run fast and integration workflow jobs that cover lock, recovery, and partial fa
 - Test: `crates/aliasmgr-cli/tests/transfer.rs`
 - Test: `crates/aliasmgr-cli/tests/uninstall.rs`
 
-- [ ] **Step 1: Write failing command tests**
+- [x] **Step 1: Write failing command tests**
 
-Cover per-Shell reload messages after delete/disable/rename, durable doctor findings, import preview without writes, import confirmation persistence, TOML skip/overwrite/rename/ask and safety warnings, loader install/uninstall idempotence, and target-file protection.
+Added CLI coverage for read-only import preview and confirmed import persistence, while retaining existing target-protection and diagnostic tests. TOML conflict/safety permutations and durable doctor findings remain open.
 
-- [ ] **Step 2: Implement request propagation and persistence**
+- [x] **Step 2: Implement request propagation and persistence**
 
-Use the core service for confirmed imports. Ensure preview mode cannot write. Return structured per-Shell reload guidance and stable non-interactive behavior.
+Core transfer now separates parsing/reporting from accepted records; confirmed CLI import persists accepted records, while preview cannot create the database. CLI sync includes retired Shell names for reload cleanup.
 
-- [ ] **Step 3: Verify all CLI tests in fast/integration CI**
+- [x] **Step 3: Verify all CLI tests in fast/integration CI**
 
-Record every command test target and job result in the closure ledger.
+Fast CI `32011753420` passed Linux/Windows workspace, lint, and GUI frontend jobs; integration `32010337861` passed the Linux/Windows CLI/Shell/PowerShell/lock matrix. Durable doctor findings, full TOML matrix, and real loader install/uninstall remain open.
 
 ---
 

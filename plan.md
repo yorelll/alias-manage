@@ -1654,7 +1654,8 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add safe alias import and export`。
 
 - [x] 已完成：JSON/TOML metadata、敏感变量过滤、冲突策略基础、unsupported/relative path 报告、transfer 测试和 CI。
-- [ ] 待完成：CLI import/export 在预览确认后持久化记录，以及完整 TOML conflict/safety report 矩阵。
+- [x] 已完成：CLI import preview 保持只读，confirmed import 持久化 accepted records；fast CI `32011753420` 验证 Linux/Windows。
+- [ ] 待完成：完整 TOML conflict/safety report 矩阵、真实 CLI loader install/uninstall 与 durable doctor findings。
 
 ### Task 17：实现卸载清理
 
