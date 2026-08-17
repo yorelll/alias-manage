@@ -22,13 +22,64 @@ pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, Alia
 }
 
 pub fn get(config_dir: Option<&str>, name: &str) -> Result<Option<AliasRecord>, AliasError> { database(config_dir)?.get_alias_by_name(name) }
+fn search_field(value: Option<&str>) -> Result<aliasmgr_core::search::SearchField, AliasError> {
+    match value.unwrap_or("all") {
+        "all" => Ok(aliasmgr_core::search::SearchField::All),
+        "name" => Ok(aliasmgr_core::search::SearchField::Name),
+        "target" => Ok(aliasmgr_core::search::SearchField::Target),
+        "description" => Ok(aliasmgr_core::search::SearchField::Description),
+        "tags" => Ok(aliasmgr_core::search::SearchField::Tags),
+        "shells" => Ok(aliasmgr_core::search::SearchField::Shells),
+        "target_type" => Ok(aliasmgr_core::search::SearchField::TargetType),
+        other => Err(AliasError::Config(format!("unsupported search field: {other}"))),
+    }
+}
+
+fn sort_field(value: Option<&str>) -> Result<aliasmgr_core::search::SortField, AliasError> {
+    match value.unwrap_or("name") {
+        "name" => Ok(aliasmgr_core::search::SortField::Name),
+        "updated_at" => Ok(aliasmgr_core::search::SortField::UpdatedAt),
+        "created_at" => Ok(aliasmgr_core::search::SortField::CreatedAt),
+        "target_type" => Ok(aliasmgr_core::search::SortField::TargetType),
+        "enabled" => Ok(aliasmgr_core::search::SortField::Enabled),
+        other => Err(AliasError::Config(format!("unsupported sort field: {other}"))),
+    }
+}
+
+pub fn list_query(config_dir: Option<&str>, sort: Option<&str>, descending: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> {
+    let query = aliasmgr_core::search::SearchQuery {
+        query: String::new(),
+        field: aliasmgr_core::search::SearchField::All,
+        fuzzy: false,
+        limit: limit.unwrap_or(50),
+        sort: sort_field(sort)?,
+        descending,
+        tag_filter: tags,
+    };
+    Ok(aliasmgr_core::search::search(&list(config_dir)?, &query).into_iter().map(|result| result.alias).collect())
+}
+
+pub fn find_query(config_dir: Option<&str>, query: &str, fuzzy: bool, field: Option<&str>, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> {
+    let query = aliasmgr_core::search::SearchQuery {
+        query: query.into(),
+        fuzzy,
+        field: search_field(field)?,
+        limit: limit.unwrap_or(50),
+        tag_filter: tags,
+        ..Default::default()
+    };
+    Ok(aliasmgr_core::search::search(&list(config_dir)?, &query).into_iter().map(|result| result.alias).collect())
+}
+
 pub fn list(config_dir: Option<&str>) -> Result<Vec<AliasRecord>, AliasError> { database(config_dir)?.list_aliases() }
 pub fn remove(config_dir: Option<&str>, name: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let alias = database.get_alias_by_name(name)?; match alias { Some(alias) => { for shell in &alias.shells { database.retire_name(name, shell, alias.revision)?; } database.delete_alias(alias.id) }, None => Ok(false) } }
 pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.enabled = enabled; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 
 pub fn update(config_dir: Option<&str>, name: &str, executable: &str, fixed_args: Vec<String>) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.executable = executable.into(); alias.fixed_args = fixed_args; validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::Config(format!("alias not found: {old}")))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision)?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
-pub fn find(config_dir: Option<&str>, query: &str, fuzzy: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> { let aliases = list(config_dir)?; let query = aliasmgr_core::search::SearchQuery { query: query.into(), fuzzy, limit: limit.unwrap_or(50), tag_filter: tags, ..Default::default() }; Ok(aliasmgr_core::search::search(&aliases, &query).into_iter().map(|result| result.alias).collect()) }
+pub fn find(config_dir: Option<&str>, query: &str, fuzzy: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> {
+    find_query(config_dir, query, fuzzy, None, limit, tags)
+}
 #[allow(dead_code)]
 pub fn retired_names(config_dir: Option<&str>, shell: &str) -> Result<Vec<String>, AliasError> { let database = database(config_dir)?; let kind = match shell { "zsh" => ShellKind::Zsh, "powershell5" => ShellKind::PowerShell5, "powershell7" => ShellKind::PowerShell7, _ => ShellKind::Bash }; Ok(database.managed_name_set(&kind)?.retired) }
 

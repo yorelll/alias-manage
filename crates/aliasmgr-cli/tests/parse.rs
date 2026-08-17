@@ -25,3 +25,35 @@ fn global_options_parse() {
     assert_eq!(cli.config_dir.as_deref(), Some("/tmp/test"));
     assert!(cli.quiet);
 }
+
+#[test]
+fn parses_complete_search_and_list_query_options() {
+    let cli = Cli::try_parse_from([
+        "aliasmgr", "find", "build", "--fuzzy", "--field", "description",
+        "--tag", "work", "--tag", "python", "--limit", "7",
+    ]).unwrap();
+    match cli.command {
+        Command::Find { query, fuzzy, field, limit, tags } => {
+            assert_eq!(query, "build");
+            assert!(fuzzy);
+            assert_eq!(field.as_deref(), Some("description"));
+            assert_eq!(limit, Some(7));
+            assert_eq!(tags, vec!["work", "python"]);
+        }
+        _ => panic!("expected find"),
+    }
+
+    let cli = Cli::try_parse_from([
+        "aliasmgr", "--format", "json", "list", "--sort", "updated_at",
+        "--desc", "--tag", "work", "--tag", "python", "--limit", "0",
+    ]).unwrap();
+    match cli.command {
+        Command::List { sort, desc, limit, tags } => {
+            assert_eq!(sort.as_deref(), Some("updated_at"));
+            assert!(desc);
+            assert_eq!(limit, Some(0));
+            assert_eq!(tags, vec!["work", "python"]);
+        }
+        _ => panic!("expected list"),
+    }
+}
