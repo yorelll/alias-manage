@@ -24,7 +24,16 @@ pub fn shell_status(applied_revision: i64, current_revision: i64, loader_install
 impl SyncCoordinator {
     pub fn new(config_dir: impl Into<PathBuf>) -> Self { Self { config_dir: config_dir.into() } }
 
+    pub fn apply_with_managed_names(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> {
+        self.apply_internal(aliases, shells, revision, names)
+    }
+
     pub fn apply(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64) -> Result<SyncReceipt, AliasError> {
+        let names = ManagedNameSet { current: aliases.iter().map(|alias| alias.name.clone()).collect(), retired: Vec::new() };
+        self.apply_internal(aliases, shells, revision, &names)
+    }
+
+    fn apply_internal(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> {
         fs::create_dir_all(self.config_dir.join("generated"))?;
         fs::create_dir_all(self.config_dir.join("backups/generated"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
@@ -44,7 +53,7 @@ impl SyncCoordinator {
         for shell in shells {
             let path = self.generated_path(shell);
             let temp = path.with_extension(format!("tmp.{}", std::process::id()));
-            match self.render_shell(aliases, shell, revision) {
+            match self.render_shell(aliases, shell, revision, names) {
                 Ok(body) => {
                     let checksum = content_checksum(&body);
                     let body = format!("{body}# file_checksum: {checksum}\n");
@@ -86,12 +95,12 @@ impl SyncCoordinator {
         self.config_dir.join("generated").join(name)
     }
 
-    fn render_shell(&self, aliases: &[AliasRecord], shell: &ShellKind, revision: i64) -> Result<String, AliasError> {
-        let names = crate::model::ManagedNameSet { current: aliases.iter().map(|a| a.name.clone()).collect(), retired: Vec::new() };
+    fn render_shell(&self, aliases: &[AliasRecord], shell: &ShellKind, revision: i64, names: &ManagedNameSet) -> Result<String, AliasError> {
         let mut output = format!("# Alias Manager\n# revision: {revision}\n");
         output.push_str(&metadata_line("managed", &names.current));
         output.push_str(&metadata_line("retired", &names.retired));
-        for alias in aliases.iter().filter(|alias| alias.enabled) { output.push_str(&match shell { ShellKind::Bash => bash::render(alias, &names)?, ShellKind::Zsh => zsh::render(alias, &names)?, ShellKind::PowerShell5 | ShellKind::PowerShell7 => powershell::render(alias, shell.clone(), &names)?, _ => return Err(AliasError::ShellNotInstalled) }); }
+        for name in crate::shells::common::managed_names(names) { output.push_str(&format!("# fingerprint: {} {}\n", name, crate::shells::common::fingerprint_marker(&name))); }
+        for alias in aliases.iter().filter(|alias| alias.enabled) { output.push_str(&match shell { ShellKind::Bash => bash::render(alias, names)?, ShellKind::Zsh => zsh::render(alias, names)?, ShellKind::PowerShell5 | ShellKind::PowerShell7 => powershell::render(alias, shell.clone(), names)?, _ => return Err(AliasError::ShellNotInstalled) }); }
         Ok(output)
     }
 }
@@ -100,6 +109,18 @@ impl SyncCoordinator {
 mod tests {
     use super::*;
     use crate::model::TargetType;
+    #[test]
+    fn apply_with_managed_names_preserves_retired_tombstones_and_fingerprints() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-tombstone-{}", std::process::id()));
+        let alias = AliasRecord { name: "new".into(), executable: "git".into(), ..Default::default() };
+        let names = ManagedNameSet { current: vec!["new".into()], retired: vec!["old".into()] };
+        SyncCoordinator::new(&root).apply_with_managed_names(&[alias], &[ShellKind::Bash], 3, &names).unwrap();
+        let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
+        assert!(content.contains("# retired: old"));
+        assert!(content.contains("aliasmgr fingerprint:"));
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[test]
     fn generated_files_include_stable_checksum_metadata() {
         let root = std::env::temp_dir().join(format!("aliasmgr-checksum-{}", std::process::id()));
