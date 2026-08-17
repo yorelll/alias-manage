@@ -77,6 +77,7 @@ pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<boo
 
 pub fn update(config_dir: Option<&str>, name: &str, executable: &str, fixed_args: Vec<String>) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::Config(format!("alias not found: {name}")))?; alias.executable = executable.into(); alias.fixed_args = fixed_args; validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::Config(format!("alias not found: {old}")))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision)?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
+#[allow(dead_code)]
 pub fn find(config_dir: Option<&str>, query: &str, fuzzy: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> {
     find_query(config_dir, query, fuzzy, None, limit, tags)
 }
