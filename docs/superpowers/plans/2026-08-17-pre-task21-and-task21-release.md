@@ -259,6 +259,8 @@ Fast CI `32009748252` passed Linux/Windows frontend tests, typecheck, build, lin
 
 **Files:** `.github/workflows/integration.yml`, `.github/workflows/ci.yml`, `docs/ci-workflow.md`
 
+- [ ] Phase B remains blocked until Phase A implementation-feasible closure is complete; do not start Task 21-1 automation yet.
+
 - [ ] Add pinned Ubuntu 24.04 dependency installation for WebKitGTK/GTK packages required by any Tauri compile job.
 - [ ] Add real Bash execution, syntax, argv fixture, loader/tombstone/fingerprint, permission, and clean isolated HOME checks.
 - [ ] Add isolated oh-my-zsh job or explicitly record runner/tool installation failure as environment-blocked.

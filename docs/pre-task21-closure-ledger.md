@@ -4,7 +4,7 @@ This ledger classifies unchecked items before Task 21. It is an audit record, no
 
 | Area | Classification | Evidence target | Current state |
 |---|---|---|---|
-| GUI npm cache | implementation-feasible | lockfile + pinned GUI CI cache | Deferred until lockfile is committed |
+| GUI npm cache | implementation-feasible | lockfile + pinned GUI CI cache | Still deferred: no committed `package-lock.json`; current GUI jobs use `npm install` |
 | Filesystem reliability / `UnreliableFilesystem` | implementation-feasible where APIs are reliable; otherwise environment-blocked | core tests + platform CI | `config.rs` classifies known Linux local/remote filesystem types conservatively; CI run `32003275982` passed; Windows filesystem/ACL certainty remains environment-blocked |
 | Windows ACL writable path | implementation-feasible | Windows core test | Incomplete |
 | Search sort/descending and complete CLI output | implementation-feasible | core/CLI tests + fast CI | Core sorting plus CLI field/sort/descending/limit/tag propagation and complete JSON rows implemented; CI run `32001624885` passed; integration run `32001809714` passed |
