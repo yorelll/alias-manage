@@ -92,7 +92,7 @@ pub fn filesystem_reliability(path: &Path) -> FilesystemReliability {
             Some("nfs") | Some("nfs4") | Some("cifs") | Some("smbfs") | Some("9p") | Some("fuse.sshfs") => FilesystemReliability::FallbackDelete,
             Some("ext2") | Some("ext3") | Some("ext4") | Some("xfs") | Some("btrfs") | Some("tmpfs") | Some("overlay") => FilesystemReliability::Reliable,
             Some(_) | None => FilesystemReliability::Unknown,
-        };
+        }
     }
     #[cfg(windows)]
     { let _ = path; FilesystemReliability::Unknown }
