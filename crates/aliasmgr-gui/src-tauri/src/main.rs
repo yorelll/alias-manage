@@ -12,6 +12,16 @@ fn main() {
             commands::tag_counts,
             commands::create_alias,
             commands::update_alias,
+            commands::doctor_status,
+            commands::generated_preview,
+            commands::reload_command,
+            commands::import_preview,
+            commands::import_confirm,
+            commands::config_get,
+            commands::config_save,
+            commands::uninstall_preview,
+            commands::uninstall_confirm,
+            commands::overridden_definitions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

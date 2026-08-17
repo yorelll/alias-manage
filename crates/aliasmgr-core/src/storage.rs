@@ -227,6 +227,22 @@ impl Database {
         )?)
     }
 
+    pub fn overridden_definitions(&self) -> Result<Vec<serde_json::Value>, AliasError> {
+        self.conn.execute_batch("CREATE TABLE IF NOT EXISTS overridden_definitions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, shell TEXT NOT NULL, definition_kind TEXT NOT NULL, original_definition TEXT, recoverable INTEGER NOT NULL DEFAULT 0, captured_at TEXT NOT NULL)")?;
+        let mut statement = self.conn.prepare("SELECT name, shell, definition_kind, original_definition, recoverable, captured_at FROM overridden_definitions ORDER BY captured_at DESC")?;
+        let rows = statement.query_map([], |row| {
+            Ok(serde_json::json!({
+                "name": row.get::<_, String>(0)?,
+                "shell": row.get::<_, String>(1)?,
+                "definition_kind": row.get::<_, String>(2)?,
+                "original_definition": row.get::<_, Option<String>>(3)?,
+                "recoverable": row.get::<_, i64>(4)? != 0,
+                "captured_at": row.get::<_, String>(5)?,
+            }))
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(AliasError::from)
+    }
+
     pub fn record_override(
         &self,
         name: &str,

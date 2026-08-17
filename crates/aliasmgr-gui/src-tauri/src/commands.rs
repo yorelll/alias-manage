@@ -173,34 +173,79 @@ pub struct ImportPreviewDto { pub imported: Vec<String>, pub skipped: Vec<String
 pub struct SettingsDto { pub config_directory: String, pub default_shell: String, pub backup_keep: usize, pub log_keep: usize, pub allow_relative_paths: bool }
 
 #[tauri::command]
-pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> { Ok(Vec::new()) }
+pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
+    let paths = AppPaths::discover(None);
+    let database = database()?;
+    let mut findings = Vec::new();
+    if !paths.root.join("aliases.db").exists() { findings.push(DoctorFindingDto { shell: None, severity: "error".into(), code: "database_missing".into(), message: "数据库文件缺失".into(), action: Some("创建或选择配置目录".into()) }); }
+    for shell in ["bash", "zsh", "powershell5", "powershell7"] {
+        let path = paths.generated_path(shell);
+        if !path.exists() { findings.push(DoctorFindingDto { shell: Some(shell.into()), severity: "warning".into(), code: "generated_missing".into(), message: format!("生成文件缺失: {shell}"), action: Some("执行同步".into()) }); }
+    }
+    if let Some(error) = database.reliability_error() { findings.push(DoctorFindingDto { shell: None, severity: "warning".into(), code: "unreliable_filesystem".into(), message: error.to_string(), action: Some("改用本地配置目录".into()) }); }
+    Ok(findings)
+}
 
 #[tauri::command]
-pub fn generated_preview(_shell: String) -> Result<String, String> { Ok(String::new()) }
+pub fn generated_preview(shell: String) -> Result<String, String> {
+    let paths = AppPaths::discover(None);
+    std::fs::read_to_string(paths.generated_path(&shell)).map_err(|error| error.to_string())
+}
 
 #[tauri::command]
-pub fn reload_command(shell: String) -> Result<String, String> { Ok(match shell.as_str() { "zsh" => "source generated/zsh.sh", "powershell5" => ". generated/powershell5.ps1", "powershell7" => ". generated/powershell7.ps1", _ => ". generated/bash.sh" }.into()) }
+pub fn reload_command(shell: String) -> Result<String, String> {
+    let paths = AppPaths::discover(None);
+    let path = paths.generated_path(&shell);
+    Ok(match shell.as_str() { "zsh" => format!("source '{}'", path.display()), "powershell5" | "powershell7" => format!(". '{}'", path.display()), _ => format!(". '{}'", path.display()) })
+}
+
+fn import_path(path: &std::path::Path) -> Result<aliasmgr_core::transfer::ImportReport, String> {
+    let database = database()?;
+    let existing = database.list_aliases().map_err(|error| error.to_string())?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<BTreeMap<_, _>>();
+    if path.extension().and_then(|extension| extension.to_str()) == Some("toml") { aliasmgr_core::transfer::import_toml(path, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask) } else { aliasmgr_core::transfer::import_json(path, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask) }.map_err(|error| error.to_string())
+}
+
+fn import_dto(report: aliasmgr_core::transfer::ImportReport) -> ImportPreviewDto { ImportPreviewDto { imported: report.imported, skipped: report.skipped, warnings: report.warnings, unsupported: report.unsupported } }
 
 #[tauri::command]
-pub fn import_preview(_file: String) -> Result<ImportPreviewDto, String> { Ok(ImportPreviewDto { imported: vec![], skipped: vec![], warnings: vec![], unsupported: vec![] }) }
+pub fn import_preview(file: String) -> Result<ImportPreviewDto, String> { import_path(std::path::Path::new(&file)).map(import_dto) }
 
 #[tauri::command]
-pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> { import_preview(file) }
+pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
+    let report = import_path(std::path::Path::new(&file))?;
+    Ok(import_dto(report))
+}
 
 #[tauri::command]
-pub fn config_get() -> Result<SettingsDto, String> { let paths = AppPaths::discover(None); Ok(SettingsDto { config_directory: paths.root.to_string_lossy().into_owned(), default_shell: "bash".into(), backup_keep: 10, log_keep: 7, allow_relative_paths: false }) }
+pub fn config_get() -> Result<SettingsDto, String> {
+    let paths = AppPaths::discover(None);
+    let config = paths.load_config().map_err(|error| error.to_string())?;
+    Ok(SettingsDto { config_directory: paths.root.to_string_lossy().into_owned(), default_shell: "bash".into(), backup_keep: config.backups.rc_keep, log_keep: config.logs.keep_files, allow_relative_paths: false })
+}
 
 #[tauri::command]
-pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> { Ok(settings) }
+pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
+    let paths = AppPaths { root: std::path::PathBuf::from(&settings.config_directory) };
+    let mut config = paths.load_config().map_err(|error| error.to_string())?;
+    config.backups.rc_keep = settings.backup_keep;
+    config.logs.keep_files = settings.log_keep;
+    config.save(&paths).map_err(|error| error.to_string())?;
+    Ok(settings)
+}
 
 #[tauri::command]
-pub fn uninstall_preview(_purge: bool) -> Result<Vec<String>, String> { Ok(vec!["Referenced target files are protected".into()]) }
+pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> { Ok(if purge { vec!["将删除 Alias Manager 生成文件、数据库和标记加载块；引用目标文件保持不变".into()] } else { vec!["将移除加载块并保留生成别名；引用目标文件保持不变".into()] }) }
 
 #[tauri::command]
-pub fn uninstall_confirm(_purge: bool) -> Result<Vec<String>, String> { Ok(vec![]) }
+pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
+    let paths = AppPaths::discover(None);
+    aliasmgr_core::uninstall::uninstall(&paths.root, if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases }, None).map_err(|error| error.to_string())?;
+    Ok(vec!["卸载清理已完成；引用目标文件未处理".into()])
+}
 
 #[tauri::command]
-pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> { Ok(vec![]) }
+pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> { database()?.overridden_definitions().map_err(|error| error.to_string()) }
+
 
 #[cfg(test)]
 mod tests {
