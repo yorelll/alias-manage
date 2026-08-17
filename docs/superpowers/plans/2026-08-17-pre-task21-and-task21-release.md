@@ -199,7 +199,7 @@ Still incomplete: a committed journal does not yet rebuild missing generated fil
 
 - [x] **Step 4: Verify and commit**
 
-Fast CI `32014090284` and integration `32014638440` passed Linux/Windows workspace and lock/CLI/Shell/PowerShell matrix. Do not claim crash injection or committed forward recovery.
+Fast CI `32017853467` and integration `32017999024` passed Linux/Windows workspace and lock/CLI/Shell/PowerShell matrix. Do not claim crash injection or committed forward recovery.
 
 ---
 
