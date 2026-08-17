@@ -1,9 +1,14 @@
 use aliasmgr_core::{
     config::AppPaths,
     detection::{detect, DetectionContext},
-    model::ShellKind,
+    model::{AliasRecord, PathOrigin, PathMode, ShellKind, TargetType},
+    validation::validate_alias,
+    search::{SearchField, SearchQuery, SortField},
+    service::AliasService,
+    storage::Database,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Serializable status returned to the frontend on startup.
 #[derive(Debug, Clone, Serialize)]
@@ -64,6 +69,98 @@ pub fn startup_status() -> StartupStatus {
         detection_source,
         config_directory,
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AliasDto {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+    pub executable: String,
+    pub target_type: String,
+    pub fixed_args: Vec<String>,
+    pub pass_args: bool,
+    pub working_directory: Option<String>,
+    pub environment: BTreeMap<String, String>,
+    pub shells: Vec<String>,
+    pub enabled: bool,
+    pub tags: Vec<String>,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchRequest {
+    pub query: String,
+    pub fuzzy: bool,
+    pub limit: usize,
+    pub tag_filter: Vec<String>,
+}
+
+fn alias_to_dto(alias: &AliasRecord) -> AliasDto {
+    AliasDto {
+        id: alias.id.to_string(), name: alias.name.clone(), description: alias.description.clone(),
+        executable: alias.executable.clone(), target_type: format!("{:?}", alias.target_type).to_lowercase(),
+        fixed_args: alias.fixed_args.clone(), pass_args: alias.pass_args, working_directory: alias.working_directory.clone(),
+        environment: alias.environment.clone(), shells: alias.shells.iter().map(|shell| format!("{shell:?}").to_lowercase()).collect(),
+        enabled: alias.enabled, tags: alias.tags.clone(), revision: alias.revision,
+    }
+}
+
+fn database() -> Result<Database, String> {
+    let paths = AppPaths::discover(None);
+    Database::open(paths.root.join("aliases.db")).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn list_aliases() -> Result<Vec<AliasDto>, String> {
+    let database = database()?;
+    AliasService::new(&database).list().map(|aliases| aliases.iter().map(alias_to_dto).collect()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn search_aliases(request: SearchRequest) -> Result<Vec<AliasDto>, String> {
+    let database = database()?;
+    let query = SearchQuery { query: request.query, fuzzy: request.fuzzy, limit: request.limit, tag_filter: request.tag_filter, field: SearchField::All, sort: SortField::Name, descending: false };
+    AliasService::new(&database).search(&query).map(|results| results.iter().map(|result| alias_to_dto(&result.alias)).collect()).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn tag_counts() -> Result<BTreeMap<String, usize>, String> {
+    let database = database()?;
+    AliasService::new(&database).tag_counts().map_err(|error| error.to_string())
+}
+
+fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
+    let mut alias = AliasRecord::default();
+    alias.id = uuid::Uuid::parse_str(&dto.id).map_err(|error| error.to_string())?;
+    alias.name = dto.name;
+    alias.description = dto.description;
+    alias.executable = dto.executable;
+    alias.fixed_args = dto.fixed_args;
+    alias.pass_args = dto.pass_args;
+    alias.working_directory = dto.working_directory;
+    alias.environment = dto.environment;
+    alias.enabled = dto.enabled;
+    alias.tags = dto.tags;
+    alias.revision = dto.revision;
+    alias.target_type = serde_json::from_value(serde_json::Value::String(dto.target_type)).map_err(|error| error.to_string())?;
+    alias.shells = dto.shells.into_iter().map(|shell| serde_json::from_value(serde_json::Value::String(shell)).map_err(|error| error.to_string())).collect::<Result<_, _>>()?;
+    alias.path_mode = PathMode::Absolute;
+    alias.path_origin = PathOrigin::GuiFilePicker;
+    validate_alias(&alias).map_err(|error| error.to_string())?;
+    Ok(alias)
+}
+
+#[tauri::command]
+pub fn create_alias(alias: AliasDto) -> Result<AliasDto, String> {
+    let database = database()?;
+    AliasService::new(&database).create(dto_to_alias(alias)?).map(|saved| alias_to_dto(&saved)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn update_alias(alias: AliasDto) -> Result<AliasDto, String> {
+    let database = database()?;
+    AliasService::new(&database).update(dto_to_alias(alias)?).map(|saved| alias_to_dto(&saved)).map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

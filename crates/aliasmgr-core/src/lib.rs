@@ -13,6 +13,7 @@ pub mod uninstall;
 pub mod model;
 pub mod storage;
 pub mod validation;
+pub mod service;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
