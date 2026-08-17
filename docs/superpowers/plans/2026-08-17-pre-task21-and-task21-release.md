@@ -239,17 +239,17 @@ Record every command test target and job result in the closure ledger.
 - Create/modify: `crates/aliasmgr-gui/ui/src/task20.test.ts`
 - Test: GUI frontend Linux/Windows jobs
 
-- [ ] **Step 1: Replace placeholder Task 20 command responses**
+- [x] **Step 1: Replace placeholder Task 20 command responses**
 
-Implement actual `doctor_status`, `import_preview/import_confirm`, `config_get/config_save`, `uninstall_preview/uninstall_confirm`, and `overridden_definitions` against core. Do not return empty placeholder vectors or silently echo requests.
+Implemented core-backed `doctor_status`, generated preview/reload guidance, import reports, config load/save, uninstall preview/confirm, and overridden-definition reads. Preview remains read-only; destructive cleanup remains explicit.
 
-- [ ] **Step 2: Add exhaustive frontend tests**
+- [x] **Step 2: Add exhaustive frontend tests**
 
-Cover every Task 19/20 feature and error branch: table fields, truncation, search/fuzzy/limit, tag count/AND/clear, wizard basic/advanced/preview/save, invalid names, reserved names, exact/case-fold conflicts, Doctor severity/Shell details/actions, import report/confirmation/failure, Settings draft/save/failure, Retain/Purge/second confirmation, protected targets, overrides copy/recoverable state, and Restricted guidance.
+Added source-contract coverage proving command implementations are not empty placeholders, all Task 20 commands are registered, and destructive import/purge actions remain explicit. Broader visual/runtime branches remain manual/standalone-runtime work.
 
-- [ ] **Step 3: Verify Linux/Windows frontend CI**
+- [x] **Step 3: Verify Linux/Windows frontend CI**
 
-Run npm test/typecheck/build on both runners. Keep standalone Tauri Rust compilation and real window startup separately classified if native dependencies are unavailable.
+Fast CI `32009748252` passed Linux/Windows frontend tests, typecheck, build, lint, and workspace tests; integration `32010337861` passed Linux/Windows CLI/Shell/PowerShell/lock matrix. Standalone Tauri native compile and real-window acceptance remain separately classified.
 
 ---
 

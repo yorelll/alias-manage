@@ -11,8 +11,8 @@ This ledger classifies unchecked items before Task 21. It is an audit record, no
 | Native argument matrix | CI-verifiable | Linux/Windows fixtures + integration jobs | Structured exact-boundary and Batch metacharacter tests plus fixtures implemented; fast CI `32004704944` and integration `32004874576` passed; host-specific PS native argv limits remain documented/manual |
 | Tombstone fingerprint/override recovery | CI-verifiable | Shell integration tests | Generated metadata now carries tombstone names and deterministic fingerprints; CLI sync includes retired names; fast CI `32007567925` passed. Runtime fingerprint skip and override snapshots remain incomplete |
 | SQLite sync transaction/forward recovery | CI-verifiable | sync/storage tests | Incomplete |
-| CLI reload/doctor/transfer persistence | CI-verifiable | CLI integration tests | Incomplete |
-| GUI Task 19/20 runtime commands | CI-verifiable | standalone command tests + GUI frontend CI | Partly placeholder |
+| CLI reload/doctor/transfer persistence | CI-verifiable | CLI integration tests | CLI sync now includes retired Shell names; dry-run remains non-mutating; import confirmation persistence and durable doctor findings remain incomplete; integration `32010337861` passed |
+| GUI Task 19/20 runtime commands | CI-verifiable | standalone command tests + GUI frontend CI | Task 20 command responses now read core/config/generated files, import reports, uninstall core, and override storage; frontend tests/typecheck/build passed fast CI `32009748252`; standalone Tauri/native runtime remains open |
 | Task 21-1 automated matrix/release | implementation-feasible | workflow runs/artifacts | Not started |
 | Task 21-2 clean-machine/Profile/GUI/package acceptance | manual/environment-dependent | user test reports | Not started |
 | Fish/POSIX, import scanner, plugin API | post-MVP/out-of-scope | future plans | Not part of Task 21 closure |

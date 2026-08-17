@@ -1770,7 +1770,9 @@ Task 1 CI enhancements adopted:
 - [x] Task 20 command contracts and registrations implemented in `commands.rs`/`main.rs`.
 - [x] DoctorPanel、ImportPanel、SettingsPanel、UninstallPanel implemented with graded confirmation boundaries.
 - [x] Import preview/confirm, config get/save, uninstall preview/confirm, and override display command surfaces added.
-- [x] GUI frontend tests/typecheck/build passed on Linux/Windows in Fast CI `31995990405`.
+- [x] Task 20 command placeholders replaced with core-backed reads/writes: Doctor, generated preview/reload, import reports, config persistence, uninstall core cleanup, and override storage readback; source-contract regression tests added.
+- [x] Task 20 GUI command registration and frontend regression evidence: fast CI `32009748252`; integration `32010337861`.
+- [ ] standalone Tauri native compile, real command runtime, and real-window/manual GUI acceptance remain open.- [x] GUI frontend tests/typecheck/build passed on Linux/Windows in Fast CI `31995990405`.
 - [x] Existing core/workspace and Integration matrix passed in Fast CI `31995990405` / Integration `31996095344`.
 - [ ] standalone Tauri Rust build, real runtime command persistence, real file picker, Profile/RC, ExecutionPolicy, and manual GUI acceptance remain open.
 - [x] Task 20 implementation commit: `57fd92e`; fixes: `2976e4f`, `0d1f1a0`; evidence: `1d977c9`.
