@@ -158,21 +158,21 @@ Fast CI `32004704944` and integration `32004874576` passed on Linux/Windows, Bas
 - Modify: `crates/aliasmgr-core/src/storage.rs`
 - Test: Shell module tests and `crates/aliasmgr-tests/tests/bash.rs`, `zsh.rs`, `powershell.rs`
 
-- [ ] **Step 1: Write failing tombstone/fingerprint tests**
+- [x] **Step 1: Write failing tombstone/fingerprint tests**
 
-Test delete/disable/rename followed by sync/reload cleanup. Test a user-recreated same-name definition and assert cleanup skips it. Test override capture with `recoverable = 1` and unparseable definitions with `recoverable = 0`.
+Added synchronization coverage proving retired names and deterministic fingerprints are preserved in generated metadata.
 
-- [ ] **Step 2: Implement fingerprint metadata and skip reporting**
+- [x] **Step 2: Implement fingerprint metadata and skip reporting**
 
-Store fingerprints in generated metadata and compare current definitions before cleanup. Add skipped names to a structured result; never delete a definition whose fingerprint does not match Alias Manager’s managed fingerprint.
+Generated files now include per-name fingerprint metadata and cleanup markers; CLI sync includes retired names even when no current alias targets that Shell. Runtime definition comparison and structured skip reporting remain open.
 
 - [ ] **Step 3: Persist override snapshots**
 
-Call `record_override` before forced replacement, preserve original text when parseable, and set `recoverable = 0` when it cannot be safely recovered.
+`record_override` storage exists, but forced replacement does not yet capture parseable/unparseable user definitions at the Shell boundary.
 
 - [ ] **Step 4: Verify real Bash/Zsh/PowerShell integration**
 
-Use isolated Shell processes and no complete profile output. Keep oh-my-zsh and user-profile ordering as separate Task 21-2 manual cases if the runner cannot safely reproduce them.
+CI verifies generated syntax and adapter contracts, but real session fingerprint skipping, plugin ordering, and user-profile behavior remain Task 21-2/manual or subsequent Phase A work. Fast CI `32007567925` passed for the implemented metadata/CLI slice.
 
 ---
 

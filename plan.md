@@ -1526,9 +1526,9 @@ Task 1 CI enhancements adopted:
 - [x] 加载块中写入已解析的绝对生成文件路径，变量名使用 `__aliasmgr_generated_file` / `__AliasMgrGeneratedFile`，Bash 用 `unset -v` 清理。
 - [x] 写入前创建时间戳备份到 `backups/rc/`，按 §2.4 的保留策略清理。
 - [x] 对被手工修改的生成文件提供内容 checksum 比较函数，并以回归测试识别编辑（`sync::verify_file_checksum`，fast CI `31790578135`）。需要用户决策的 doctor/CLI 状态仍待后续 slice。
-- [x] 将当前托管名与 retired 名清单写入生成文件 metadata，并让已有 cleanup 在定义之前执行；真实删除/禁用/改名 reload 回归仍待后续同步 slice。
-- [ ] 实现定义指纹比对，避免误删用户在会话中自行重建的同名定义；跳过项进入跳过清单。
-- [ ] 强制覆盖已有 alias/function 时把原定义快照写入 `overridden_definitions`；无法解析时置 `recoverable = 0`，并在 CLI/GUI 中提示用户。
+- [x] 将当前托管名与 retired 名清单写入生成文件 metadata，并让已有 cleanup 在定义之前执行；CLI sync 会把无当前记录但仍有 tombstone 的 Shell 纳入 reload，fast CI `32007567925` 验证。
+- [ ] 实现运行时定义指纹比对，避免误删用户在会话中自行重建的同名定义；当前已生成确定性 fingerprint metadata，但 skip 清单尚未接通。
+- [ ] 强制覆盖已有 alias/function 时把原定义快照写入 `overridden_definitions`；无法解析时置 `recoverable = 0`，并在 CLI/GUI 中提示用户。存储 API 已存在，Shell capture 尚未接通。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-core loader`，预期全部通过。
 - [x] 提交 `feat: manage shell loader blocks safely`。
 

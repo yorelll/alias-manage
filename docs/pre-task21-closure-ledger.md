@@ -9,7 +9,7 @@ This ledger classifies unchecked items before Task 21. It is an audit record, no
 | Windows ACL writable path | implementation-feasible | Windows core test | Incomplete |
 | Search sort/descending and complete CLI output | implementation-feasible | core/CLI tests + fast CI | Core sorting plus CLI field/sort/descending/limit/tag propagation and complete JSON rows implemented; CI run `32001624885` passed; integration run `32001809714` passed |
 | Native argument matrix | CI-verifiable | Linux/Windows fixtures + integration jobs | Structured exact-boundary and Batch metacharacter tests plus fixtures implemented; fast CI `32004704944` and integration `32004874576` passed; host-specific PS native argv limits remain documented/manual |
-| Tombstone fingerprint/override recovery | CI-verifiable | Shell integration tests | Incomplete |
+| Tombstone fingerprint/override recovery | CI-verifiable | Shell integration tests | Generated metadata now carries tombstone names and deterministic fingerprints; CLI sync includes retired names; fast CI `32007567925` passed. Runtime fingerprint skip and override snapshots remain incomplete |
 | SQLite sync transaction/forward recovery | CI-verifiable | sync/storage tests | Incomplete |
 | CLI reload/doctor/transfer persistence | CI-verifiable | CLI integration tests | Incomplete |
 | GUI Task 19/20 runtime commands | CI-verifiable | standalone command tests + GUI frontend CI | Partly placeholder |
