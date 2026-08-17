@@ -45,10 +45,18 @@ pub fn search(aliases: &[AliasRecord], query: &SearchQuery) -> Vec<SearchResult>
         let score = score_field(alias, &query.query, query.field, query.fuzzy);
         (query.query.is_empty() || score > 0).then(|| SearchResult { alias: alias.clone(), score })
     }).collect();
+    let explicit_sort = query.query.is_empty();
     results.sort_by(|left, right| {
-        right.score.cmp(&left.score)
-            .then_with(|| left.alias.name.cmp(&right.alias.name))
-            .then_with(|| right.alias.updated_at.cmp(&left.alias.updated_at))
+        if !explicit_sort { return right.score.cmp(&left.score).then_with(|| left.alias.name.cmp(&right.alias.name)); }
+        let ordering = match query.sort {
+            SortField::Name => left.alias.name.cmp(&right.alias.name),
+            SortField::UpdatedAt => left.alias.updated_at.cmp(&right.alias.updated_at),
+            SortField::CreatedAt => left.alias.created_at.cmp(&right.alias.created_at),
+            SortField::TargetType => format!("{:?}", left.alias.target_type).cmp(&format!("{:?}", right.alias.target_type)),
+            SortField::Enabled => left.alias.enabled.cmp(&right.alias.enabled),
+        };
+        let ordering = if query.descending { ordering.reverse() } else { ordering };
+        ordering.then_with(|| left.alias.name.cmp(&right.alias.name)).then_with(|| right.alias.updated_at.cmp(&left.alias.updated_at))
     });
     if query.limit > 0 { results.truncate(query.limit); }
     results
@@ -112,5 +120,18 @@ mod tests {
         let query = SearchQuery { tag_filter: vec!["git".into(), "work".into()], ..Default::default() };
         let results = search(&[both, one], &query);
         assert_eq!(results.iter().map(|result| result.alias.name.as_str()).collect::<Vec<_>>(), vec!["both"]);
+    }
+
+    #[test]
+    fn explicit_sort_fields_and_descending_are_applied_without_query() {
+        let mut old = alias("old", "tool");
+        let mut new = alias("new", "tool");
+        old.enabled = false;
+        new.enabled = true;
+        new.created_at = old.created_at + chrono::Duration::seconds(10);
+        new.updated_at = old.updated_at + chrono::Duration::seconds(10);
+        let query = SearchQuery { sort: SortField::UpdatedAt, descending: true, ..Default::default() };
+        let results = search(&[old, new], &query);
+        assert_eq!(results[0].alias.name, "new");
     }
 }
