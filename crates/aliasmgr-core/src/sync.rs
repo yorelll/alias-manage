@@ -3,204 +3,53 @@ use sha2::{Digest, Sha256};
 use std::{fs, path::{Path, PathBuf}, time::Duration};
 
 pub fn content_checksum(content: &str) -> String { let mut digest = Sha256::new(); digest.update(content.lines().filter(|line| !line.starts_with("# file_checksum:")).collect::<Vec<_>>().join("\n").as_bytes()); format!("{:x}", digest.finalize()) }
-
 pub fn verify_file_checksum(content: &str, expected: &str) -> bool { content_checksum(content) == expected }
-
 fn metadata_line(name: &str, values: &[String]) -> String { format!("# {name}: {}\n", values.join(" ")) }
-
-fn backup_path(path: &Path, root: &Path) -> PathBuf {
-    root.join("backups/generated").join(path.file_name().unwrap())
-}
+fn backup_path(path: &Path, root: &Path) -> PathBuf { root.join("backups/generated").join(path.file_name().unwrap()) }
 pub struct SyncCoordinator { pub config_dir: PathBuf }
-
-pub fn shell_status(applied_revision: i64, current_revision: i64, loader_installed: bool, error: Option<&str>) -> ShellStatus {
-    if error.is_some() { ShellStatus::Failed }
-    else if !loader_installed { ShellStatus::LoaderMissing }
-    else if applied_revision == current_revision { ShellStatus::Ok }
-    else if applied_revision < current_revision { ShellStatus::Stale }
-    else { ShellStatus::Unknown }
-}
+pub fn shell_status(applied_revision: i64, current_revision: i64, loader_installed: bool, error: Option<&str>) -> ShellStatus { if error.is_some() { ShellStatus::Failed } else if !loader_installed { ShellStatus::LoaderMissing } else if applied_revision == current_revision { ShellStatus::Ok } else if applied_revision < current_revision { ShellStatus::Stale } else { ShellStatus::Unknown } }
 
 impl SyncCoordinator {
     pub fn new(config_dir: impl Into<PathBuf>) -> Self { Self { config_dir: config_dir.into() } }
-
-    pub fn apply_with_managed_names(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> {
-        self.apply_internal(aliases, shells, revision, names)
-    }
-
-    pub fn apply(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64) -> Result<SyncReceipt, AliasError> {
-        let names = ManagedNameSet { current: aliases.iter().map(|alias| alias.name.clone()).collect(), retired: Vec::new() };
-        self.apply_internal(aliases, shells, revision, &names)
-    }
-
+    pub fn apply_with_managed_names(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> { self.apply_internal(aliases, shells, revision, names) }
+    pub fn apply(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64) -> Result<SyncReceipt, AliasError> { let names = ManagedNameSet { current: aliases.iter().map(|alias| alias.name.clone()).collect(), retired: Vec::new() }; self.apply_internal(aliases, shells, revision, &names) }
     fn apply_internal(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> {
-        fs::create_dir_all(self.config_dir.join("generated"))?;
-        fs::create_dir_all(self.config_dir.join("backups/generated"))?;
+        fs::create_dir_all(self.config_dir.join("generated"))?; fs::create_dir_all(self.config_dir.join("backups/generated"))?;
         let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
-        let journal = self.config_dir.join("operation.journal");
-        let revision_from = revision.saturating_sub(1);
-        let mut backups = Vec::new();
-        for shell in shells {
-            let path = self.generated_path(shell);
-            if path.exists() {
-                let backup = backup_path(&path, &self.config_dir);
-                fs::copy(&path, &backup)?;
-                backups.push(serde_json::json!({"target": path, "backup": backup}));
-            }
-        }
+        let journal = self.config_dir.join("operation.journal"); let revision_from = revision.saturating_sub(1); let mut backups = Vec::new();
+        for shell in shells { let path = self.generated_path(shell); if path.exists() { let backup = backup_path(&path, &self.config_dir); fs::copy(&path, &backup)?; backups.push(serde_json::json!({"target": path, "backup": backup})); } }
         fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=prepared\nbackups_json={}\n", serde_json::to_string(&backups)?))?;
         let mut results = Vec::new();
         for shell in shells {
-            let path = self.generated_path(shell);
-            let temp = path.with_extension(format!("tmp.{}", std::process::id()));
+            let path = self.generated_path(shell); let temp = path.with_extension(format!("tmp.{}", std::process::id()));
             match self.render_shell(aliases, shell, revision, names) {
-                Ok(body) => {
-                    let checksum = content_checksum(&body);
-                    let body = format!("{body}# file_checksum: {checksum}\n");
-                    fs::write(&temp, &body)?;
-                    fs::rename(&temp, &path)?;
-                    let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision, file_checksum: checksum.clone(), loader_installed: true, status: ShellStatus::Ok, last_error: None };
-                    database.upsert_shell_state(&state)?;
-                    results.push(ShellSyncResult { shell: shell.clone(), status: ShellStatus::Ok, error: None });
-                    fs::write(self.config_dir.join(format!("shell_state.{shell:?}")), format!("applied_revision={revision}\nfile_checksum={checksum}\nstatus=ok\n"))?;
-                }
-                Err(error) => {
-                    let message = error.to_string();
-                    let _ = fs::remove_file(&temp);
-                    let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision.saturating_sub(1), file_checksum: String::new(), loader_installed: true, status: ShellStatus::Failed, last_error: Some(message.clone()) };
-                    database.upsert_shell_state(&state)?;
-                    results.push(ShellSyncResult { shell: shell.clone(), status: ShellStatus::Failed, error: Some(message) });
-                }
+                Ok(body) => { let checksum = content_checksum(&body); let body = format!("{body}# file_checksum: {checksum}\n"); fs::write(&temp, &body)?; fs::rename(&temp, &path)?; let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision, file_checksum: checksum.clone(), loader_installed: true, status: ShellStatus::Ok, last_error: None }; database.upsert_shell_state(&state)?; results.push(ShellSyncResult { shell: shell.clone(), status: ShellStatus::Ok, error: None }); }
+                Err(error) => { let message = error.to_string(); let _ = fs::remove_file(&temp); let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision.saturating_sub(1), file_checksum: String::new(), loader_installed: true, status: ShellStatus::Failed, last_error: Some(message.clone()) }; database.upsert_shell_state(&state)?; results.push(ShellSyncResult { shell: shell.clone(), status: ShellStatus::Failed, error: Some(message) }); }
             }
         }
         fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=completed\nbackups_json={}\n", serde_json::to_string(&backups)?))?;
         Ok(SyncReceipt { revision, results })
     }
-
     pub fn recover_pending_operations(&self) -> Result<(), AliasError> {
-        let journal = self.config_dir.join("operation.journal");
-        if !journal.exists() { return Ok(()); }
+        let journal = self.config_dir.join("operation.journal"); if !journal.exists() { return Ok(()); }
         let content = fs::read_to_string(&journal)?;
-        if content.lines().any(|line| line == "state=prepared") {
-            if let Some(backups) = content.lines().find_map(|line| line.strip_prefix("backups_json=")) {
-                for entry in serde_json::from_str::<Vec<serde_json::Value>>(backups)? {
-                    let target = entry.get("target").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal target".into()))?;
-                    let backup = entry.get("backup").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal backup".into()))?;
-                    if Path::new(backup).exists() { fs::copy(backup, target)?; }
-                }
-            }
-            fs::remove_file(journal)?;
-        }
+        if content.lines().any(|line| line == "state=prepared") { if let Some(backups) = content.lines().find_map(|line| line.strip_prefix("backups_json=")) { for entry in serde_json::from_str::<Vec<serde_json::Value>>(backups)? { let target = entry.get("target").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal target".into()))?; let backup = entry.get("backup").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal backup".into()))?; if Path::new(backup).exists() { fs::copy(backup, target)?; } } } fs::remove_file(journal)?; }
         Ok(())
     }
-
-    fn generated_path(&self, shell: &ShellKind) -> PathBuf {
-        let name = match shell { ShellKind::Bash => "bash.sh", ShellKind::Zsh => "zsh.sh", ShellKind::PowerShell5 => "powershell5.ps1", ShellKind::PowerShell7 => "powershell7.ps1", _ => "unsupported.sh" };
-        self.config_dir.join("generated").join(name)
-    }
-
-    fn render_shell(&self, aliases: &[AliasRecord], shell: &ShellKind, revision: i64, names: &ManagedNameSet) -> Result<String, AliasError> {
-        let mut output = format!("# Alias Manager\n# revision: {revision}\n");
-        output.push_str(&metadata_line("managed", &names.current));
-        output.push_str(&metadata_line("retired", &names.retired));
-        for name in crate::shells::common::managed_names(names) { output.push_str(&format!("# fingerprint: {} {}\n", name, crate::shells::common::fingerprint_marker(&name))); }
-        for alias in aliases.iter().filter(|alias| alias.enabled) { output.push_str(&match shell { ShellKind::Bash => bash::render(alias, names)?, ShellKind::Zsh => zsh::render(alias, names)?, ShellKind::PowerShell5 | ShellKind::PowerShell7 => powershell::render(alias, shell.clone(), names)?, _ => return Err(AliasError::ShellNotInstalled) }); }
-        Ok(output)
-    }
+    fn generated_path(&self, shell: &ShellKind) -> PathBuf { let name = match shell { ShellKind::Bash => "bash.sh", ShellKind::Zsh => "zsh.sh", ShellKind::PowerShell5 => "powershell5.ps1", ShellKind::PowerShell7 => "powershell7.ps1", _ => "unsupported.sh" }; self.config_dir.join("generated").join(name) }
+    fn render_shell(&self, aliases: &[AliasRecord], shell: &ShellKind, revision: i64, names: &ManagedNameSet) -> Result<String, AliasError> { let mut output = format!("# Alias Manager\n# revision: {revision}\n"); output.push_str(&metadata_line("managed", &names.current)); output.push_str(&metadata_line("retired", &names.retired)); for name in crate::shells::common::managed_names(names) { output.push_str(&format!("# fingerprint: {} {}\n", name, crate::shells::common::fingerprint_marker(&name))); } for alias in aliases.iter().filter(|alias| alias.enabled) { output.push_str(&match shell { ShellKind::Bash => bash::render(alias, names)?, ShellKind::Zsh => zsh::render(alias, names)?, ShellKind::PowerShell5 | ShellKind::PowerShell7 => powershell::render(alias, shell.clone(), names)?, _ => return Err(AliasError::ShellNotInstalled) }); } Ok(output) }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::model::TargetType;
-    #[test]
-    fn apply_with_managed_names_preserves_retired_tombstones_and_fingerprints() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-tombstone-{}", std::process::id()));
-        let alias = AliasRecord { name: "new".into(), executable: "git".into(), ..Default::default() };
-        let names = ManagedNameSet { current: vec!["new".into()], retired: vec!["old".into()] };
-        SyncCoordinator::new(&root).apply_with_managed_names(&[alias], &[ShellKind::Bash], 3, &names).unwrap();
-        let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
-        assert!(content.contains("# retired: old"));
-        assert!(content.contains("aliasmgr fingerprint:"));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn generated_files_include_stable_checksum_metadata() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-checksum-{}", std::process::id()));
-        let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() };
-        SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap();
-        let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
-        assert!(content.contains("# revision: 2"));
-        assert!(content.contains("# managed: gs"));
-        assert!(content.contains("# retired: \n"));
-        let checksum = content.lines().find_map(|line| line.strip_prefix("# file_checksum: ")).unwrap();
-        assert!(verify_file_checksum(&content, checksum));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn checksum_verification_detects_manual_generated_file_edits() {
-        let original = "# revision: 2\n# managed: gs\n# retired: \nfunction gs() { command git \"$@\"; }\n# file_checksum: ignored\n";
-        let checksum = content_checksum(original);
-        assert!(verify_file_checksum(original, &checksum));
-        assert!(!verify_file_checksum(&original.replace("command git", "command rm"), &checksum));
-    }
-
-    #[test]
-    fn computes_shell_states() {
-        assert_eq!(shell_status(2, 2, true, None), ShellStatus::Ok);
-        assert_eq!(shell_status(1, 2, true, None), ShellStatus::Stale);
-        assert_eq!(shell_status(2, 2, false, None), ShellStatus::LoaderMissing);
-        assert_eq!(shell_status(1, 2, true, Some("syntax")), ShellStatus::Failed);
-    }
-    #[test]
-    fn applies_each_shell_and_writes_journal() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-sync-{}", std::process::id()));
-        let alias = AliasRecord { name: "gs".into(), executable: "git".into(), target_type: TargetType::NativeExecutable, ..Default::default() };
-        let receipt = SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash, ShellKind::Zsh], 2).unwrap();
-        assert_eq!(receipt.results.len(), 2); assert!(root.join("operation.journal").exists()); assert!(root.join("generated/bash.sh").exists());
-        let _ = fs::remove_dir_all(root);
-    }
-    #[test]
-    fn partial_shell_failure_keeps_successful_shell_result() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-partial-{}", std::process::id()));
-        let alias = AliasRecord { name: "bad".into(), executable: "tool".into(), advanced_shell_mode: true, ..Default::default() };
-        let receipt = SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash, ShellKind::PowerShell7], 2).unwrap();
-        assert_eq!(receipt.results.len(), 2);
-        assert!(receipt.results.iter().any(|result| result.status == ShellStatus::Failed));
-        let _ = fs::remove_dir_all(root);
-    }
-    #[test]
-    fn recovery_restores_generated_file_from_prepared_journal_backup() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-recovery-{}", std::process::id()));
-        let generated = root.join("generated/bash.sh");
-        let backup = root.join("backups/generated/bash.sh.bak");
-        fs::create_dir_all(generated.parent().unwrap()).unwrap();
-        fs::create_dir_all(backup.parent().unwrap()).unwrap();
-        fs::write(&generated, "old generated content\n").unwrap();
-        fs::copy(&generated, &backup).unwrap();
-        fs::write(&generated, "partially replaced content\n").unwrap();
-        let entries = serde_json::json!([{"target": generated.to_string_lossy(), "backup": backup.to_string_lossy()}]);
-        fs::write(root.join("operation.journal"), format!("revision_from=1\nrevision_to=2\nstate=prepared\nbackups_json={entries}\n")).unwrap();
-        SyncCoordinator::new(&root).recover_pending_operations().unwrap();
-        assert_eq!(fs::read_to_string(&generated).unwrap(), "old generated content\n");
-        assert!(!root.join("operation.journal").exists());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn apply_records_backup_for_existing_generated_file() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-backup-{}", std::process::id()));
-        let generated = root.join("generated/bash.sh");
-        fs::create_dir_all(generated.parent().unwrap()).unwrap();
-        fs::write(&generated, "previous\n").unwrap();
-        let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() };
-        SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap();
-        let journal = fs::read_to_string(root.join("operation.journal")).unwrap();
-        assert!(journal.contains("backups_json=["));
-        assert!(fs::read_dir(root.join("backups/generated")).unwrap().next().is_some());
-        let _ = fs::remove_dir_all(root);
-    }
+    use super::*; use crate::model::TargetType;
+    #[test] fn apply_with_managed_names_preserves_retired_tombstones_and_fingerprints() { let root = std::env::temp_dir().join(format!("aliasmgr-tombstone-{}", std::process::id())); let alias = AliasRecord { name: "new".into(), executable: "git".into(), ..Default::default() }; let names = ManagedNameSet { current: vec!["new".into()], retired: vec!["old".into()] }; SyncCoordinator::new(&root).apply_with_managed_names(&[alias], &[ShellKind::Bash], 3, &names).unwrap(); let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap(); assert!(content.contains("# retired: old")); assert!(content.contains("aliasmgr fingerprint:")); let _ = fs::remove_dir_all(root); }
+    #[test] fn generated_files_include_stable_checksum_metadata() { let root = std::env::temp_dir().join(format!("aliasmgr-checksum-{}", std::process::id())); let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() }; SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap(); let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap(); assert!(content.contains("# revision: 2")); assert!(content.contains("# managed: gs")); let checksum = content.lines().find_map(|line| line.strip_prefix("# file_checksum: ")).unwrap(); assert!(verify_file_checksum(&content, checksum)); let _ = fs::remove_dir_all(root); }
+    #[test] fn checksum_verification_detects_manual_generated_file_edits() { let original = "# revision: 2\n# managed: gs\n# retired: \nfunction gs() { command git \"$@\"; }\n# file_checksum: ignored\n"; let checksum = content_checksum(original); assert!(verify_file_checksum(original, &checksum)); assert!(!verify_file_checksum(&original.replace("command git", "command rm"), &checksum)); }
+    #[test] fn computes_shell_states() { assert_eq!(shell_status(2, 2, true, None), ShellStatus::Ok); assert_eq!(shell_status(1, 2, true, None), ShellStatus::Stale); assert_eq!(shell_status(2, 2, false, None), ShellStatus::LoaderMissing); assert_eq!(shell_status(1, 2, true, Some("syntax")), ShellStatus::Failed); }
+    #[test] fn applies_each_shell_and_writes_journal() { let root = std::env::temp_dir().join(format!("aliasmgr-sync-{}", std::process::id())); let alias = AliasRecord { name: "gs".into(), executable: "git".into(), target_type: TargetType::NativeExecutable, ..Default::default() }; let receipt = SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash, ShellKind::Zsh], 2).unwrap(); assert_eq!(receipt.results.len(), 2); assert!(root.join("operation.journal").exists()); assert!(root.join("generated/bash.sh").exists()); let _ = fs::remove_dir_all(root); }
+    #[test] fn partial_shell_failure_keeps_successful_shell_result() { let root = std::env::temp_dir().join(format!("aliasmgr-partial-{}", std::process::id())); let alias = AliasRecord { name: "bad".into(), executable: "tool".into(), advanced_shell_mode: true, ..Default::default() }; let receipt = SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash, ShellKind::PowerShell7], 2).unwrap(); assert_eq!(receipt.results.len(), 2); assert!(receipt.results.iter().any(|result| result.status == ShellStatus::Failed)); let _ = fs::remove_dir_all(root); }
+    #[test] fn recovery_restores_generated_file_from_prepared_journal_backup() { let root = std::env::temp_dir().join(format!("aliasmgr-recovery-{}", std::process::id())); let generated = root.join("generated/bash.sh"); let backup = root.join("backups/generated/bash.sh.bak"); fs::create_dir_all(generated.parent().unwrap()).unwrap(); fs::create_dir_all(backup.parent().unwrap()).unwrap(); fs::write(&generated, "old generated content\n").unwrap(); fs::copy(&generated, &backup).unwrap(); fs::write(&generated, "partially replaced content\n").unwrap(); let entries = serde_json::json!([{ "target": generated.to_string_lossy(), "backup": backup.to_string_lossy() }]); fs::write(root.join("operation.journal"), format!("revision_from=1\nrevision_to=2\nstate=prepared\nbackups_json={entries}\n")).unwrap(); SyncCoordinator::new(&root).recover_pending_operations().unwrap(); assert_eq!(fs::read_to_string(&generated).unwrap(), "old generated content\n"); assert!(!root.join("operation.journal").exists()); let _ = fs::remove_dir_all(root); }
+    #[test] fn apply_records_backup_for_existing_generated_file() { let root = std::env::temp_dir().join(format!("aliasmgr-backup-{}", std::process::id())); let generated = root.join("generated/bash.sh"); fs::create_dir_all(generated.parent().unwrap()).unwrap(); fs::write(&generated, "previous\n").unwrap(); let alias = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() }; SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::Bash], 2).unwrap(); let journal = fs::read_to_string(root.join("operation.journal")).unwrap(); assert!(journal.contains("backups_json=[")); assert!(fs::read_dir(root.join("backups/generated")).unwrap().next().is_some()); let _ = fs::remove_dir_all(root); }
 }
