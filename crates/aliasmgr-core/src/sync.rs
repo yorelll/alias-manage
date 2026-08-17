@@ -34,7 +34,25 @@ impl SyncCoordinator {
     pub fn recover_pending_operations(&self) -> Result<(), AliasError> {
         let journal = self.config_dir.join("operation.journal"); if !journal.exists() { return Ok(()); }
         let content = fs::read_to_string(&journal)?;
-        if content.lines().any(|line| line == "state=prepared") { if let Some(backups) = content.lines().find_map(|line| line.strip_prefix("backups_json=")) { for entry in serde_json::from_str::<Vec<serde_json::Value>>(backups)? { let target = entry.get("target").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal target".into()))?; let backup = entry.get("backup").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal backup".into()))?; if Path::new(backup).exists() { fs::copy(backup, target)?; } } } fs::remove_file(journal)?; }
+        if let Some(backups) = content.lines().find_map(|line| line.strip_prefix("backups_json=")) {
+            for entry in serde_json::from_str::<Vec<serde_json::Value>>(backups)? {
+                let target = entry.get("target").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal target".into()))?;
+                if content.lines().any(|line| line == "state=prepared") {
+                    let backup = entry.get("backup").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal backup".into()))?;
+                    if Path::new(backup).exists() { fs::copy(backup, target)?; }
+                } else if content.lines().any(|line| line == "state=committed") && !Path::new(target).exists() {
+                    let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
+                    let aliases = database.list_aliases()?;
+                    let revision = content.lines().find_map(|line| line.strip_prefix("revision_to=")).and_then(|value| value.parse().ok()).unwrap_or(0);
+                    let shell = match Path::new(target).file_name().and_then(|name| name.to_str()) { Some("bash.sh") => ShellKind::Bash, Some("zsh.sh") => ShellKind::Zsh, Some("powershell5.ps1") => ShellKind::PowerShell5, Some("powershell7.ps1") => ShellKind::PowerShell7, _ => continue };
+                    let names = database.managed_name_set(&shell)?;
+                    let body = self.render_shell(&aliases, &shell, revision, &names)?;
+                    let checksum = content_checksum(&body);
+                    fs::write(target, format!("{body}# file_checksum: {checksum}\n"))?;
+                }
+            }
+        }
+        if content.lines().any(|line| line == "state=prepared") || content.lines().any(|line| line == "state=committed") { fs::remove_file(journal)?; }
         Ok(())
     }
     fn generated_path(&self, shell: &ShellKind) -> PathBuf { let name = match shell { ShellKind::Bash => "bash.sh", ShellKind::Zsh => "zsh.sh", ShellKind::PowerShell5 => "powershell5.ps1", ShellKind::PowerShell7 => "powershell7.ps1", _ => "unsupported.sh" }; self.config_dir.join("generated").join(name) }
