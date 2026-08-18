@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc --noEmit && vite build",
-    "test": "node --experimental-strip-types --test src/app.test.ts",
+    "test": "node --experimental-strip-types --test src/app.test.ts src/script-contracts.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
