@@ -578,7 +578,7 @@ if [[ $IDEM_RC -eq 0 ]]; then
   # The marker is "# >>> Alias Manager >>>" — appears exactly once per install block.
   LOADER_COUNT=0
   if [[ -f "$ISOLATED_BASHRC" ]]; then
-    LOADER_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$ISOLATED_BASHRC" 2>/dev/null || echo 0)"
+    LOADER_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$ISOLATED_BASHRC" 2>/dev/null)" || true
   fi
   if [[ "$LOADER_COUNT" -le 1 ]]; then
     record_result "L-019" "loader install idempotence" "PASS" \
