@@ -260,6 +260,7 @@ Fast CI `32009748252` passed Linux/Windows frontend tests, typecheck, build, lin
 **Files:** `.github/workflows/integration.yml`, `.github/workflows/ci.yml`, `docs/ci-workflow.md`
 
 - [ ] Phase B remains blocked until Phase A implementation-feasible closure is complete; do not start Task 21-1 automation yet.
+- [x] GUI dependency lockfile and npm cache prerequisite completed in commit `5239a2e`; CI verification of the updated workflow is still pending.
 
 - [ ] Add pinned Ubuntu 24.04 dependency installation for WebKitGTK/GTK packages required by any Tauri compile job.
 - [ ] Add real Bash execution, syntax, argv fixture, loader/tombstone/fingerprint, permission, and clean isolated HOME checks.
