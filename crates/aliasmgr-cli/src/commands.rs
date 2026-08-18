@@ -55,7 +55,7 @@ pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, Al
     let before = std::fs::read_to_string(&rc_path)?;
     let cleaned = aliasmgr_core::shells::common::remove_loader(&before)?;
     if cleaned == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &cleaned)?;
+    aliasmgr_core::shells::common::write_profile_content(&rc_path, &cleaned)?;
     Ok(true)
 }
 
