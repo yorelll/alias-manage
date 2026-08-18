@@ -72,6 +72,7 @@ cleanup() {
   if [[ $KEEP_TEMP -eq 0 ]]; then
     # Preserve result directory, remove rest
     if [[ -n "$TEMP_ROOT" && -d "$TEMP_ROOT" ]]; then
+      rm -rf /tmp/aliasmgr-last-result
       cp -r "$RESULT_DIR" /tmp/aliasmgr-last-result 2>/dev/null || true
       rm -rf "$TEMP_ROOT"
       RESULT_DIR="/tmp/aliasmgr-last-result"

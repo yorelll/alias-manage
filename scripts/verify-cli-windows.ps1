@@ -142,9 +142,9 @@ Write-Log "artifact: [redacted path]"
 Write-Log "temp_root: [redacted path]"
 
 # Report ExecutionPolicy for all scopes — NEVER change it
-$PolicyReport = Get-ExecutionPolicy -List | ForEach-Object {
+$PolicyReport = (Get-ExecutionPolicy -List | ForEach-Object {
     "$($_.Scope)=$($_.ExecutionPolicy)"
-} | Join-String -Separator "; "
+}) -join "; "
 Write-Log ("ExecutionPolicy scopes: " + $PolicyReport)
 
 # Report LanguageMode
@@ -227,13 +227,13 @@ Record-Result "W-008" "retain/purge uninstall" "EXPECTED-LIMITATION" `
     "placeholder: uninstall cases deferred to Task 4 scripts" `
     "task4-hook"
 
-# W-009: Profile/OneDrive (manual-only)
+# W-MANUAL-001: Profile/OneDrive (manual-only)
 Record-Result "W-MANUAL-001" "Profile/OneDrive path resolution" "EXPECTED-LIMITATION" `
     "Profile resolved correctly; isolated from real config" `
     "MANUAL-ONLY: OneDrive Profile path requires live Windows environment check" `
     "manual"
 
-# W-010: BOM/CRLF (manual-only)
+# W-MANUAL-002: BOM/CRLF (manual-only)
 Record-Result "W-MANUAL-002" "BOM/CRLF encoding preservation" "EXPECTED-LIMITATION" `
     "BOM and CRLF preserved in generated files" `
     "MANUAL-ONLY: encoding preservation verified on real artifact in Task 4" `

@@ -614,3 +614,56 @@ test("verify-powershell7.ps1 marks Restricted/AllSigned/ConstrainedLanguage as e
   assert.match(source, /ConstrainedLanguage/,
     "verify-powershell7.ps1 must reference ConstrainedLanguage as a status");
 });
+
+// ─── PS5.1 compatibility: no Join-String ─────────────────────────
+// Join-String was introduced in PS7; PS5.1 requires the -join operator instead.
+
+test("verify-cli-windows.ps1 does not use Join-String (PS5.1 incompatible)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.doesNotMatch(
+    source,
+    /\|\s*Join-String\b/,
+    "verify-cli-windows.ps1 must not pipe to Join-String (requires PS7+); use -join instead"
+  );
+});
+
+test("verify-powershell51.ps1 does not use Join-String (PS5.1 incompatible)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.doesNotMatch(
+    source,
+    /\|\s*Join-String\b/,
+    "verify-powershell51.ps1 must not pipe to Join-String (requires PS7+); use -join instead"
+  );
+});
+
+// ─── stale last-result cleanup before cp -r ──────────────────────
+// Without removing the stale destination first, a repeated cp -r nests the
+// directory inside the old one instead of replacing it.
+
+test("verify-cli-linux.sh removes stale last-result before cp", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  // rm -rf must appear before the cp -r that writes aliasmgr-last-result
+  const rmIndex = source.indexOf("rm -rf /tmp/aliasmgr-last-result");
+  const cpIndex = source.indexOf("cp -r \"$RESULT_DIR\" /tmp/aliasmgr-last-result");
+  assert.ok(rmIndex !== -1, "verify-cli-linux.sh must remove stale /tmp/aliasmgr-last-result before cp");
+  assert.ok(cpIndex !== -1, "verify-cli-linux.sh must cp result to /tmp/aliasmgr-last-result");
+  assert.ok(rmIndex < cpIndex, "verify-cli-linux.sh: rm -rf of last-result must precede the cp");
+});
+
+test("verify-bash-linux.sh removes stale last-result before cp", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  const rmIndex = source.indexOf("rm -rf /tmp/aliasmgr-bash-last-result");
+  const cpIndex = source.indexOf("cp -r \"$RESULT_DIR\" /tmp/aliasmgr-bash-last-result");
+  assert.ok(rmIndex !== -1, "verify-bash-linux.sh must remove stale /tmp/aliasmgr-bash-last-result before cp");
+  assert.ok(cpIndex !== -1, "verify-bash-linux.sh must cp result to /tmp/aliasmgr-bash-last-result");
+  assert.ok(rmIndex < cpIndex, "verify-bash-linux.sh: rm -rf of last-result must precede the cp");
+});
+
+test("verify-zsh-linux.sh removes stale last-result before cp", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  const rmIndex = source.indexOf("rm -rf /tmp/aliasmgr-zsh-last-result");
+  const cpIndex = source.indexOf("cp -r \"$RESULT_DIR\" /tmp/aliasmgr-zsh-last-result");
+  assert.ok(rmIndex !== -1, "verify-zsh-linux.sh must remove stale /tmp/aliasmgr-zsh-last-result before cp");
+  assert.ok(cpIndex !== -1, "verify-zsh-linux.sh must cp result to /tmp/aliasmgr-zsh-last-result");
+  assert.ok(rmIndex < cpIndex, "verify-zsh-linux.sh: rm -rf of last-result must precede the cp");
+});
