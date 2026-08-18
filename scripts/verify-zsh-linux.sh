@@ -151,17 +151,18 @@ log_msg "zsh version: $ZSH_VERSION_STR"
 
 # ─── Z-001: loader install to isolated .zshrc ────────────────────
 #
-# The shell install command reads rc_path from config.toml [shells.zsh_rc_path].
-# Write a config that points to our isolated TEMP_ZSHRC.
+# Use --config-dir to give shell install a dedicated isolated root.
+# Without a config.toml, the CLI falls back to $config_dir/.zshrc
+# as the RC path. We pre-create that file to satisfy write_profile_content.
 INSTALL_CONFIG="$TEMP_ROOT/install-config"
 mkdir -p "$INSTALL_CONFIG"
-cat > "$INSTALL_CONFIG/config.toml" <<TOML
-[shells]
-zsh_rc_path = "$TEMP_ZSHRC"
-TOML
+# The CLI will install to $INSTALL_CONFIG/.zshrc by default
+touch "$INSTALL_CONFIG/.zshrc"
 
 INSTALL_OUT=""
-if INSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" shell install zsh 2>&1)"; then
+INSTALL_RC=0
+INSTALL_OUT="$(HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install zsh 2>&1)" || INSTALL_RC=$?
+if [[ $INSTALL_RC -eq 0 ]]; then
   record_result "Z-001" "zsh loader install to isolated RC" "PASS" \
     "loader installed to isolated .zshrc without error" "$INSTALL_OUT" "stdout"
 elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
@@ -170,16 +171,19 @@ elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstal
     "shell install command not available in this build: $INSTALL_OUT" "stdout"
 else
   record_result "Z-001" "zsh loader install to isolated RC" "FAIL" \
-    "loader installed to isolated .zshrc without error" "exit $?: $INSTALL_OUT" "stdout"
+    "loader installed to isolated .zshrc without error" "exit $INSTALL_RC: $INSTALL_OUT" "stdout"
 fi
 
 # ─── Z-002: loader idempotence (run install twice) ───────────────
 IDEM_OUT=""
-if IDEM_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" shell install zsh 2>&1)"; then
+IDEM_RC=0
+IDEM_OUT="$(HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install zsh 2>&1)" || IDEM_RC=$?
+if [[ $IDEM_RC -eq 0 ]]; then
   # Count occurrences of loader marker in RC file
   LOADER_COUNT=0
-  if [[ -f "$TEMP_ZSHRC" ]]; then
-    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_ZSHRC" 2>/dev/null || echo 0)"
+  INSTALL_ZSHRC="$INSTALL_CONFIG/.zshrc"
+  if [[ -f "$INSTALL_ZSHRC" ]]; then
+    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$INSTALL_ZSHRC" 2>/dev/null || echo 0)"
   fi
   if [[ "$LOADER_COUNT" -le 1 ]]; then
     record_result "Z-002" "zsh loader install idempotence" "PASS" \
@@ -194,12 +198,14 @@ elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled
     "shell install not available: $IDEM_OUT" "stdout"
 else
   record_result "Z-002" "zsh loader install idempotence" "FAIL" \
-    "second install does not duplicate loader" "exit $?: $IDEM_OUT" "stdout"
+    "second install does not duplicate loader" "exit $IDEM_RC: $IDEM_OUT" "stdout"
 fi
 
 # ─── Z-003: reload --print gives correct zsh source line ─────────
 RELOAD_OUT=""
-if RELOAD_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" reload --print 2>&1)"; then
+RELOAD_RC=0
+RELOAD_OUT="$(HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" reload --print 2>&1)" || RELOAD_RC=$?
+if [[ $RELOAD_RC -eq 0 ]]; then
   if echo "$RELOAD_OUT" | grep -q "generated\|zsh.sh\|source"; then
     record_result "Z-003" "zsh reload --print guidance" "PASS" \
       "reload --print outputs zsh source instruction" "[redacted]" "stdout"
@@ -209,7 +215,7 @@ if RELOAD_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOT
   fi
 else
   record_result "Z-003" "zsh reload --print guidance" "FAIL" \
-    "reload --print outputs zsh source instruction" "exit $?: $RELOAD_OUT" "stdout"
+    "reload --print outputs zsh source instruction" "exit $RELOAD_RC: $RELOAD_OUT" "stdout"
 fi
 
 # ─── Z-004: generated zsh.sh syntax check via `zsh -n` ──────────
@@ -315,9 +321,12 @@ run_cli remove --yes z_tagged_b 2>/dev/null || true
 
 # ─── Z-007: zsh shell uninstall removes loader ───────────────────
 UNINSTALL_OUT=""
-if UNINSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" shell uninstall zsh 2>&1)"; then
-  if [[ -f "$TEMP_ZSHRC" ]]; then
-    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_ZSHRC" 2>/dev/null || echo 0)"
+UNINSTALL_RC=0
+UNINSTALL_OUT="$(HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell uninstall zsh 2>&1)" || UNINSTALL_RC=$?
+if [[ $UNINSTALL_RC -eq 0 ]]; then
+  INSTALL_ZSHRC="$INSTALL_CONFIG/.zshrc"
+  if [[ -f "$INSTALL_ZSHRC" ]]; then
+    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$INSTALL_ZSHRC" 2>/dev/null || echo 0)"
     if [[ "$RESIDUE_COUNT" -eq 0 ]]; then
       record_result "Z-007" "zsh shell uninstall removes loader" "PASS" \
         "shell uninstall clears loader from .zshrc" "residue_count=$RESIDUE_COUNT" "file"
@@ -335,7 +344,7 @@ elif echo "$UNINSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInst
     "shell uninstall not available: $UNINSTALL_OUT" "stdout"
 else
   record_result "Z-007" "zsh shell uninstall removes loader" "FAIL" \
-    "shell uninstall clears loader from .zshrc" "exit $?: $UNINSTALL_OUT" "stdout"
+    "shell uninstall clears loader from .zshrc" "exit $UNINSTALL_RC: $UNINSTALL_OUT" "stdout"
 fi
 
 # ─── Manual-only checks — explicitly marked ──────────────────────
