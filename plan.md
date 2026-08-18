@@ -1288,11 +1288,11 @@ GitHub Actions **能**替代本地的部分：编译、单元测试、Shell 集�
 - [x] 提交 `chore: initialize Rust workspace`。
 
 - [x] 已完成：Workspace manifests、core smoke test、bundled SQLite、依赖方向、Linux/Windows fast CI、fs4 独立进程锁测试和 Tauri Linux 依赖文档。
-- [x] 已完成：GUI `package-lock.json` 已提交，Linux/Windows GUI jobs 使用 `npm ci` 与 pinned npm cache；CI verification run pending after this commit.
+- [x] 已完成：GUI `package-lock.json` 已提交，Linux/Windows GUI jobs 使用 `npm ci` 与 pinned npm cache；fast CI `32089342208` 通过.
 
 Task 1 CI enhancements adopted:
 - Rust cache: implemented with `Swatinem/rust-cache` in fast and integration workflows.
-- npm cache: deferred until GUI jobs enter CI; no frontend dependency install exists in the current workspace.
+- npm cache: GUI lockfile and pinned npm cache are active in `ci.yml`; fast CI `32089342208` passed.
 - Strict isolation: implemented with temporary HOME/config paths and CI assertions.
 - Independent-process lock test: implemented in `aliasmgr-tests` and the integration matrix.
 - Slow integration matrix: implemented in `integration.yml` for Linux and Windows lock/core coverage.
@@ -1687,7 +1687,7 @@ Task 1 CI enhancements adopted:
 
 | Task | 状态 | 证据与未完成边界 |
 |---|---|---|
-| 1 / 1.1 | 部分完成，CI 已验证 | workspace、bundled SQLite、隔离、缓存、独立进程锁和 fast/integration workflow 已验证；GUI npm cache 仍待 GUI job。 |
+| 1 / 1.1 | 部分完成，CI 已验证 | workspace、bundled SQLite、隔离、Rust/npm 缓存、独立进程锁和 fast/integration workflow 已验证；GUI npm cache 由 fast CI `32089342208` 验证。 |
 | 2 | 已实现并 CI 验证 | `model.rs`、`record_checksum`、序列化和 workspace CI；GUI 依赖项不在本阶段。 |
 | 3 | 已实现并 CI 验证 | validation、PowerShell 保留名基础校验、case-fold 查询和存储入口测试；真实用户保留 alias discovery 仍是环境边界。 |
 | 4 | 部分完成，CI 已验证 | CRUD、迁移备份、SchemaTooNew、checksum、冲突语义和 PRAGMA 已验证；NFS/CIFS/WSL 识别及 `UnreliableFilesystem` 仍未实现。 |
