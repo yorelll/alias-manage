@@ -1,42 +1,42 @@
-# Task 21-2 Human-Assisted Acceptance
+# Task 21-2 人工辅助验收
 
-This is the manual acceptance track for the release boundary. Do not infer these results from CI. Run the platform-specific documents on clean or dedicated machines and return the completed matrix plus feedback using `feedback-template.md`.
+这是发布边界的人工验收轨道。不得从 CI 推断人工结果。请在干净机器、专用用户或临时配置目录上执行对应平台手册，并返回填写完成的 `test-matrix.md`，以及每个 `FAIL`、`BLOCKED`、`EXPECTED-LIMITATION` 案例对应的 `feedback-template.md` 条目。
 
-## Result values
+## 结果值
 
-Use exactly one result per case:
+每个案例必须且只能使用一个结果：
 
-- `PASS`: expected result observed.
-- `FAIL`: implementation or release defect observed.
-- `BLOCKED`: environment prevented execution; include the exact blocker.
-- `EXPECTED-LIMITATION`: behavior matches documented limitation.
-- `NOT-APPLICABLE`: case cannot apply to the tested platform; explain why.
+- `PASS`：观察到预期结果。
+- `FAIL`：发现实现或发布缺陷。
+- `BLOCKED`：环境阻止执行；必须写明准确阻塞原因。
+- `EXPECTED-LIMITATION`：行为符合已文档化限制。
+- `NOT-APPLICABLE`：案例不适用于当前平台；必须解释原因。
 
-## Safety before testing
+## 测试前安全要求
 
-- Use a dedicated temporary user/profile/configuration area where possible.
-- Do not paste complete profiles, environment dumps, tokens, passwords, API keys, or private target contents into reports.
-- Sanitize usernames and machine-specific paths in screenshots/logs.
-- Record OS, architecture, Shell/version, application/installer version, commit or artifact SHA256, and configuration directory.
-- Stop immediately on unexpected deletion, profile corruption, secret exposure, or data loss; mark `FAIL` and preserve evidence.
+- 尽量使用专用临时用户、Profile、RC、配置目录和目标文件。
+- 不要在报告中粘贴完整 Profile、环境变量转储、Token、密码、API Key 或私有目标内容。
+- 对截图、日志和路径中的用户名、机器名、临时目录进行脱敏。
+- 记录操作系统、架构、Shell/版本、应用或安装包版本、commit 或 artifact SHA256，以及脱敏后的配置目录。
+- 如果出现意外删除、Profile 损坏、秘密泄露或数据丢失，立即停止，标记 `FAIL` 并保留证据。
 
-## Case execution rule
+## 案例执行规则
 
-The platform manuals are instructions, not test results. Leave `Actual`, `Result`, and `Evidence` blank until a human runs the case. A CI run, source inspection, or frontend build may support an automated boundary but cannot produce `PASS` for a manual case.
+平台手册只是操作说明，不是测试结果。人工执行前，`Actual`、`Result`、`Evidence` 必须保持空白。CI、源代码检查、前端构建或自动化测试可以证明自动化边界，但不能为人工案例产生 `PASS`。
 
-## Feedback submission
+## 反馈提交
 
-Return `test-matrix.md` with every executed case filled in, plus `feedback-template.md` entries for every FAIL/BLOCKED/EXPECTED-LIMITATION result. The agent will review the report before changing any release checkbox.
+请返回填写完成的 `test-matrix.md`，并为每个 `FAIL`、`BLOCKED`、`EXPECTED-LIMITATION` 案例复制填写 `feedback-template.md`。在审阅报告之前，不会据此修改发布复选框。
 
-Manual acceptance does not automatically authorize merge, tag, release, signing, or publishing.
+人工验收不自动授权合并、打 tag、发布、签名或推送。
 
-## Test groups
+## 测试组
 
-- Linux: `linux-clean-machine.md`
-- Windows PowerShell 5.1: `windows-powershell51.md`
-- Windows PowerShell 7: `windows-powershell7.md`
-- Bash/Zsh user configuration: `bash-zsh-user-config.md`
-- GUI: `gui-workflow.md`
-- Package/install lifecycle: `package-install-lifecycle.md`
+- Linux：`linux-clean-machine.md`
+- Windows PowerShell 5.1：`windows-powershell51.md`
+- Windows PowerShell 7：`windows-powershell7.md`
+- Bash/Zsh 用户配置：`bash-zsh-user-config.md`
+- GUI：`gui-workflow.md`
+- 安装包/安装生命周期：`package-install-lifecycle.md`
 
-The same scenario must be repeated independently for PowerShell 5.1 and 7; one result never substitutes for the other.
+PowerShell 5.1 与 7 必须独立重复相同场景；一个版本的结果不能替代另一个版本。

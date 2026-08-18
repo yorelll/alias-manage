@@ -1,41 +1,41 @@
-# Task 21-2 Package and Install Lifecycle Acceptance
+# Task 21-2 安装包和安装生命周期人工验收
 
-Run only when actual package/installer artifacts are supplied. Do not treat the unsigned source archive as an installer. Use disposable Linux/Windows environments and preserve before/after snapshots of unrelated configuration.
+只有实际提供安装包/安装器 artifact 时执行。不要把 unsigned source archive 当成安装包。使用一次性 Linux/Windows 环境，并保存无关配置的前后快照。
 
-For each case record platform/architecture, package/artifact version and SHA256, installer type, sanitized config paths, Actual, Result, Evidence, reproduction notes, and redaction confirmation.
+每个案例记录平台/架构、安装包类型、版本和 SHA256、脱敏配置路径、实际结果、结果枚举、证据、复现说明和脱敏确认。
 
-## PKG-001: clean package install
+## PKG-001：干净安装包安装
 
-1. Verify the supplied package checksum against the release artifact.
-2. Install in a disposable user/environment.
-3. Snapshot unrelated profiles/config before and after.
-4. Start the application and record version.
+1. 用 release artifact SHA256 校验提供的安装包。
+2. 在临时用户/环境安装。
+3. 对无关 Profile/配置保存前后快照。
+4. 启动应用并记录版本。
 
-Expected: installation succeeds without modifying unrelated config; application starts and uses the intended config root.
+预期：安装不修改无关配置；应用启动并使用预期配置根目录。
 
-If no package exists: Result `NOT-APPLICABLE` or `BLOCKED`, with the missing artifact recorded.
+如果没有安装包：标记 `NOT-APPLICABLE` 或 `BLOCKED`，写明缺少 artifact。
 
-## PKG-002: upgrade and rollback
+## PKG-002：升级和回滚
 
-1. Install the previous candidate and create disposable aliases/configuration.
-2. Upgrade to the candidate artifact.
-3. Verify aliases, generated files, backups, schema, and settings.
-4. Roll back if supported and repeat verification.
+1. 安装旧候选并创建临时别名/配置。
+2. 升级到当前 artifact。
+3. 检查别名、生成文件、备份、schema 和设置。
+4. 如果支持，回滚并重复检查。
 
-Expected: state survives upgrade; rollback restores documented state; referenced targets remain unchanged.
+预期：升级保留状态；回滚恢复文档化状态；目标保留。
 
-## PKG-003: postrm/MSI hooks
+## PKG-003：postrm/MSI hook
 
-1. Run Linux postrm or Windows MSI uninstall in a disposable account.
-2. Observe whether the hook is non-interactive and whether it only handles the documented cleanup boundary.
-3. Verify no target file, unmanaged profile line, or unrelated config is deleted.
+1. 在临时账户运行 Linux postrm 或 Windows MSI 卸载。
+2. 检查 hook 是否非交互，以及是否只执行文档化清理边界。
+3. 确认没有删除目标、无关 Profile 行或无关配置。
 
-Expected: hooks never prompt in package-manager context, never delete referenced targets, and direct users to explicit Alias Manager cleanup when required.
+预期：hook 不在包管理器上下文中等待输入，不删除目标，并在需要时引导显式 Alias Manager 清理。
 
-## PKG-004: unmanaged content
+## PKG-004：非托管内容
 
-1. Put sentinel content in unrelated profile files and unrelated config directories.
-2. Install, upgrade, uninstall, and purge in separate trials.
-3. Compare sanitized hashes and line counts.
+1. 在无关 Profile 和无关配置目录放置 sentinel 内容。
+2. 分别安装、升级、卸载和 purge。
+3. 比较脱敏 hash 和行数。
 
-Expected: unmanaged content remains byte-for-byte unchanged or any documented normalization is explicitly reported.
+预期：非托管内容保持不变；任何文档化规范化都必须明确报告。

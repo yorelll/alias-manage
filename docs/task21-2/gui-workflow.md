@@ -1,77 +1,77 @@
-# Task 21-2 GUI Workflow Acceptance
+# Task 21-2 GUI 工作流人工验收
 
-Run on Linux and Windows separately using the candidate GUI artifact. CI frontend tests do not substitute for real-window, visual, accessibility, or runtime persistence acceptance. Record OS/architecture, GUI/app version, artifact SHA256, sanitized config path, window/display environment, Actual, Result, Evidence, reproduction notes, and redaction confirmation.
+必须在 Linux 和 Windows 分别运行候选 GUI artifact。CI 前端测试不能替代真实窗口、视觉、可访问性和 runtime persistence 验收。记录系统/架构、GUI 版本、artifact SHA256、脱敏配置路径、显示环境、实际结果、结果枚举、证据、复现说明和脱敏确认。
 
-## GUI-001/GUI-002: launch/status/navigation
+## GUI-001/GUI-002：启动、状态和导航
 
-1. Launch the artifact.
-2. Verify the status drawer shows version, detected Shell, and config directory.
-3. Navigate Aliases, Sync, Doctor, and Settings.
+1. 启动 artifact。
+2. 确认状态抽屉显示版本、检测到的 Shell 和配置目录。
+3. 依次进入 Aliases、Sync、Doctor、Settings。
 
-Expected: window launches; status values are accurate; navigation does not crash or lose draft state.
+预期：窗口启动；状态准确；导航不崩溃且不丢草稿。
 
-## GUI-003/GUI-004: table/search/facets
+## GUI-003/GUI-004：表格、搜索和分面
 
-1. Create aliases with descriptions, target types, Shells, enabled/disabled states, and tags.
-2. Verify table fields, long-description tooltip, stable tag chips, and state indicators.
-3. Test text, fuzzy, field, limit, one-tag, multi-tag AND, and clear filters.
+1. 创建带描述、目标类型、Shell、enabled 状态和标签的别名。
+2. 检查字段、长描述 tooltip、稳定 tag chip 和状态。
+3. 测试文本、模糊、字段、limit、单标签、多标签 AND 和清除。
 
-Expected: fields render correctly; tooltip contains full description; filters are core-backed and clearing restores all records.
+预期：字段正确渲染；tooltip 显示完整描述；筛选由 core 执行；清除恢复全部。
 
-## GUI-005/GUI-006: wizard and validation
+## GUI-005/GUI-006：向导和校验
 
-1. Open Add and Edit wizard.
-2. Test basic/advanced sections, structured args, middle `{{args}}`, cwd, environment, Shell, tags, preview, Save, Cancel.
-3. Test invalid, reserved, exact-conflict, and PowerShell case-fold-conflict names.
+1. 打开 Add/Edit 向导。
+2. 测试基础/高级、结构化参数、中间 `{{args}}`、cwd、环境、Shell、标签、预览、Save、Cancel。
+3. 测试非法、保留、精确冲突和 PowerShell case-fold 冲突名称。
 
-Expected: invalid saves are rejected; draft remains; no secrets are rendered; Save persists only after confirmation.
+预期：非法保存拒绝；草稿保留；不渲染秘密；仅确认后保存。
 
-## GUI-007: Doctor
+## GUI-007：Doctor
 
-1. Open Doctor with missing generated file, stale state, and safe/manual findings available.
-2. Expand per-Shell details.
-3. Use safe actions and copy manual reload guidance.
+1. 准备缺失生成文件、过期状态和安全/人工 findings。
+2. 展开 per-Shell 详情。
+3. 使用安全操作并复制人工 reload 指引。
 
-Expected: severity grouping and actions are accurate; manual boundaries are labeled; no automatic Profile/ExecutionPolicy bypass occurs.
+预期：严重度、详情和操作准确；人工边界明确；不自动绕过 Profile/ExecutionPolicy。
 
-## GUI-008: import
+## GUI-008：导入
 
-1. Select disposable JSON/TOML input.
-2. Preview and verify no persistence occurred.
-3. Confirm and verify accepted records persist.
-4. Test malformed, unsupported, sensitive, relative-path, and conflict inputs.
+1. 选择临时 JSON/TOML。
+2. 预览并验证没有持久化。
+3. 确认并验证 accepted records 持久化。
+4. 测试 malformed、unsupported、sensitive、relative-path 和 conflict 输入。
 
-Expected: warnings/skips/unsupported records are retained in the report; failed confirmation preserves the draft/report.
+预期：warnings/skipped/unsupported 明确保留；确认失败保留报告和草稿。
 
-## GUI-009: settings
+## GUI-009：设置
 
-1. Edit backup/log retention, default Shell, config directory, and relative-path setting.
-2. Cancel and verify draft reset.
-3. Save and restart GUI.
-4. Test a read-only or invalid config path only in a disposable location.
+1. 修改备份/日志保留、默认 Shell、配置目录和 relative-path 设置。
+2. 取消并验证草稿重置。
+3. 保存并重启 GUI。
+4. 仅在临时目录测试只读/无效配置路径。
 
-Expected: saved settings persist; failures preserve draft and explain the boundary; real user config is not modified without explicit selection.
+预期：设置持久化；失败保留草稿并说明边界；不未经选择修改真实配置。
 
-## GUI-010: uninstall
+## GUI-010：卸载
 
-1. Create disposable alias and referenced target.
-2. Open retain and purge options.
-3. Verify risk summary and second confirmation.
-4. Execute one mode and inspect unrelated content/target bytes.
+1. 创建引用临时目标的别名。
+2. 分别打开 retain/purge 选项。
+3. 检查风险摘要和二次确认。
+4. 执行一个模式并检查无关内容和目标字节。
 
-Expected: retain/purge semantics are explicit; second confirmation is required; target files and unmanaged content remain.
+预期：retain/purge 明确；必须二次确认；目标和无关内容保留。
 
-## GUI-011: overrides
+## GUI-011：覆盖定义
 
-1. Create a recoverable and non-recoverable override record through the approved flow.
-2. Open override details and copy only sanitized metadata/recovery text.
+1. 通过批准流程创建可恢复和不可恢复 override record。
+2. 打开详情并只复制脱敏 metadata/恢复文本。
 
-Expected: recoverability is shown accurately; copying does not execute or expose private content.
+预期：recoverability 准确显示；复制不执行目标、不暴露私有内容。
 
-## GUI-012: accessibility/visual layout
+## GUI-012：可访问性和视觉布局
 
-1. Navigate using keyboard only.
-2. Verify focus order, visible focus, buttons, labels, and error announcements.
-3. Resize to minimum and wide window sizes; inspect table overflow, modal focus, and tooltip placement.
+1. 仅用键盘导航。
+2. 检查焦点顺序、可见焦点、标签、错误提示和公告。
+3. 调整到最小和宽窗口，检查表格、modal、tooltip 和关键操作。
 
-Expected: no trapped focus, clipped critical actions, unreadable contrast, or layout corruption. Record screenshots with sanitized paths/content.
+预期：无焦点陷阱、关键按钮裁切、不可读对比度或布局破坏；截图中的路径和内容必须脱敏。

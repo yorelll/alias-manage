@@ -1,63 +1,61 @@
-# Task 21-2 Bash/Zsh User Configuration Acceptance
+# Task 21-2 Bash/Zsh 用户配置人工验收
 
-Use a disposable user configuration or a dedicated dotfiles checkout. This document focuses on real RC/Profile ordering and user-owned configuration boundaries that CI cannot prove.
+使用专用临时用户、可信 dotfiles checkout 或一次性配置目录。重点检查真实 RC 顺序和用户-owned 配置边界，这些内容 CI 无法替代。每个案例记录 Shell 版本、脱敏 RC 路径、symlink 分类、artifact SHA256、实际结果、结果枚举、证据、复现说明和脱敏确认。
 
-For each case record Shell version, sanitized RC path, symlink target classification, artifact SHA256, Actual, Result, Evidence, reproduction notes, and redaction confirmation.
+## U-001：标记 loader 追加和幂等
 
-## U-001: marked loader append/idempotence
+1. 使用脱敏 hash/行数保存无关 RC 内容快照。
+2. Bash 和 Zsh 分别安装 loader 两次。
+3. 确认只有一个完整 marker pair 且位于末尾。
 
-1. Snapshot unrelated RC lines using a sanitized hash and line count.
-2. Install Bash and Zsh loaders separately, twice each.
-3. Confirm exactly one complete marker pair at the end.
+预期：标记块只出现一次；无关内容和行尾不变。
 
-Expected: only one marked block exists; unrelated content and line endings remain unchanged.
+## U-002：login 与非交互链
 
-## U-002: login and non-interactive chains
+1. 启动交互和非交互 Bash。
+2. 启动 login Bash，检查是否 source `.bashrc`，不要上传完整文件。
+3. 对 Zsh 重复检查 `.zprofile`/`.zshrc`。
 
-1. Start interactive and non-interactive Bash.
-2. Start login Bash and inspect whether it sources `.bashrc` without uploading the file.
-3. Repeat for Zsh and `.zprofile`/`.zshrc`.
+预期：交互限制符合文档；缺失 login chain 只提示人工操作，不自动修改。
 
-Expected: interactive behavior matches documented limitation; missing login chain is reported with manual guidance and not auto-modified.
+## U-003：oh-my-zsh 后置覆盖
 
-## U-003: oh-my-zsh/post-loader override
+1. 在隔离环境使用 oh-my-zsh（如环境允许）。
+2. 在 loader 后加载的插件中创建临时同名 alias。
+3. 运行 Doctor 或检查来源顺序，只记录文件和行号摘要。
 
-1. Use an isolated oh-my-zsh installation if available.
-2. Define a disposable same-name alias in a plugin loaded after the Alias Manager block.
-3. Run Doctor or inspect source order and record the overriding file/line only.
+预期：后置覆盖被报告；不自动竞争或重排用户插件。
 
-Expected: post-loader override is reported; Alias Manager does not reorder or silently overwrite plugin configuration.
+## U-004：RC symlink 和行尾
 
-## U-004: symlink RC and line endings
+1. 将 `.bashrc` 或 `.zshrc` 指向可信用户-owned target。
+2. 安装和移除 loader。
+3. 检查 symlink identity 和 target hash。
 
-1. Point `.bashrc` or `.zshrc` at a trusted user-owned symlink target.
-2. Install/remove the loader.
-3. Verify symlink identity and target content hash.
+预期：可信 symlink 保留且 target 就地修改；跨用户/全局可写链路阻止或要求明确分类。
 
-Expected: trusted symlink remains; target is edited in place; unsafe cross-user/global-writable links are blocked or require explicit classification.
+## U-005：手工修改和 checksum
 
-## U-005: manual generated edit/checksum
+1. 同步临时生成文件。
+2. 手工做无害修改。
+3. 再次同步并观察备份和决策提示。
 
-1. Sync a disposable generated file.
-2. Make a harmless manual edit.
-3. Sync again and observe backup and decision prompt/report.
+预期：产生备份；不静默丢弃用户修改；记录用户决策和证据。
 
-Expected: backup exists; user edit is not silently discarded; decision and evidence are recorded.
+## U-006：实时 tombstone/fingerprint
 
-## U-006: live tombstone/fingerprint cleanup
+1. 在同一交互会话创建并加载别名。
+2. 在应用中删除、禁用或改名。
+3. 在同一会话 reload。
+4. 重建同名用户定义后再次 reload。
 
-1. Create and load an alias in a single interactive session.
-2. Delete/disable/rename it in the application.
-3. Reload the generated file in the same session.
-4. Recreate a same-name user definition and repeat reload.
+预期：托管定义清除；用户重建定义保留并报告 skip；无法可靠获取 host fingerprint 时标记 `EXPECTED-LIMITATION` 或 `BLOCKED`。
 
-Expected: managed definitions are removed; user-recreated definitions are preserved and reported as skipped; if the host cannot expose a reliable definition fingerprint, mark EXPECTED-LIMITATION or BLOCKED.
+## U-007：覆盖恢复
 
-## U-007: override recovery
+1. 创建临时用户 alias/function。
+2. 进行明确确认的托管覆盖。
+3. 只检查脱敏 override metadata 和 recoverability。
+4. 分别测试可解析和不可解析定义。
 
-1. Define a disposable user alias/function.
-2. Force an explicitly confirmed managed replacement.
-3. Inspect only the sanitized override record and recoverability flag.
-4. Test parseable and intentionally unparseable definitions separately.
-
-Expected: parseable definition is recoverable; unparseable definition is marked non-recoverable; original text is never pasted into the report.
+预期：可解析定义为可恢复；不可解析定义为不可自动恢复；原始私有内容不进入报告。

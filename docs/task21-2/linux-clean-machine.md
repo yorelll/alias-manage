@@ -1,196 +1,112 @@
-# Task 21-2 Linux Clean-Machine Acceptance
+# Task 21-2 Linux 干净机器人工验收
 
-Run on a dedicated Linux user or disposable VM. Do not infer any result from CI. Record OS, architecture, application/artifact version, SHA256, sanitized config root, and Shell versions.
+在专用 Linux 用户或一次性 VM 上执行。不得从 CI 推断结果。记录操作系统、架构、应用/artifact 版本、SHA256、脱敏配置根目录和 Shell 版本。
 
-## Shared case record
+每个案例追加：实际结果、结果枚举、证据路径和摘要、复现说明、敏感数据脱敏确认。出现意外删除、Profile 损坏、秘密泄露或数据丢失立即停止并标记 `FAIL`。
 
-For every case below, append:
+## L-001：干净安装/启动/版本
 
-- Actual:
-- Result: PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE
-- Evidence: sanitized log/screenshot path and short command-output summary
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+1. 在临时用户和配置目录安装或解压候选 artifact。
+2. 启动 CLI 或 GUI 入口并请求版本。
+3. 记录版本和 SHA256。
 
-Stop immediately for unexpected deletion, profile corruption, secret exposure, or data loss.
+预期：应用启动并报告正确版本；无关配置不变。
 
-## L-001: clean install/start/version
+## L-002：原生别名生命周期
 
-- Platform/architecture: Linux / record architecture
-- Shell/version: record default Shell
-- Config/profile path: disposable path, sanitized
-- Preconditions: clean user/config directory; preserve a before snapshot of unrelated files
-- Steps:
-  1. Install or unpack the candidate artifact without using the real user configuration.
-  2. Start the CLI or GUI shell entry point and request the version.
-  3. Record the application version and artifact SHA256.
-- Expected: application starts; version is reported; no unrelated configuration changes occur.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+1. 添加带固定参数的无害原生别名。
+2. 列表和精确获取。
+3. 重启应用后重复检查。
 
-## L-002: add native alias lifecycle
+预期：目标、Shell、enabled、固定参数和名称持久化。
 
-- Preconditions: isolated config root; harmless executable such as `printf` or a disposable fixture
-- Steps:
-  1. Add a native alias with one fixed argument.
-  2. List aliases and retrieve the alias by exact name.
-  3. Restart the application and repeat list/get.
-- Expected: record persists with exact target, Shell, enabled state, and fixed arguments.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+## L-003：Python/JAR/切换目录
 
-## L-003: Python/JAR/change-directory targets
+1. 准备临时 Python 脚本、JAR（无 JDK 时记录阻塞）和工作目录。
+2. 创建并预览三种目标类型。
+3. 只执行无害目标。
 
-- Preconditions: disposable Python script, harmless JAR or documented unavailable JDK, and disposable working directory
-- Steps:
-  1. Create one alias for a Python script, one for `java -jar`, and one ChangeDirectory alias.
-  2. Validate and preview each generated definition.
-  3. Execute only harmless targets; do not use private target contents.
-- Expected: each target type validates and renders; ChangeDirectory changes only the intended current Shell directory.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+预期：目标类型校验和渲染正确；切换目录只影响当前 Shell。
 
-## L-004: exact argv boundaries
+## L-004：argv 精确边界
 
-- Preconditions: argument-dumper fixture or equivalent harmless dumper
-- Steps:
-  1. Test empty string, spaces, single/double quotes, CJK, backslash, `*`, and `?` as separate arguments.
-  2. Test fixed arguments plus user arguments.
-  3. Compare the dumper’s sanitized argv list element-by-element.
-- Expected: every boundary and empty element is retained; no shell expansion or concatenation occurs.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+1. 使用 argument dumper 分别测试空字符串、空格、单/双引号、CJK、反斜杠、`*`、`?`。
+2. 测试固定参数和用户参数。
+3. 逐元素比较脱敏 argv 输出。
 
-## L-005: args placeholder matrix
+预期：空元素和所有边界保留；无通配符展开、拼接或秘密输出。
 
-- Steps:
-  1. Test implicit trailing `{{args}}` behavior.
-  2. Test `fixed`, `{{args}}`, `post` middle insertion.
-  3. Test repeated placeholder, placeholder with `pass_args=false`, and escaped literal `{{{{args}}}}`.
-- Expected: valid forms preserve order; invalid forms reject without saving a record; draft/config remains unchanged.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+## L-005：`{{args}}` 矩阵
 
-## L-006: working directory/environment/tags
+1. 测试隐式末尾透传。
+2. 测试固定参数、`{{args}}`、后置参数的中间插入。
+3. 测试重复、`pass_args=false` 和转义字面量。
 
-- Steps:
-  1. Configure a disposable working directory and non-sensitive environment marker.
-  2. Run a harmless target that reports only the marker name, not secrets.
-  3. Add tags and inspect list/search results.
-- Expected: working directory and environment are applied; sensitive values never appear in logs/export; tags persist.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+预期：合法形式顺序正确；非法形式拒绝且不保存。
 
-## L-007/L-008: search, fuzzy, limit, tags
+## L-006：工作目录/环境/标签
 
-- Steps:
-  1. Create aliases with distinct names, descriptions, targets, and tags.
-  2. Test exact, substring, fuzzy, field, sort, descending, and limit queries.
-  3. Select one tag, multiple tags, then clear all tags.
-- Expected: ordering follows the requested query; multiple tags use AND; clearing restores the unfiltered set.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+1. 配置临时工作目录和非敏感环境标记。
+2. 运行只输出标记名称的无害目标。
+3. 添加标签并检查列表/搜索。
 
-## L-009/L-010: Bash and Zsh loader/reload
+预期：上下文生效；敏感值不进入日志/导出；标签持久化。
 
-- Preconditions: disposable `.bashrc` and `.zshrc`; install Zsh only if it is available and approved
-- Steps:
-  1. Install the marked loader twice.
-  2. Sync generated definitions.
-  3. Start isolated interactive Bash and Zsh sessions and explicitly source/reload.
-  4. Verify the alias and then remove the loader.
-- Expected: loader is appended once, generated aliases load, removal preserves unrelated lines, and a child process does not claim to mutate an already-open parent Shell.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+## L-007/L-008：搜索和标签分面
 
-## L-011/L-012: login/non-interactive and oh-my-zsh
+1. 创建不同名称、描述、目标和标签的别名。
+2. 测试精确、子串、模糊、字段、排序、descending、limit。
+3. 单选、多选 AND 和清除标签。
 
-- Steps:
-  1. Test interactive and non-interactive Bash/Zsh separately.
-  2. Test login chain behavior and whether `.bash_profile`/`.zprofile` sources the RC file.
-  3. If oh-my-zsh is installed, define a post-loader override and record its source/order.
-- Expected: documented interactive limitation is observed; post-loader override is reported, not silently reordered.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+预期：排序和结果符合请求；多标签为 AND；清除恢复全部。
 
-## L-013/L-014: symlink, line endings, manual edit
+## L-009/L-010：Bash/Zsh loader/reload
 
-- Steps:
-  1. Point a disposable RC symlink at a user-owned target and install the loader.
-  2. Verify the symlink remains and line endings are unchanged.
-  3. Manually edit a generated file, then request sync.
-- Expected: trusted symlink target is edited in place; manual edit is backed up and requires an explicit decision; no silent overwrite.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+1. 对临时 `.bashrc`、`.zshrc` 各安装两次 loader。
+2. 同步生成文件并启动隔离交互 Shell。
+3. 显式 source/reload 后检查别名，再移除 loader。
 
-## L-015/L-016: tombstone and recovery
+预期：只有一个末尾标记块；生成别名加载；无关行保留；不声称子进程改变父 Shell。
 
-- Steps:
-  1. Create and load an alias.
-  2. Disable, rename, and delete it in separate trials; reload each session.
-  3. Inject a harmless syntax/failure boundary and run recovery.
-  4. Inspect per-Shell status without printing full generated files.
-- Expected: managed residue is removed, user definitions are preserved, prepared state restores, and per-Shell success/failure is accurate.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+## L-011/L-012：login/非交互和 oh-my-zsh
 
-## L-017: JSON/TOML import
+1. 分别测试交互、非交互和 login Bash/Zsh。
+2. 检查 login chain 是否 source RC，不上传完整文件。
+3. 若存在 oh-my-zsh，创建后置同名定义并记录来源行。
 
-- Steps:
-  1. Export a disposable record to JSON and TOML.
-  2. Preview import and confirm no database write occurred.
-  3. Confirm import and verify persistence.
-  4. Test sensitive environment key, relative path, unsupported advanced record, and each conflict strategy.
-- Expected: preview is read-only; confirmation persists only accepted records; warnings/skips/unsupported items are explicit.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+预期：符合交互限制；缺失 login chain 给出人工提示；后置覆盖只报告不自动重排。
 
-## L-018/L-019: uninstall and upgrade/rollback
+## L-013/L-014：symlink、行尾和手工修改
 
-- Steps:
-  1. Create an alias referencing a disposable target and unrelated profile content.
-  2. Test retain and purge modes separately.
-  3. Apply the candidate upgrade and, if available, rollback to the prior artifact.
-  4. Verify target files and unrelated content.
-- Expected: retain/purge selection is honored; referenced targets and unmanaged content remain; config/generated state survives or restores as documented.
-- Actual:
-- Result:
-- Evidence:
-- Reproduction notes:
-- Sensitive-data redaction confirmed: yes/no
+1. 将 RC 指向可信用户-owned symlink target，安装/移除 loader。
+2. 检查 symlink identity 和行尾摘要。
+3. 手工修改生成文件后再次同步。
+
+预期：可信 symlink 就地修改；不可信路径阻止或要求明确分类；手工修改备份并要求决策。
+
+## L-015/L-016：tombstone 和恢复
+
+1. 创建并加载别名。
+2. 分别禁用、改名、删除并 reload 当前会话。
+3. 注入无害失败边界并执行恢复。
+4. 查看 per-Shell 状态摘要。
+
+预期：只清除托管残留；用户定义保留；prepared/committed 恢复和 per-Shell 状态准确。
+
+## L-017：JSON/TOML 导入
+
+1. 导出临时 JSON/TOML。
+2. 预览并确认没有数据库写入。
+3. 确认导入并检查持久化。
+4. 测试敏感变量、相对路径、unsupported 记录和冲突策略。
+
+预期：报告明确区分 imported/skipped/warnings/unsupported；预览只读。
+
+## L-018/L-019：卸载、升级和回滚
+
+1. 创建引用临时目标的别名和无关 Profile 内容。
+2. 分别测试 retain/purge。
+3. 执行候选升级和可用回滚。
+4. 检查目标、备份、配置和无关内容。
+
+预期：选择的清理执行；目标和无关内容保留；升级/回滚状态符合文档。
