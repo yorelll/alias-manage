@@ -295,7 +295,7 @@ if ($ps51_008_out -match "error|invalid|not allowed|must start|illegal") {
     Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
         "alias name starting with digit is rejected by CLI" `
         "invalid name check deferred to manual verification" "stdout"
-}'}]} has been updated successfully. }
+}
 
 # PS51-009: loader install/uninstall idempotence (static EXPECTED-LIMITATION in CI)
 # shell uninstall --dry-run may not be a valid subcommand in all builds
