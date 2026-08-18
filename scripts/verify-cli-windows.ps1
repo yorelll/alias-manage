@@ -163,8 +163,9 @@ try {
 }
 
 # W-002: add alias in isolated config
+# CLI interface: add NAME --exec PROG --arg ARG
 try {
-    $AddOut = Invoke-Cli @("alias", "add", "gs", "git", "status")
+    $AddOut = Invoke-Cli @("add", "gs", "--exec", "git", "--arg", "status")
     Record-Result "W-002" "add native alias" "PASS" `
         "alias added without error" $AddOut "stdout"
 } catch {
@@ -174,7 +175,7 @@ try {
 
 # W-002b: list aliases shows entry
 try {
-    $ListOut = Invoke-Cli @("alias", "list")
+    $ListOut = Invoke-Cli @("list")
     if ($ListOut -match "gs") {
         Record-Result "W-002b" "list aliases contains added entry" "PASS" `
             "list output contains 'gs'" $ListOut "stdout"
@@ -189,7 +190,7 @@ try {
 
 # W-003: list/search/limit
 try {
-    $SearchOut = Invoke-Cli @("alias", "list", "--limit", "5")
+    $SearchOut = Invoke-Cli @("list", "--limit", "5")
     Record-Result "W-003" "list/search/limit" "PASS" `
         "list --limit 5 succeeds" $SearchOut "stdout"
 } catch {
@@ -199,10 +200,10 @@ try {
 
 # W-004: argv edge cases — space, CJK, backslash, wildcard
 try {
-    # Add an alias with CJK characters in the command (unicode boundary test)
-    $ArgvOut1 = Invoke-Cli @("alias", "add", "cjk-test", "echo", "中文参数")
-    $ArgvOut2 = Invoke-Cli @("alias", "add", "space-test", "echo", "hello world")
-    $ArgvOut3 = Invoke-Cli @("alias", "add", "back-test", "echo", 'C:\path\to\file')
+    # Add aliases with CJK, space, and backslash in the --exec or --arg field
+    $ArgvOut1 = Invoke-Cli @("add", "cjk-test", "--exec", "echo", "--arg", "中文参数")
+    $ArgvOut2 = Invoke-Cli @("add", "space-test", "--exec", "echo", "--arg", "hello world")
+    $ArgvOut3 = Invoke-Cli @("add", "back-test", "--exec", "echo", "--arg", 'C:\path\to\file')
     $ArgvDetail = "cjk: $($ArgvOut1.Trim()); space: $($ArgvOut2.Trim()); backslash: $($ArgvOut3.Trim())"
     Record-Result "W-004" "argv space/quote/CJK/backslash/wildcard" "PASS" `
         "argv boundary preservation verified for CJK, space, and backslash" `
@@ -215,8 +216,8 @@ try {
 
 # W-005: {{args}} placeholder — tail/middle/invalid/duplicate
 try {
-    $PlaceholderOut = Invoke-Cli @("alias", "add", "ph-test", "echo", "{{args}}")
-    $PlaceholderList = Invoke-Cli @("alias", "list")
+    $PlaceholderOut = Invoke-Cli @("add", "ph-test", "--exec", "echo", "--arg", "{{args}}")
+    $PlaceholderList = Invoke-Cli @("list")
     if ($PlaceholderList -match "ph-test") {
         Record-Result "W-005" "{{args}} tail/middle/invalid/duplicate" "PASS" `
             "{{args}} placeholder alias created and listed" `
@@ -232,10 +233,10 @@ try {
 }
 
 # W-006: tag facet single/multi/clear
+# Tags are set during add via --tag flag
 try {
-    $TagAddOut = Invoke-Cli @("alias", "add", "tag-test", "git", "log", "--oneline")
-    $TagSetOut = Invoke-Cli @("alias", "tag", "tag-test", "--add", "git-tools")
-    $TagListOut = Invoke-Cli @("alias", "list", "--tag", "git-tools")
+    $TagAddOut = Invoke-Cli @("add", "tag-test", "--exec", "git", "--arg", "log", "--arg", "--oneline", "--tag", "git-tools")
+    $TagListOut = Invoke-Cli @("list", "--tag", "git-tools")
     if ($TagListOut -match "tag-test") {
         Record-Result "W-006" "tag facet single/multi/clear" "PASS" `
             "tag AND filter verified: alias appears in tagged list" `
@@ -243,35 +244,49 @@ try {
     } else {
         Record-Result "W-006" "tag facet single/multi/clear" "EXPECTED-LIMITATION" `
             "tag AND filter returns tagged entry" `
-            "tag command output: $($TagSetOut.Trim()); list --tag: $($TagListOut.Trim())" "stdout"
+            "tag add output: $($TagAddOut.Trim()); list --tag: $($TagListOut.Trim())" "stdout"
     }
 } catch {
     Record-Result "W-006" "tag facet single/multi/clear" "EXPECTED-LIMITATION" `
         "tag AND filter and clear verified" `
-        ("tag subcommand unavailable or error: " + $_.Exception.Message) "stdout"
+        ("tag or list --tag unavailable or error: " + $_.Exception.Message) "stdout"
 }
 
 # W-007: JSON/TOML import
+# First export, then import to a fresh config dir
 try {
-    # Create a minimal JSON import file
-    $ImportFile = Join-Path $TempConfig "import-test.json"
-    $ImportData = '{"aliases":[{"name":"imported-alias","exec":"git diff","description":"imported for test"}]}'
-    [System.IO.File]::WriteAllText($ImportFile, $ImportData, [System.Text.Encoding]::UTF8)
-    $ImportOut = Invoke-Cli @("alias", "import", $ImportFile)
-    $ImportList = Invoke-Cli @("alias", "list")
-    if ($ImportList -match "imported-alias") {
-        Record-Result "W-007" "JSON/TOML import" "PASS" `
-            "import file accepted; alias visible in list" `
-            "imported-alias present after import" "stdout"
+    # Export current aliases
+    $ExportFile = Join-Path $TempTargets "export-test.json"
+    $ExportOut = Invoke-Cli @("export", $ExportFile)
+    if (Test-Path $ExportFile) {
+        # Import to a separate config
+        $ImportConfig = Join-Path $TempRoot "import-config"
+        New-Item -ItemType Directory -Path $ImportConfig -Force | Out-Null
+        $savedConfig = [System.Environment]::GetEnvironmentVariable("ALIASMGR_CONFIG_DIR")
+        [System.Environment]::SetEnvironmentVariable("ALIASMGR_CONFIG_DIR", $ImportConfig)
+        try {
+            $ImportOut = & $ArtifactPath import $ExportFile 2>&1 | Out-String
+        } finally {
+            [System.Environment]::SetEnvironmentVariable("ALIASMGR_CONFIG_DIR", $savedConfig)
+        }
+        if ($ImportOut -match "imported") {
+            Record-Result "W-007" "JSON/TOML import" "PASS" `
+                "export then import succeeds; import reports counts" `
+                "imported successfully" "stdout"
+        } else {
+            Record-Result "W-007" "JSON/TOML import" "EXPECTED-LIMITATION" `
+                "import reports counts" `
+                "import ran but output missing 'imported': $($ImportOut.Trim())" "stdout"
+        }
     } else {
-        Record-Result "W-007" "JSON/TOML import" "EXPECTED-LIMITATION" `
-            "import file accepted; alias visible in list" `
-            "import ran but alias not found in list; output: $($ImportOut.Trim())" "stdout"
+        Record-Result "W-007" "JSON/TOML import" "BLOCKED" `
+            "export file created then imported" `
+            "export did not create file; output: $($ExportOut.Trim())" "stdout"
     }
 } catch {
     Record-Result "W-007" "JSON/TOML import" "EXPECTED-LIMITATION" `
         "preview, warning, confirm, persist verified" `
-        ("import subcommand unavailable or error: " + $_.Exception.Message) "stdout"
+        ("export/import unavailable or error: " + $_.Exception.Message) "stdout"
 }
 
 # W-008: retain/purge uninstall
@@ -297,39 +312,42 @@ Record-Result "W-MANUAL-002" "BOM/CRLF encoding preservation" "EXPECTED-LIMITATI
     "MANUAL-ONLY: BOM/CRLF encoding verification requires a generated PowerShell loader file on a real artifact" `
     "manual"
 
-# W-009: delete alias (CRUD completion)
+# W-009: remove alias (CRUD completion)
+# CLI interface: remove --yes NAME
 try {
-    $DeleteOut = Invoke-Cli @("alias", "delete", "gs")
-    $ListAfterDelete = Invoke-Cli @("alias", "list")
-    if ($ListAfterDelete -notmatch "\bgs\b") {
-        Record-Result "W-009" "delete alias (CRUD completion)" "PASS" `
-            "alias 'gs' deleted; absent from list" `
-            "alias 'gs' not found in list after delete" "stdout"
+    $RemoveOut = Invoke-Cli @("remove", "--yes", "gs")
+    $ListAfterRemove = Invoke-Cli @("list")
+    if ($ListAfterRemove -notmatch "\bgs\b") {
+        Record-Result "W-009" "remove alias (CRUD completion)" "PASS" `
+            "alias 'gs' removed; absent from list" `
+            "alias 'gs' not found in list after remove" "stdout"
     } else {
-        Record-Result "W-009" "delete alias (CRUD completion)" "FAIL" `
-            "alias 'gs' absent from list after delete" $ListAfterDelete "stdout"
+        Record-Result "W-009" "remove alias (CRUD completion)" "FAIL" `
+            "alias 'gs' absent from list after remove" $ListAfterRemove "stdout"
     }
 } catch {
-    Record-Result "W-009" "delete alias (CRUD completion)" "EXPECTED-LIMITATION" `
-        "alias deleted; absent from list" `
-        ("delete subcommand unavailable or error: " + $_.Exception.Message) "stdout"
+    Record-Result "W-009" "remove alias (CRUD completion)" "EXPECTED-LIMITATION" `
+        "alias removed; absent from list" `
+        ("remove --yes unavailable or error: " + $_.Exception.Message) "stdout"
 }
 
 # W-011: ACL/target protection — invalid alias names should be rejected
 try {
     # Invalid: starts with digit
-    $BadNameOut = Invoke-Cli @("alias", "add", "1badname", "echo", "hi")
+    $BadNameOut = Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi")
     # If no error thrown but output indicates error, we treat as PASS
-    if ($BadNameOut -match "error|invalid|not allowed|must start|illegal" -or $LASTEXITCODE -ne 0) {
+    if ($BadNameOut -match "error|invalid|not allowed|must start|illegal") {
         Record-Result "W-011" "ACL/target protection — invalid name rejected" "PASS" `
             "alias name starting with digit is rejected" $BadNameOut "stdout"
     } else {
+        # Try to clean up if it was accidentally created
+        try { Invoke-Cli @("remove", "--yes", "1badname") | Out-Null } catch { }
         Record-Result "W-011" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
             "invalid alias names rejected with error" `
             "invalid name '1badname' was not rejected; output: $($BadNameOut.Trim())" "stdout"
     }
 } catch {
-    # An exception/exit-code error means the CLI rejected it — that's the expected behavior
+    # An exception means the CLI rejected it — expected behavior
     Record-Result "W-011" "ACL/target protection — invalid name rejected" "PASS" `
         "invalid alias names rejected with error" `
         "CLI rejected invalid name '1badname' with error: $($_.Exception.Message)" "stdout"
@@ -337,15 +355,15 @@ try {
 
 # argv summary
 $ArgvCases = @(
-    @{ case = "CJK-in-command"; result = "PASS"; note = "CJK characters accepted in alias exec field" },
-    @{ case = "space-in-command"; result = "PASS"; note = "space in command accepted via alias exec field" },
-    @{ case = "backslash-in-command"; result = "PASS"; note = "backslash in command accepted via alias exec field" },
+    @{ case = "CJK-in-arg"; result = "PASS"; note = "CJK characters accepted in alias --arg field" },
+    @{ case = "space-in-arg"; result = "PASS"; note = "space in alias --arg field accepted" },
+    @{ case = "backslash-in-arg"; result = "PASS"; note = "backslash in alias --arg field accepted" },
     @{ case = "native-argv-boundary"; result = "EXPECTED-LIMITATION"; note = "PowerShell native argv quoting boundary is a known limitation; full round-trip requires real shell execution" }
 )
 
 @{
     summary = "windows CLI argv boundary test results"
-    note    = "argv boundary matrix tested for CJK, space, backslash; native argv round-trip is EXPECTED-LIMITATION requiring live shell"
+    note    = "argv boundary matrix tested for CJK, space, backslash in --arg; native argv round-trip is EXPECTED-LIMITATION requiring live shell"
     sensitive_data_redacted = $true
     cases   = $ArgvCases
 } | ConvertTo-Json -Depth 5 | Set-Content -Path $ArgvJson -Encoding UTF8

@@ -922,9 +922,9 @@ test("verify-powershell7.ps1 has no task4-hook placeholders", async () => {
 test("verify-cli-windows.ps1 implements CRUD add/list/delete (W-002/W-009)", async () => {
   const source = await readScript("verify-cli-windows.ps1");
   assert.match(source, /W-002\b/, "verify-cli-windows.ps1 must include W-002 add alias case");
-  assert.match(source, /W-009\b/, "verify-cli-windows.ps1 must include W-009 delete alias case");
-  assert.match(source, /alias.*add|Invoke-Cli.*add/, "verify-cli-windows.ps1 must invoke alias add");
-  assert.match(source, /alias.*delete|Invoke-Cli.*delete/, "verify-cli-windows.ps1 must invoke alias delete");
+  assert.match(source, /W-009\b/, "verify-cli-windows.ps1 must include W-009 remove alias case");
+  assert.match(source, /Invoke-Cli.*"add"|Invoke-Cli.*add/, "verify-cli-windows.ps1 must invoke add command");
+  assert.match(source, /Invoke-Cli.*"remove"|Invoke-Cli.*remove/, "verify-cli-windows.ps1 must invoke remove command");
 });
 
 test("verify-cli-windows.ps1 implements argv boundary case (W-004)", async () => {

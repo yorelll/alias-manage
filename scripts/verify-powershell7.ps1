@@ -219,40 +219,42 @@ try {
 }
 
 # PS7-002: full lifecycle CRUD/search/tag/sync/reload
+# CLI interface: add NAME --exec PROG --arg ARG; list; list --tag TAG; remove --yes NAME
 try {
     # add
-    $AddOut = Invoke-Cli @("alias", "add", "ps7-gs", "git", "status")
+    $AddOut = Invoke-Cli @("add", "ps7-gs", "--exec", "git", "--arg", "status")
     # list
-    $ListOut = Invoke-Cli @("alias", "list")
+    $ListOut = Invoke-Cli @("list")
     $addOk = $ListOut -match "ps7-gs"
-    # search
-    $SearchOut = Invoke-Cli @("alias", "list", "--limit", "10")
-    # tag
+    # search / limit
+    $SearchOut = Invoke-Cli @("list", "--limit", "10")
+    # tag: add with tag and filter
     $TagOk = $false
     try {
-        $TagOut = Invoke-Cli @("alias", "tag", "ps7-gs", "--add", "ps7-test")
-        $TagListOut = Invoke-Cli @("alias", "list", "--tag", "ps7-test")
-        $TagOk = $TagListOut -match "ps7-gs"
+        $TagAddOut = Invoke-Cli @("add", "ps7-tagged", "--exec", "echo", "--arg", "hi", "--tag", "ps7-test")
+        $TagListOut = Invoke-Cli @("list", "--tag", "ps7-test")
+        $TagOk = $TagListOut -match "ps7-tagged"
+        try { Invoke-Cli @("remove", "--yes", "ps7-tagged") | Out-Null } catch { }
     } catch { }
     # reload --print
     $ReloadOk = $false
     try {
-        $ReloadOut = Invoke-Cli @("shell", "reload", "--print")
+        $ReloadOut = Invoke-Cli @("reload", "--print")
         $ReloadOk = ($null -ne $ReloadOut)
     } catch { }
-    # delete
-    $DeleteOut = Invoke-Cli @("alias", "delete", "ps7-gs")
-    $ListAfter = Invoke-Cli @("alias", "list")
-    $deleteOk = $ListAfter -notmatch "\bps7-gs\b"
+    # remove
+    $RemoveOut = Invoke-Cli @("remove", "--yes", "ps7-gs")
+    $ListAfter = Invoke-Cli @("list")
+    $removeOk = $ListAfter -notmatch "\bps7-gs\b"
 
-    if ($addOk -and $deleteOk) {
+    if ($addOk -and $removeOk) {
         Record-Result "PS7-002" "full lifecycle CRUD/search/tag/sync/reload" "PASS" `
-            "add/list/tag/delete lifecycle complete in isolated PS7 environment" `
-            "add=ok list=ok tag=$TagOk reload=$ReloadOk delete=$deleteOk" "stdout"
+            "add/list/tag/remove lifecycle complete in isolated PS7 environment" `
+            "add=ok list=ok tag=$TagOk reload=$ReloadOk remove=$removeOk" "stdout"
     } else {
         Record-Result "PS7-002" "full lifecycle CRUD/search/tag/sync/reload" "FAIL" `
-            "add/list/delete lifecycle complete" `
-            "add_visible=$addOk delete_cleared=$deleteOk tag=$TagOk reload=$ReloadOk" "stdout"
+            "add/list/remove lifecycle complete" `
+            "add_visible=$addOk remove_cleared=$removeOk tag=$TagOk reload=$ReloadOk" "stdout"
     }
 } catch {
     Record-Result "PS7-002" "full lifecycle CRUD/search/tag/sync/reload" "FAIL" `
@@ -275,12 +277,14 @@ Record-Result "PS7-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITAT
     "ps7-builtin-alias-precedence"
 
 # PS7-008: ACL/target protection — invalid alias names should be rejected
+# CLI interface: add NAME --exec PROG --arg ARG
 try {
-    $BadNameOut = Invoke-Cli @("alias", "add", "1badname", "echo", "hi")
-    if ($BadNameOut -match "error|invalid|not allowed|must start|illegal" -or $LASTEXITCODE -ne 0) {
+    $BadNameOut = Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi")
+    if ($BadNameOut -match "error|invalid|not allowed|must start|illegal") {
         Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "PASS" `
             "alias name starting with digit is rejected by CLI" $BadNameOut "stdout"
     } else {
+        try { Invoke-Cli @("remove", "--yes", "1badname") | Out-Null } catch { }
         Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
             "invalid alias names rejected with error" `
             "invalid name '1badname' was not rejected; output: $($BadNameOut.Trim())" "stdout"
