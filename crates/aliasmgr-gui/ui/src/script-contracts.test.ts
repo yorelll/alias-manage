@@ -667,3 +667,220 @@ test("verify-zsh-linux.sh removes stale last-result before cp", async () => {
   assert.ok(cpIndex !== -1, "verify-zsh-linux.sh must cp result to /tmp/aliasmgr-zsh-last-result");
   assert.ok(rmIndex < cpIndex, "verify-zsh-linux.sh: rm -rf of last-result must precede the cp");
 });
+
+// ─── Task 3 source-contract tests ────────────────────────────────
+// Assert that placeholder "task3-hook" comments are fully replaced with
+// real implementations across all three Linux scripts.
+
+test("verify-cli-linux.sh has no task3-hook placeholders", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.doesNotMatch(
+    source,
+    /task3-hook/,
+    "verify-cli-linux.sh must not contain task3-hook placeholder markers"
+  );
+});
+
+test("verify-bash-linux.sh has no task3-hook placeholders", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.doesNotMatch(
+    source,
+    /task3-hook/,
+    "verify-bash-linux.sh must not contain task3-hook placeholder markers"
+  );
+});
+
+test("verify-zsh-linux.sh has no task3-hook placeholders", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  assert.doesNotMatch(
+    source,
+    /task3-hook/,
+    "verify-zsh-linux.sh must not contain task3-hook placeholder markers"
+  );
+});
+
+// verify-cli-linux.sh must implement ordered cases L-001 through L-019
+
+test("verify-cli-linux.sh implements version check (L-001)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-001/, "verify-cli-linux.sh must include L-001 version check");
+  assert.match(source, /--version/, "verify-cli-linux.sh must invoke --version");
+});
+
+test("verify-cli-linux.sh implements CRUD add/list (L-002)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-002/, "verify-cli-linux.sh must include L-002 add alias case");
+  assert.match(source, /alias add|add.*--exec/, "verify-cli-linux.sh must call add with --exec");
+  assert.match(source, /list/, "verify-cli-linux.sh must call list to verify added alias");
+});
+
+test("verify-cli-linux.sh implements argv boundary cases (L-004)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-004/, "verify-cli-linux.sh must include L-004 argv boundary case");
+  assert.match(source, /CJK|cjk|中文|unicode/i, "verify-cli-linux.sh must test CJK or unicode argv");
+});
+
+test("verify-cli-linux.sh implements placeholder validation (L-005)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-005/, "verify-cli-linux.sh must include L-005 placeholder case");
+  assert.match(source, /\{\{args\}\}/, "verify-cli-linux.sh must test {{args}} placeholder");
+});
+
+test("verify-cli-linux.sh implements search and tag filter (L-007/L-008)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-007/, "verify-cli-linux.sh must include L-007 search case");
+  assert.match(source, /L-008/, "verify-cli-linux.sh must include L-008 tag case");
+  assert.match(source, /--tag/, "verify-cli-linux.sh must test --tag filter");
+  assert.match(source, /find|--fuzzy/, "verify-cli-linux.sh must test find/search command");
+});
+
+test("verify-cli-linux.sh implements import/export (L-012-L-014)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-012/, "verify-cli-linux.sh must include L-012 export case");
+  assert.match(source, /L-013/, "verify-cli-linux.sh must include L-013 import case");
+  assert.match(source, /export/, "verify-cli-linux.sh must call export command");
+  assert.match(source, /import/, "verify-cli-linux.sh must call import command");
+});
+
+test("verify-cli-linux.sh implements target protection (L-016)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-016/, "verify-cli-linux.sh must include L-016 target protection case");
+  // Must test that invalid names are rejected (exit non-zero)
+  assert.match(
+    source,
+    /BAD_NAME_RC|BAD_DIGIT_RC|bad.*name|invalid.*name/i,
+    "verify-cli-linux.sh must test that invalid alias names are rejected"
+  );
+});
+
+test("verify-cli-linux.sh implements loader idempotence (L-019)", async () => {
+  const source = await readScript("verify-cli-linux.sh");
+  assert.match(source, /L-019/, "verify-cli-linux.sh must include L-019 loader idempotence case");
+  assert.match(
+    source,
+    /shell install/,
+    "verify-cli-linux.sh must call shell install to test idempotence"
+  );
+});
+
+// verify-bash-linux.sh must implement real B-001 through B-007 cases
+
+test("verify-bash-linux.sh implements loader install with isolated RC (B-001)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-001/, "verify-bash-linux.sh must include B-001 loader install case");
+  assert.match(
+    source,
+    /shell install bash/,
+    "verify-bash-linux.sh must invoke 'shell install bash'"
+  );
+  assert.match(
+    source,
+    /config\.toml|bash_rc_path/,
+    "verify-bash-linux.sh must configure isolated RC path via config.toml"
+  );
+});
+
+test("verify-bash-linux.sh implements loader idempotence (B-002)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-002/, "verify-bash-linux.sh must include B-002 idempotence case");
+  assert.match(
+    source,
+    /LOADER_COUNT|loader.*count|grep.*count/i,
+    "verify-bash-linux.sh must count loader occurrences to assert idempotence"
+  );
+});
+
+test("verify-bash-linux.sh implements reload guidance (B-003)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-003/, "verify-bash-linux.sh must include B-003 reload guidance case");
+  assert.match(source, /reload.*--print|--print.*reload/, "verify-bash-linux.sh must call reload --print");
+});
+
+test("verify-bash-linux.sh implements argv boundary matrix (B-004)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-004/, "verify-bash-linux.sh must include B-004 argv case");
+  assert.match(
+    source,
+    /CJK|cjk|中文|unicode/i,
+    "verify-bash-linux.sh must test CJK characters in argv"
+  );
+});
+
+test("verify-bash-linux.sh implements tag/search (B-005)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-005/, "verify-bash-linux.sh must include B-005 tag/search case");
+  assert.match(source, /--tag/, "verify-bash-linux.sh must test --tag filter");
+});
+
+test("verify-bash-linux.sh implements shell uninstall (B-006)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-006/, "verify-bash-linux.sh must include B-006 shell uninstall case");
+  assert.match(
+    source,
+    /shell uninstall bash/,
+    "verify-bash-linux.sh must invoke 'shell uninstall bash'"
+  );
+});
+
+test("verify-bash-linux.sh implements generated file syntax check (B-007)", async () => {
+  const source = await readScript("verify-bash-linux.sh");
+  assert.match(source, /B-007/, "verify-bash-linux.sh must include B-007 syntax check case");
+  assert.match(
+    source,
+    /bash\s+-n/,
+    "verify-bash-linux.sh must invoke 'bash -n' to syntax-check generated file"
+  );
+});
+
+// verify-zsh-linux.sh must implement real Z-001 through Z-007 cases
+
+test("verify-zsh-linux.sh implements loader install with isolated RC (Z-001)", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  assert.match(source, /Z-001/, "verify-zsh-linux.sh must include Z-001 loader install case");
+  assert.match(
+    source,
+    /shell install zsh/,
+    "verify-zsh-linux.sh must invoke 'shell install zsh'"
+  );
+  assert.match(
+    source,
+    /config\.toml|zsh_rc_path/,
+    "verify-zsh-linux.sh must configure isolated RC path via config.toml"
+  );
+});
+
+test("verify-zsh-linux.sh implements loader idempotence (Z-002)", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  assert.match(source, /Z-002/, "verify-zsh-linux.sh must include Z-002 idempotence case");
+  assert.match(
+    source,
+    /LOADER_COUNT|loader.*count|grep.*count/i,
+    "verify-zsh-linux.sh must count loader occurrences to assert idempotence"
+  );
+});
+
+test("verify-zsh-linux.sh implements reload guidance (Z-003)", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  assert.match(source, /Z-003/, "verify-zsh-linux.sh must include Z-003 reload guidance case");
+  assert.match(source, /reload.*--print|--print.*reload/, "verify-zsh-linux.sh must call reload --print");
+});
+
+test("verify-zsh-linux.sh implements generated zsh syntax check via zsh -n (Z-004)", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  assert.match(source, /Z-004/, "verify-zsh-linux.sh must include Z-004 syntax check case");
+  assert.match(
+    source,
+    /zsh\s+-n|\$ZSH_BIN\s+-n/,
+    "verify-zsh-linux.sh must invoke 'zsh -n' to syntax-check generated file"
+  );
+});
+
+test("verify-zsh-linux.sh implements zsh shell uninstall (Z-007)", async () => {
+  const source = await readScript("verify-zsh-linux.sh");
+  assert.match(source, /Z-007/, "verify-zsh-linux.sh must include Z-007 shell uninstall case");
+  assert.match(
+    source,
+    /shell uninstall zsh/,
+    "verify-zsh-linux.sh must invoke 'shell uninstall zsh'"
+  );
+});

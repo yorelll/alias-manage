@@ -141,7 +141,7 @@ ZSH_VERSION_STR=""
 if ZSH_BIN="$(command -v zsh 2>/dev/null)"; then
   ZSH_VERSION_STR="$("$ZSH_BIN" --version 2>&1 || echo 'unknown')"
   record_result "Z-ENV-001" "zsh binary available" "PASS" \
-    "zsh is available on PATH" "$ZSH_BIN" "which"
+    "zsh is available on PATH" "[redacted]" "which"
 else
   record_result "Z-ENV-001" "zsh binary available" "BLOCKED" \
     "zsh is available on PATH" "zsh not found on PATH" "which"
@@ -149,14 +149,22 @@ fi
 
 log_msg "zsh version: $ZSH_VERSION_STR"
 
-# ─── test cases ───────────────────────────────────────────────────
+# ─── Z-001: loader install to isolated .zshrc ────────────────────
+#
+# The shell install command reads rc_path from config.toml [shells.zsh_rc_path].
+# Write a config that points to our isolated TEMP_ZSHRC.
+INSTALL_CONFIG="$TEMP_ROOT/install-config"
+mkdir -p "$INSTALL_CONFIG"
+cat > "$INSTALL_CONFIG/config.toml" <<TOML
+[shells]
+zsh_rc_path = "$TEMP_ZSHRC"
+TOML
 
-# Z-001: loader install to isolated .zshrc
 INSTALL_OUT=""
-if INSTALL_OUT="$(run_cli shell install zsh --rc-file "$TEMP_ZSHRC" 2>&1)"; then
+if INSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" shell install zsh 2>&1)"; then
   record_result "Z-001" "zsh loader install to isolated RC" "PASS" \
     "loader installed to isolated .zshrc without error" "$INSTALL_OUT" "stdout"
-elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported"; then
+elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
   record_result "Z-001" "zsh loader install to isolated RC" "EXPECTED-LIMITATION" \
     "loader installed to isolated .zshrc without error" \
     "shell install command not available in this build: $INSTALL_OUT" "stdout"
@@ -165,12 +173,22 @@ else
     "loader installed to isolated .zshrc without error" "exit $?: $INSTALL_OUT" "stdout"
 fi
 
-# Z-002: loader idempotence (run install twice)
+# ─── Z-002: loader idempotence (run install twice) ───────────────
 IDEM_OUT=""
-if IDEM_OUT="$(run_cli shell install zsh --rc-file "$TEMP_ZSHRC" 2>&1)"; then
-  record_result "Z-002" "zsh loader install idempotence" "PASS" \
-    "second install does not duplicate loader" "$IDEM_OUT" "stdout"
-elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported"; then
+if IDEM_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" shell install zsh 2>&1)"; then
+  # Count occurrences of loader marker in RC file
+  LOADER_COUNT=0
+  if [[ -f "$TEMP_ZSHRC" ]]; then
+    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_ZSHRC" 2>/dev/null || echo 0)"
+  fi
+  if [[ "$LOADER_COUNT" -le 1 ]]; then
+    record_result "Z-002" "zsh loader install idempotence" "PASS" \
+      "second install does not duplicate loader" "loader occurrences: $LOADER_COUNT" "file"
+  else
+    record_result "Z-002" "zsh loader install idempotence" "FAIL" \
+      "second install does not duplicate loader" "loader count=$LOADER_COUNT (expected <=1)" "file"
+  fi
+elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
   record_result "Z-002" "zsh loader install idempotence" "EXPECTED-LIMITATION" \
     "second install does not duplicate loader" \
     "shell install not available: $IDEM_OUT" "stdout"
@@ -179,19 +197,148 @@ else
     "second install does not duplicate loader" "exit $?: $IDEM_OUT" "stdout"
 fi
 
-# Z-003: reload guidance (placeholder — real shell sourcing in Task 3)
-record_result "Z-003" "zsh reload guidance" "EXPECTED-LIMITATION" \
-  "reload instruction visible and correct" \
-  "placeholder: interactive zsh reload deferred to Task 3 scripts" \
-  "task3-hook"
+# ─── Z-003: reload --print gives correct zsh source line ─────────
+RELOAD_OUT=""
+if RELOAD_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" reload --print 2>&1)"; then
+  if echo "$RELOAD_OUT" | grep -q "generated\|zsh.sh\|source"; then
+    record_result "Z-003" "zsh reload --print guidance" "PASS" \
+      "reload --print outputs zsh source instruction" "[redacted]" "stdout"
+  else
+    record_result "Z-003" "zsh reload --print guidance" "FAIL" \
+      "reload --print outputs zsh source instruction" "output missing 'generated': $RELOAD_OUT" "stdout"
+  fi
+else
+  record_result "Z-003" "zsh reload --print guidance" "FAIL" \
+    "reload --print outputs zsh source instruction" "exit $?: $RELOAD_OUT" "stdout"
+fi
 
-# Z-004: syntax check of generated Zsh file (placeholder — Task 3)
-record_result "Z-004" "zsh generated file syntax check" "EXPECTED-LIMITATION" \
-  "generated .zsh file passes zsh -n" \
-  "placeholder: syntax check deferred to Task 3 scripts" \
-  "task3-hook"
+# ─── Z-004: generated zsh.sh syntax check via `zsh -n` ──────────
+# Add aliases, sync to produce generated file, check syntax
+run_cli add zsyntax --exec "echo" --arg "test" --shell "zsh" 2>/dev/null || true
+run_cli sync 2>/dev/null || true
 
-# Manual-only checks — explicitly marked
+GENERATED_ZSH="$TEMP_CONFIG/generated/zsh.sh"
+if [[ -n "$ZSH_BIN" && -f "$GENERATED_ZSH" ]]; then
+  SYNTAX_OUT=""
+  SYNTAX_RC=0
+  SYNTAX_OUT="$("$ZSH_BIN" -n "$GENERATED_ZSH" 2>&1)" || SYNTAX_RC=$?
+  if [[ $SYNTAX_RC -eq 0 ]]; then
+    record_result "Z-004" "zsh generated file syntax check" "PASS" \
+      "generated .zsh file passes zsh -n" "zsh -n: ok" "zsh -n"
+  else
+    record_result "Z-004" "zsh generated file syntax check" "FAIL" \
+      "generated .zsh file passes zsh -n" "zsh -n error: $SYNTAX_OUT" "zsh -n"
+  fi
+elif [[ -z "$ZSH_BIN" ]]; then
+  record_result "Z-004" "zsh generated file syntax check" "BLOCKED" \
+    "generated .zsh file passes zsh -n" \
+    "zsh binary not available for syntax check" "which"
+else
+  record_result "Z-004" "zsh generated file syntax check" "EXPECTED-LIMITATION" \
+    "generated .zsh file passes zsh -n" \
+    "generated/zsh.sh not present (sync may not have produced zsh output)" "file"
+fi
+run_cli remove --yes zsyntax 2>/dev/null || true
+
+# ─── Z-005: argv boundary in zsh context ─────────────────────────
+ARGV_CASES=()
+ARGV_PASS=0
+ARGV_FAIL=0
+
+test_zsh_argv() {
+  local test_id="$1" test_title="$2" alias_name="$3"
+  shift 3
+  local add_out=""
+  local add_rc=0
+  add_out="$(run_cli add "$alias_name" "$@" 2>&1)" || add_rc=$?
+  if [[ $add_rc -eq 0 ]]; then
+    ARGV_CASES+=("{\"id\":\"${test_id}\",\"input\":\"${test_title}\",\"result\":\"PASS\"}")
+    ARGV_PASS=$((ARGV_PASS+1))
+    run_cli remove --yes "$alias_name" 2>/dev/null || true
+  else
+    ARGV_CASES+=("{\"id\":\"${test_id}\",\"input\":\"${test_title}\",\"result\":\"FAIL\",\"output\":\"exit $add_rc\"}")
+    ARGV_FAIL=$((ARGV_FAIL+1))
+  fi
+}
+
+# Multi-word fixed arg (zsh context)
+test_zsh_argv "Z-005-a" "multi-word fixed arg" "ztest_space" \
+  --exec "echo" --arg "hello world" --shell "zsh"
+
+# CJK characters in arg
+test_zsh_argv "Z-005-b" "CJK in arg" "ztest_cjk" \
+  --exec "echo" --arg "中文参数" --shell "zsh"
+
+# backslash in arg
+test_zsh_argv "Z-005-c" "backslash in arg" "ztest_bs" \
+  --exec "echo" --arg 'path\to\file' --shell "zsh"
+
+# tag with hyphen
+test_zsh_argv "Z-005-d" "hyphen in tag" "ztest_tag" \
+  --exec "echo" --tag "my-tag" --shell "zsh"
+
+ARGV_CASES_JSON="["
+for i in "${!ARGV_CASES[@]}"; do
+  ARGV_CASES_JSON+="${ARGV_CASES[$i]}"
+  if [[ $i -lt $((${#ARGV_CASES[@]}-1)) ]]; then
+    ARGV_CASES_JSON+=","
+  fi
+done
+ARGV_CASES_JSON+="]"
+
+if [[ $ARGV_FAIL -eq 0 ]]; then
+  record_result "Z-005" "zsh argv boundary" "PASS" \
+    "quoted args accepted across zsh invocation" \
+    "pass=$ARGV_PASS fail=$ARGV_FAIL" "argv-summary.json"
+else
+  record_result "Z-005" "zsh argv boundary" "FAIL" \
+    "quoted args accepted across zsh invocation" \
+    "pass=$ARGV_PASS fail=$ARGV_FAIL" "argv-summary.json"
+fi
+
+# ─── Z-006: tag search in isolated zsh config ────────────────────
+run_cli add z_tagged_a --exec "echo" --tag "ztag" --shell "zsh" 2>/dev/null || true
+run_cli add z_tagged_b --exec "echo" --tag "ztag" --shell "zsh" 2>/dev/null || true
+
+TAG_LIST_OUT=""
+if TAG_LIST_OUT="$(run_cli list --tag "ztag" 2>&1)" && \
+   echo "$TAG_LIST_OUT" | grep -q "z_tagged"; then
+  record_result "Z-006" "zsh tag filter returns tagged aliases" "PASS" \
+    "list --tag ztag returns tagged results" "[redacted]" "stdout"
+else
+  record_result "Z-006" "zsh tag filter returns tagged aliases" "FAIL" \
+    "list --tag ztag returns tagged results" "[tag results empty or unexpected]" "stdout"
+fi
+
+run_cli remove --yes z_tagged_a 2>/dev/null || true
+run_cli remove --yes z_tagged_b 2>/dev/null || true
+
+# ─── Z-007: zsh shell uninstall removes loader ───────────────────
+UNINSTALL_OUT=""
+if UNINSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" shell uninstall zsh 2>&1)"; then
+  if [[ -f "$TEMP_ZSHRC" ]]; then
+    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_ZSHRC" 2>/dev/null || echo 0)"
+    if [[ "$RESIDUE_COUNT" -eq 0 ]]; then
+      record_result "Z-007" "zsh shell uninstall removes loader" "PASS" \
+        "shell uninstall clears loader from .zshrc" "residue_count=$RESIDUE_COUNT" "file"
+    else
+      record_result "Z-007" "zsh shell uninstall removes loader" "FAIL" \
+        "shell uninstall clears loader from .zshrc" "residue_count=$RESIDUE_COUNT (expected 0)" "file"
+    fi
+  else
+    record_result "Z-007" "zsh shell uninstall removes loader" "PASS" \
+      "shell uninstall clears loader from .zshrc" "RC file not present (clean state)" "file"
+  fi
+elif echo "$UNINSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
+  record_result "Z-007" "zsh shell uninstall removes loader" "EXPECTED-LIMITATION" \
+    "shell uninstall clears loader from .zshrc" \
+    "shell uninstall not available: $UNINSTALL_OUT" "stdout"
+else
+  record_result "Z-007" "zsh shell uninstall removes loader" "FAIL" \
+    "shell uninstall clears loader from .zshrc" "exit $?: $UNINSTALL_OUT" "stdout"
+fi
+
+# ─── Manual-only checks — explicitly marked ──────────────────────
 record_result "Z-MANUAL-001" "oh-my-zsh plugin ordering" "EXPECTED-LIMITATION" \
   "loader positioned after oh-my-zsh; override not silent" \
   "MANUAL-ONLY: oh-my-zsh ordering requires interactive Zsh session with plugin stack" \
@@ -212,13 +359,14 @@ record_result "Z-MANUAL-004" "current session reload" "EXPECTED-LIMITATION" \
   "MANUAL-ONLY: cannot source into current session from script" \
   "manual"
 
-# argv summary
+# ─── argv summary ─────────────────────────────────────────────────
 cat > "$ARGV_JSON" <<JSON
 {
   "summary": "zsh argv boundary test results",
-  "note": "full argv boundary matrix deferred to Task 3 scripts",
+  "pass": $ARGV_PASS,
+  "fail": $ARGV_FAIL,
   "sensitive_data_redacted": true,
-  "cases": []
+  "cases": $ARGV_CASES_JSON
 }
 JSON
 

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**", ".github/workflows/integration.yml"]
+    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**", ".github/workflows/integration.yml", "scripts/verify-*-linux.sh"]
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -49,6 +49,9 @@ jobs:
           - os: windows-latest
             shell: pwsh
             test: cli_layers
+          - os: ubuntu-24.04
+            shell: bash
+            test: linux_verify_scripts
 
       # Linux package installation is isolated to the Zsh/oh-my-zsh contract jobs.
       # If the runner package mirror is unavailable, the job records an environment blocker.
@@ -119,6 +122,38 @@ jobs:
       - name: Run shell syntax tests
         if: matrix.test == 'bash' || matrix.test == 'zsh_shell' || matrix.test == 'oh_my_zsh_contract'
         run: cargo test -p aliasmgr-tests --test shell_syntax
+      - name: Build CLI binary for Linux verify scripts
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: cargo build -p aliasmgr-cli --release
+      - name: Install Zsh for Linux verify scripts
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Run verify-cli-linux.sh
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/verify-cli-linux.sh \
+            --artifact target/release/aliasmgr
+          cat /tmp/aliasmgr-last-result/verification-summary.json 2>/dev/null || true
+      - name: Run verify-bash-linux.sh
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/verify-bash-linux.sh \
+            --artifact target/release/aliasmgr
+          cat /tmp/aliasmgr-bash-last-result/verification-summary.json 2>/dev/null || true
+      - name: Run verify-zsh-linux.sh
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/verify-zsh-linux.sh \
+            --artifact target/release/aliasmgr
+          cat /tmp/aliasmgr-zsh-last-result/verification-summary.json 2>/dev/null || true
       - name: Run core tests
         run: cargo test -p aliasmgr-core
       - name: Assert isolated configuration on Linux
