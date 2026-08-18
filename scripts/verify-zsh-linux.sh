@@ -54,8 +54,12 @@ if [[ -z "$ARTIFACT_PATH" ]]; then
   exit 3
 fi
 
-if [[ ! -f "$ARTIFACT_PATH" ]] && [[ ! -x "$ARTIFACT_PATH" ]]; then
-  echo "[error] artifact not found or not executable: $ARTIFACT_PATH" >&2
+if [[ ! -f "$ARTIFACT_PATH" ]]; then
+  echo "[error] artifact not found: $ARTIFACT_PATH" >&2
+  exit 3
+fi
+if [[ ! -x "$ARTIFACT_PATH" ]]; then
+  echo "[error] artifact not executable: $ARTIFACT_PATH" >&2
   exit 3
 fi
 
