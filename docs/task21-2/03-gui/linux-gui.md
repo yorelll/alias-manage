@@ -131,10 +131,19 @@ aliasmgr disable gui-test-disabled
 
 ### 准备
 
-制造轻微异常（删除生成文件）以触发 Doctor 发现：
+> **警告：** 必须在专用测试用户账户下操作，绝不在主账户上执行本步骤。专用测试用户的配置目录不含生产数据，删除其中的生成文件不会影响主账户。
+
+制造轻微异常（删除专用测试用户的生成文件）以触发 Doctor 发现：
 
 ```bash
+# 仅在专用测试用户账户下执行；主账户请勿执行此操作
 rm -f ~/.config/aliasmgr/generated/aliases.bash
+```
+
+如果无法使用专用测试用户，可改为在隔离临时配置目录中制造异常：
+
+```bash
+rm -f $SMOKE_CFG/generated/aliases.bash
 ```
 
 ### 点击路径

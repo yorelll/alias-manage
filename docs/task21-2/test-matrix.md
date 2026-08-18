@@ -1,6 +1,6 @@
 # Task 21-2 人工验收测试矩阵
 
-每个实际执行的案例都必须填写 `Actual`、`Result` 和 `Evidence`。不得根据 CI 结果填写人工结果。每个案例的结果必须严格使用 `PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE`。
+每个实际执行的案例都必须填写实际结果（实际列）、结果枚举（结果列）和证据（截图路径、日志路径）。不得根据 CI 结果填写人工结果。每个案例的结果必须严格使用 `PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE`。
 
 ## 元数据字段说明
 
@@ -97,4 +97,4 @@
 
 ---
 
-`Actual`、`Result`、`Evidence` 只能由人工执行后填写。结果枚举必须严格使用 `PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE`。
+实际列、结果列及证据列（截图路径、日志路径）只能由人工执行后填写。结果枚举必须严格使用 `PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE`。

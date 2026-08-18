@@ -8,6 +8,12 @@
 
 ---
 
+## PS51-010：MSI/安装包 hook（PS51-010 专属说明）
+
+本手册涵盖测试矩阵中的 PS51-010 案例。PS51-010 验证 Windows 安装器/卸载器在 retain 和 purge 边界下的行为，与 PowerShell 5.1 Shell 集成验证（[../02-shell/windows-powershell51.md](../02-shell/windows-powershell51.md) 中的 PS51-009）独立执行。执行本手册中的 PKG-001 至 PKG-004 即覆盖 PS51-010 所需验证范围；请在矩阵 PS51-010 行填写对应结果。
+
+---
+
 ## 准备工作
 
 1. 确认有临时 Windows 账户（专用测试用户），不要在主账户执行安装测试。

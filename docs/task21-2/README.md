@@ -41,6 +41,13 @@
 
 使用真实 RC/Profile（或隔离等效环境），测试 loader 安装、reload、幂等性和卸载。不要使用主机上的生产配置——始终使用专用临时目录。
 
+各 Shell 的 loader 和卸载测试包含在以下手册对应章节中：
+
+- Linux Bash：[02-shell/linux-bash.md](02-shell/linux-bash.md)
+- Linux Zsh：[02-shell/linux-zsh.md](02-shell/linux-zsh.md)
+- Windows PowerShell 5.1：[02-shell/windows-powershell51.md](02-shell/windows-powershell51.md)
+- Windows PowerShell 7：[02-shell/windows-powershell7.md](02-shell/windows-powershell7.md)
+
 ### 第六步：Windows GUI 测试
 
 在 Windows 机器上启动 GUI artifact，按点击路径手册逐项验收。

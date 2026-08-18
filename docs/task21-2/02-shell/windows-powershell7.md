@@ -1,6 +1,6 @@
 # Windows PowerShell 7 Shell 集成验证手册
 
-涵盖案例：PS7-002 至 PS7-009
+涵盖案例：PS7-001 至 PS7-009
 
 **必须在 `pwsh`（PowerShell 7）下独立执行，不能复用 PowerShell 5.1 结果。**
 

@@ -320,7 +320,7 @@ chmod +x $SMOKE_BIN/aliasmgr
 
 ### 预期
 
-- 预览只读；确认后持久化；importated/skipped/warnings 有明确报告。
+- 预览只读；确认后持久化；imported/skipped/warnings 有明确报告。
 
 ---
 

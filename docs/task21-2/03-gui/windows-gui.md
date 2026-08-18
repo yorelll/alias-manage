@@ -119,10 +119,19 @@
 
 ### 准备
 
-制造一个轻微异常状态（如删除生成文件）以触发 Doctor 发现：
+> **警告：** 必须在专用测试用户账户下操作，绝不在主账户上执行本步骤。专用测试用户的配置目录不含生产数据，删除其中的生成文件不会影响主账户。
+
+制造一个轻微异常状态（删除专用测试用户的生成文件）以触发 Doctor 发现：
 
 ```powershell
+# 仅在专用测试用户账户下执行；主账户请勿执行此操作
 Remove-Item "$env:APPDATA\aliasmgr\generated\*.ps1" -Force -ErrorAction SilentlyContinue
+```
+
+如果无法使用专用测试用户，可改为在隔离临时配置目录中制造异常（将 `$PS51Cfg` 或 `$PS7Cfg` 替换为当前测试的临时目录变量）：
+
+```powershell
+Remove-Item "$PS51Cfg\generated\*.ps1" -Force -ErrorAction SilentlyContinue
 ```
 
 ### 点击路径
