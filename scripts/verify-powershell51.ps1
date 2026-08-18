@@ -279,6 +279,7 @@ Record-Result "PS51-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITA
 
 # PS51-008: ACL/target protection — invalid alias names should be rejected
 # CLI interface: add NAME --exec PROG --arg ARG
+$BadNameOut = ""
 try {
     $BadNameOut = Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi")
     if ($BadNameOut -match "error|invalid|not allowed|must start|illegal") {
@@ -297,20 +298,21 @@ try {
 }
 
 # PS51-009: loader install/uninstall idempotence
-$UninstallOut = ""
+$ps51UninstallResult = "EXPECTED-LIMITATION"
+$ps51UninstallActual = "uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell."
+$ps51UninstallEvidence = "ps51-uninstall-idempotence"
 try {
     # Attempt dry-run uninstall to verify idempotence
-    $UninstallOut = Invoke-Cli @("shell", "uninstall", "--dry-run")
-    Record-Result "PS51-009" "loader install/uninstall idempotence" "PASS" `
-        "uninstall --dry-run succeeds; no real profile modified" `
-        $UninstallOut "stdout"
+    $ps51UninstallOut = Invoke-Cli @("shell", "uninstall", "--dry-run")
+    $ps51UninstallResult = "PASS"
+    $ps51UninstallActual = [string]$ps51UninstallOut
+    $ps51UninstallEvidence = "stdout"
 } catch {
-    # If uninstall subcommand is unavailable, document as expected limitation
-    Record-Result "PS51-009" "loader install/uninstall idempotence" "EXPECTED-LIMITATION" `
-        "loader install/uninstall idempotence documented" `
-        ("uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell. Error: " + $_.Exception.Message) `
-        "ps51-uninstall-idempotence"
+    $ps51UninstallActual = "uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell. Error: " + $_.Exception.Message
 }
+Record-Result "PS51-009" "loader install/uninstall idempotence" $ps51UninstallResult `
+    "uninstall --dry-run succeeds; no real profile modified" `
+    $ps51UninstallActual $ps51UninstallEvidence
 
 # ConstrainedLanguage mode detection
 if ($LangMode -eq "ConstrainedLanguage") {
