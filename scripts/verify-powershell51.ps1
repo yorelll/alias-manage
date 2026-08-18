@@ -297,6 +297,7 @@ try {
 }
 
 # PS51-009: loader install/uninstall idempotence
+$UninstallOut = ""
 try {
     # Attempt dry-run uninstall to verify idempotence
     $UninstallOut = Invoke-Cli @("shell", "uninstall", "--dry-run")
@@ -307,7 +308,7 @@ try {
     # If uninstall subcommand is unavailable, document as expected limitation
     Record-Result "PS51-009" "loader install/uninstall idempotence" "EXPECTED-LIMITATION" `
         "loader install/uninstall idempotence documented" `
-        "uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell. Error: $($_.Exception.Message)" `
+        ("uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell. Error: " + $_.Exception.Message) `
         "ps51-uninstall-idempotence"
 }
 
