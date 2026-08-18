@@ -307,10 +307,9 @@ Record-Result "PS51-009" "loader install/uninstall idempotence" "EXPECTED-LIMITA
 
 # ConstrainedLanguage mode detection
 if ($LangMode -eq "ConstrainedLanguage") {
-    Record-Result "PS51-LANG-001" "ConstrainedLanguage mode detected" "EXPECTED-LIMITATION" `
-        "ConstrainedLanguage reported as explicit status; not bypassed" `
-        "ConstrainedLanguage mode active — some checks may not run" `
-        "SessionState.LanguageMode"
+    $langExpected = "ConstrainedLanguage reported as explicit status; not bypassed"
+    $langActual = "ConstrainedLanguage mode active — some checks may not run"
+    Record-Result "PS51-LANG-001" "ConstrainedLanguage mode detected" "EXPECTED-LIMITATION" $langExpected $langActual "SessionState.LanguageMode"
 }
 
 # argv summary — PS5.1 specific
