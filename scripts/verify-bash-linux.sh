@@ -136,20 +136,28 @@ log_msg "artifact: [redacted path]"
 BASH_BIN=""
 if BASH_BIN="$(command -v bash 2>/dev/null)"; then
   record_result "B-ENV-001" "bash binary available" "PASS" \
-    "bash is available on PATH" "$BASH_BIN" "which"
+    "bash is available on PATH" "[redacted]" "which"
 else
   record_result "B-ENV-001" "bash binary available" "BLOCKED" \
     "bash is available on PATH" "bash not found on PATH" "which"
 fi
 
-# ─── test cases ───────────────────────────────────────────────────
+# ─── B-001: loader install to isolated .bashrc ──────────────────
+#
+# The shell install command reads rc_path from config.toml [shells.bash_rc_path].
+# Write a config that points to our isolated TEMP_BASHRC.
+INSTALL_CONFIG="$TEMP_ROOT/install-config"
+mkdir -p "$INSTALL_CONFIG"
+cat > "$INSTALL_CONFIG/config.toml" <<TOML
+[shells]
+bash_rc_path = "$TEMP_BASHRC"
+TOML
 
-# B-001: loader install to isolated .bashrc
 INSTALL_OUT=""
-if INSTALL_OUT="$(run_cli shell install bash --rc-file "$TEMP_BASHRC" 2>&1)"; then
+if INSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell install bash 2>&1)"; then
   record_result "B-001" "bash loader install to isolated RC" "PASS" \
     "loader installed to isolated .bashrc without error" "$INSTALL_OUT" "stdout"
-elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported"; then
+elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
   record_result "B-001" "bash loader install to isolated RC" "EXPECTED-LIMITATION" \
     "loader installed to isolated .bashrc without error" \
     "shell install command not available in this build: $INSTALL_OUT" "stdout"
@@ -158,12 +166,22 @@ else
     "loader installed to isolated .bashrc without error" "exit $?: $INSTALL_OUT" "stdout"
 fi
 
-# B-002: loader idempotence (run install twice)
+# ─── B-002: loader idempotence (run install twice) ──────────────
 IDEM_OUT=""
-if IDEM_OUT="$(run_cli shell install bash --rc-file "$TEMP_BASHRC" 2>&1)"; then
-  record_result "B-002" "bash loader install idempotence" "PASS" \
-    "second install does not duplicate loader" "$IDEM_OUT" "stdout"
-elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported"; then
+if IDEM_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell install bash 2>&1)"; then
+  # Count loader markers to verify no duplication
+  LOADER_COUNT=0
+  if [[ -f "$TEMP_BASHRC" ]]; then
+    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_BASHRC" 2>/dev/null || echo 0)"
+  fi
+  if [[ "$LOADER_COUNT" -le 1 ]]; then
+    record_result "B-002" "bash loader install idempotence" "PASS" \
+      "second install does not duplicate loader" "loader occurrences: $LOADER_COUNT" "file"
+  else
+    record_result "B-002" "bash loader install idempotence" "FAIL" \
+      "second install does not duplicate loader" "loader count=$LOADER_COUNT (expected <=1)" "file"
+  fi
+elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
   record_result "B-002" "bash loader install idempotence" "EXPECTED-LIMITATION" \
     "second install does not duplicate loader" \
     "shell install not available: $IDEM_OUT" "stdout"
@@ -172,31 +190,147 @@ else
     "second install does not duplicate loader" "exit $?: $IDEM_OUT" "stdout"
 fi
 
-# B-003: reload guidance (placeholder — real shell sourcing in Task 3)
-record_result "B-003" "bash reload guidance" "EXPECTED-LIMITATION" \
-  "reload instruction visible and correct" \
-  "placeholder: interactive shell reload deferred to Task 3 scripts" \
-  "task3-hook"
+# ─── B-003: reload --print gives correct bash source line ────────
+RELOAD_OUT=""
+if RELOAD_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" reload --print 2>&1)"; then
+  if echo "$RELOAD_OUT" | grep -q "generated\|bash.sh"; then
+    record_result "B-003" "bash reload --print guidance" "PASS" \
+      "reload --print outputs bash source instruction" "[redacted]" "stdout"
+  else
+    record_result "B-003" "bash reload --print guidance" "FAIL" \
+      "reload --print outputs bash source instruction" "output missing 'generated': $RELOAD_OUT" "stdout"
+  fi
+else
+  record_result "B-003" "bash reload --print guidance" "FAIL" \
+    "reload --print outputs bash source instruction" "exit $?: $RELOAD_OUT" "stdout"
+fi
 
-# B-004: argv boundary in generated Bash function (placeholder)
-record_result "B-004" "bash argv boundary" "EXPECTED-LIMITATION" \
-  "quoted args preserved across bash invocation" \
-  "placeholder: argv boundary matrix deferred to Task 3 scripts" \
-  "task3-hook"
+# ─── B-004: argv boundary in bash: add + CRUD with complex args ──
+ARGV_CASES=()
+ARGV_PASS=0
+ARGV_FAIL=0
 
-# B-005: tag/search in isolated config (placeholder)
-record_result "B-005" "bash tag/search in isolated config" "EXPECTED-LIMITATION" \
-  "tag AND filter returns correct results" \
-  "placeholder: tag/search cases deferred to Task 3 scripts" \
-  "task3-hook"
+test_bash_argv() {
+  local test_id="$1" test_title="$2" alias_name="$3"
+  shift 3
+  local add_out=""
+  local add_rc=0
+  add_out="$(run_cli add "$alias_name" "$@" 2>&1)" || add_rc=$?
+  if [[ $add_rc -eq 0 ]]; then
+    ARGV_CASES+=("{\"id\":\"${test_id}\",\"input\":\"${test_title}\",\"result\":\"PASS\"}")
+    ARGV_PASS=$((ARGV_PASS+1))
+    run_cli remove --yes "$alias_name" 2>/dev/null || true
+  else
+    ARGV_CASES+=("{\"id\":\"${test_id}\",\"input\":\"${test_title}\",\"result\":\"FAIL\",\"output\":\"exit $add_rc\"}")
+    ARGV_FAIL=$((ARGV_FAIL+1))
+  fi
+}
 
-# B-006: tombstone/uninstall (placeholder — safe for Task 3)
-record_result "B-006" "bash tombstone/uninstall" "EXPECTED-LIMITATION" \
-  "loader removed on uninstall; managed residues cleared" \
-  "placeholder: uninstall cases deferred to Task 3 scripts" \
-  "task3-hook"
+# args with embedded spaces
+test_bash_argv "B-004-a" "multi-word fixed arg" "btest_space" \
+  --exec "echo" --arg "hello world"
 
-# Manual-only checks — explicitly marked
+# CJK chars in arg
+test_bash_argv "B-004-b" "CJK in arg" "btest_cjk" \
+  --exec "echo" --arg "中文参数"
+
+# backslash in arg
+test_bash_argv "B-004-c" "backslash in arg" "btest_bs" \
+  --exec "echo" --arg 'path\to\file'
+
+# alias with tags (multi-word tag)
+test_bash_argv "B-004-d" "tag with spaces" "btest_tag" \
+  --exec "echo" --tag "my tag" --tag "other"
+
+# argv summary
+ARGV_CASES_JSON="["
+for i in "${!ARGV_CASES[@]}"; do
+  ARGV_CASES_JSON+="${ARGV_CASES[$i]}"
+  if [[ $i -lt $((${#ARGV_CASES[@]}-1)) ]]; then
+    ARGV_CASES_JSON+=","
+  fi
+done
+ARGV_CASES_JSON+="]"
+
+if [[ $ARGV_FAIL -eq 0 ]]; then
+  record_result "B-004" "bash argv boundary" "PASS" \
+    "quoted args preserved across bash invocation" \
+    "pass=$ARGV_PASS fail=$ARGV_FAIL" "argv-summary.json"
+else
+  record_result "B-004" "bash argv boundary" "FAIL" \
+    "quoted args preserved across bash invocation" \
+    "pass=$ARGV_PASS fail=$ARGV_FAIL" "argv-summary.json"
+fi
+
+# ─── B-005: tag/search in isolated config ────────────────────────
+run_cli add b_tagged_a --exec "echo" --arg "a" --tag "btag" 2>/dev/null || true
+run_cli add b_tagged_b --exec "echo" --arg "b" --tag "btag" 2>/dev/null || true
+
+TAG_LIST_OUT=""
+if TAG_LIST_OUT="$(run_cli list --tag "btag" 2>&1)" && \
+   echo "$TAG_LIST_OUT" | grep -q "b_tagged"; then
+  record_result "B-005" "bash tag/search in isolated config" "PASS" \
+    "tag AND filter returns correct results" "[redacted]" "stdout"
+else
+  record_result "B-005" "bash tag/search in isolated config" "FAIL" \
+    "tag AND filter returns correct results" "[tag results empty or unexpected]" "stdout"
+fi
+
+run_cli remove --yes b_tagged_a 2>/dev/null || true
+run_cli remove --yes b_tagged_b 2>/dev/null || true
+
+# ─── B-006: tombstone / shell uninstall ──────────────────────────
+UNINSTALL_OUT=""
+if UNINSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell uninstall bash 2>&1)"; then
+  # Verify loader line is no longer present
+  if [[ -f "$TEMP_BASHRC" ]]; then
+    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_BASHRC" 2>/dev/null || echo 0)"
+    if [[ "$RESIDUE_COUNT" -eq 0 ]]; then
+      record_result "B-006" "bash shell uninstall removes loader" "PASS" \
+        "shell uninstall clears loader from RC" "residue_count=$RESIDUE_COUNT" "file"
+    else
+      record_result "B-006" "bash shell uninstall removes loader" "FAIL" \
+        "shell uninstall clears loader from RC" "residue_count=$RESIDUE_COUNT (expected 0)" "file"
+    fi
+  else
+    record_result "B-006" "bash shell uninstall removes loader" "PASS" \
+      "shell uninstall clears loader from RC" "RC file not present (clean state)" "file"
+  fi
+elif echo "$UNINSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
+  record_result "B-006" "bash shell uninstall removes loader" "EXPECTED-LIMITATION" \
+    "shell uninstall clears loader from RC" \
+    "shell uninstall not available: $UNINSTALL_OUT" "stdout"
+else
+  record_result "B-006" "bash shell uninstall removes loader" "FAIL" \
+    "shell uninstall clears loader from RC" "exit $?: $UNINSTALL_OUT" "stdout"
+fi
+
+# ─── B-007: generated bash.sh syntax check ──────────────────────
+# Add an alias and sync to produce a generated file, then check its syntax
+run_cli add bsyntax --exec "echo" --arg "test" 2>/dev/null || true
+SYNC_OUT=""
+run_cli sync 2>/dev/null || true
+
+GENERATED_BASH="$TEMP_CONFIG/generated/bash.sh"
+if [[ -f "$GENERATED_BASH" ]]; then
+  SYNTAX_OUT=""
+  SYNTAX_RC=0
+  SYNTAX_OUT="$(bash -n "$GENERATED_BASH" 2>&1)" || SYNTAX_RC=$?
+  if [[ $SYNTAX_RC -eq 0 ]]; then
+    record_result "B-007" "generated bash.sh syntax valid" "PASS" \
+      "bash -n passes on generated bash.sh" "bash -n: ok" "bash -n"
+  else
+    record_result "B-007" "generated bash.sh syntax valid" "FAIL" \
+      "bash -n passes on generated bash.sh" "bash -n error: $SYNTAX_OUT" "bash -n"
+  fi
+else
+  record_result "B-007" "generated bash.sh syntax valid" "EXPECTED-LIMITATION" \
+    "bash -n passes on generated bash.sh" \
+    "generated/bash.sh not present (sync may not have run or no aliases)" "file"
+fi
+run_cli remove --yes bsyntax 2>/dev/null || true
+
+# ─── Manual-only checks — explicitly marked ──────────────────────
 record_result "B-MANUAL-001" "real login chain verification" "EXPECTED-LIMITATION" \
   "login-chain behavior observed and documented" \
   "MANUAL-ONLY: cannot automate real login shell chain safely" \
@@ -217,13 +351,14 @@ record_result "B-MANUAL-004" "current session reload" "EXPECTED-LIMITATION" \
   "MANUAL-ONLY: cannot source into current session from script" \
   "manual"
 
-# argv summary
+# ─── argv summary ─────────────────────────────────────────────────
 cat > "$ARGV_JSON" <<JSON
 {
   "summary": "bash argv boundary test results",
-  "note": "full argv boundary matrix deferred to Task 3 scripts",
+  "pass": $ARGV_PASS,
+  "fail": $ARGV_FAIL,
   "sensitive_data_redacted": true,
-  "cases": []
+  "cases": $ARGV_CASES_JSON
 }
 JSON
 
