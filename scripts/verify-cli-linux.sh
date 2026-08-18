@@ -48,8 +48,12 @@ if [[ -z "$ARTIFACT_PATH" ]]; then
   exit 3
 fi
 
-if [[ ! -f "$ARTIFACT_PATH" ]] && [[ ! -x "$ARTIFACT_PATH" ]]; then
-  echo "[error] artifact not found or not executable: $ARTIFACT_PATH" >&2
+if [[ ! -f "$ARTIFACT_PATH" ]]; then
+  echo "[error] artifact not found: $ARTIFACT_PATH" >&2
+  exit 3
+fi
+if [[ ! -x "$ARTIFACT_PATH" ]]; then
+  echo "[error] artifact not executable: $ARTIFACT_PATH" >&2
   exit 3
 fi
 
@@ -124,13 +128,6 @@ run_cli() {
   ALIASMGR_CONFIG_DIR="$TEMP_CONFIG" HOME="$TEMP_PROFILE" "$CLI" "$@" 2>&1
 }
 
-run_cli_rc() {
-  # run_cli_rc: capture exit code without set -e aborting
-  local _rc=0
-  ALIASMGR_CONFIG_DIR="$TEMP_CONFIG" HOME="$TEMP_PROFILE" "$CLI" "$@" 2>&1 || _rc=$?
-  return $_rc
-}
-
 # ─── test cases ───────────────────────────────────────────────────
 log_msg "=== verify-cli-linux.sh starting ==="
 log_msg "artifact: [redacted path]"
@@ -201,6 +198,20 @@ else
     "rename gs -> gs2 succeeds and is findable" "exit $?: $RENAME_OUT" "stdout"
 fi
 
+# L-003d: update alias exec/arg (full CRUD coverage)
+UPDATE_OUT=""
+UPDATE_VERIFY_OUT=""
+if UPDATE_OUT="$(run_cli update gs --exec "git" --arg "status" --arg "--short" 2>&1)" && \
+   UPDATE_VERIFY_OUT="$(run_cli get gs 2>&1)" && \
+   echo "$UPDATE_VERIFY_OUT" | grep -q "\-\-short\|short"; then
+  record_result "L-003d" "update alias exec/arg" "PASS" \
+    "update gs changes args; get reflects new value" "[redacted]" "stdout"
+else
+  record_result "L-003d" "update alias exec/arg" "FAIL" \
+    "update gs changes args; get reflects new value" \
+    "update_out=$UPDATE_OUT verify_out=[redacted]" "stdout"
+fi
+
 # ─── L-004: argv edge cases ─────────────────────────────────────
 ARGV_CASES=()
 ARGV_PASS=0
@@ -238,6 +249,28 @@ test_argv_alias "L-004-c" "backslash in arg" "argtest_bs" \
 test_argv_alias "L-004-d" "hyphen in alias name" "my-alias" \
   --exec "echo" --arg "test"
 
+# L-004-e: wildcard character in arg — verify '*' is stored verbatim, not glob-expanded
+# We pass the literal string '*.rs' as an --arg value; the CLI must preserve it as-is.
+WILDCARD_STORE_OUT=""
+WILDCARD_STORE_RC=0
+WILDCARD_STORE_OUT="$(run_cli add argtest_wild --exec "find" --arg "." --arg "*.rs" 2>&1)" || WILDCARD_STORE_RC=$?
+if [[ $WILDCARD_STORE_RC -eq 0 ]]; then
+  # Verify the stored arg still contains the literal asterisk
+  WILDCARD_GET_OUT=""
+  WILDCARD_GET_OUT="$(run_cli get argtest_wild 2>&1)" || true
+  if echo "$WILDCARD_GET_OUT" | grep -qF '*'; then
+    ARGV_CASES+=("{\"id\":\"L-004-e\",\"input\":\"wildcard in arg\",\"result\":\"PASS\"}")
+    ARGV_PASS=$((ARGV_PASS+1))
+  else
+    ARGV_CASES+=("{\"id\":\"L-004-e\",\"input\":\"wildcard in arg\",\"result\":\"FAIL\",\"output\":\"stored value missing asterisk\"}")
+    ARGV_FAIL=$((ARGV_FAIL+1))
+  fi
+  run_cli remove --yes argtest_wild 2>/dev/null || true
+else
+  ARGV_CASES+=("{\"id\":\"L-004-e\",\"input\":\"wildcard in arg\",\"result\":\"FAIL\",\"output\":\"exit: $WILDCARD_STORE_OUT\"}")
+  ARGV_FAIL=$((ARGV_FAIL+1))
+fi
+
 # Build argv cases JSON
 ARGV_CASES_JSON="["
 for i in "${!ARGV_CASES[@]}"; do
@@ -256,6 +289,46 @@ else
   record_result "L-004" "argv space/quote/CJK/backslash/wildcard" "FAIL" \
     "argv boundary preservation verified" \
     "pass=$ARGV_PASS fail=$ARGV_FAIL" "argv-summary.json"
+fi
+
+# ─── L-004-ENV: working-directory / env-isolation marker check ──
+# Verify the CLI uses our isolated config dir (ALIASMGR_CONFIG_DIR) and not the
+# real user's config.  Strategy: add a sentinel alias in a fresh isolated config
+# dir, then confirm it is found when using that dir and NOT found when using a
+# different empty dir.  Uses only harmless env vars already set in this script.
+ENV_CHECK_CONFIG_A="$TEMP_ROOT/env-check-a"
+ENV_CHECK_CONFIG_B="$TEMP_ROOT/env-check-b"
+mkdir -p "$ENV_CHECK_CONFIG_A" "$ENV_CHECK_CONFIG_B"
+
+ENV_ADD_OUT=""
+ENV_ADD_RC=0
+ENV_ADD_OUT="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" "$CLI" \
+  add aliasmgr_sentinel_test --exec "echo" --arg "sentinel" 2>&1)" || ENV_ADD_RC=$?
+
+if [[ $ENV_ADD_RC -eq 0 ]]; then
+  # Sentinel must appear in config A
+  ENV_LIST_A=""
+  ENV_LIST_A="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" "$CLI" list 2>&1)" || true
+  # Sentinel must NOT appear in config B (different, empty dir)
+  ENV_LIST_B=""
+  ENV_LIST_B="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_B" HOME="$TEMP_PROFILE" "$CLI" list 2>&1)" || true
+  if echo "$ENV_LIST_A" | grep -qF "aliasmgr_sentinel_test" && \
+     ! echo "$ENV_LIST_B" | grep -qF "aliasmgr_sentinel_test"; then
+    record_result "L-004-ENV" "working-dir/env isolation marker" "PASS" \
+      "CLI uses ALIASMGR_CONFIG_DIR; sentinel visible in config-A only" \
+      "found_in_A=yes found_in_B=no" "stdout"
+  else
+    record_result "L-004-ENV" "working-dir/env isolation marker" "FAIL" \
+      "CLI uses ALIASMGR_CONFIG_DIR; sentinel visible in config-A only" \
+      "found_in_A=$(echo "$ENV_LIST_A" | grep -qF aliasmgr_sentinel_test && echo yes || echo no) found_in_B=$(echo "$ENV_LIST_B" | grep -qF aliasmgr_sentinel_test && echo yes || echo no)" \
+      "stdout"
+  fi
+  ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" "$CLI" \
+    remove --yes aliasmgr_sentinel_test 2>/dev/null || true
+else
+  record_result "L-004-ENV" "working-dir/env isolation marker" "FAIL" \
+    "CLI uses ALIASMGR_CONFIG_DIR; sentinel visible in config-A only" \
+    "add sentinel failed: $ENV_ADD_OUT" "stdout"
 fi
 
 # ─── L-005: {{args}} placeholder ────────────────────────────────
@@ -553,12 +626,15 @@ INSTALL_OUT=""
 INSTALL_RC=0
 INSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
 if [[ $INSTALL_RC -eq 0 ]]; then
-  if grep -q "aliasmgr\|alias-manager\|generated" "$ISOLATED_BASHRC" 2>/dev/null; then
+  # Shell install must write the loader marker.  A success exit with no marker
+  # in the RC file means the install silently did nothing — that is a FAIL.
+  if grep -qF '# >>> Alias Manager >>>' "$ISOLATED_BASHRC" 2>/dev/null; then
     record_result "L-018" "shell install bash to isolated RC" "PASS" \
       "loader installed in isolated RC" "[redacted path]" "file"
   else
-    record_result "L-018" "shell install bash to isolated RC" "PASS" \
-      "loader installed in isolated RC (already present or empty)" "$INSTALL_OUT" "stdout"
+    record_result "L-018" "shell install bash to isolated RC" "FAIL" \
+      "loader installed in isolated RC" \
+      "shell install exited 0 but loader marker absent in RC file" "file"
   fi
 elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
   record_result "L-018" "shell install bash to isolated RC" "EXPECTED-LIMITATION" \
