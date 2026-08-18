@@ -193,13 +193,13 @@ Added durable `shell_state` round-trip coverage for applied revision, checksum, 
 
 Successful and failed per-Shell replacements now update SQLite `shell_state` after file replacement/failed rendering, while preserving independent Shell results.
 
-- [ ] **Step 3: Implement committed forward recovery**
+- [x] **Step 3: Implement committed forward recovery**
 
-Still incomplete: a committed journal does not yet rebuild missing generated files from a database snapshot; crash injection remains unimplemented.
+Committed journals now rebuild missing generated files from the SQLite snapshot using the journal target Shell and revision, then remove the recovered journal. Crash injection remains unimplemented.
 
 - [x] **Step 4: Verify and commit**
 
-Fast CI `32017853467` and integration `32017999024` passed Linux/Windows workspace and lock/CLI/Shell/PowerShell matrix. Do not claim crash injection or committed forward recovery.
+Fast CI `32020126900` and integration `32086715396` passed Linux/Windows workspace and lock/CLI/Shell/PowerShell matrix. Do not claim crash injection.
 
 ---
 
