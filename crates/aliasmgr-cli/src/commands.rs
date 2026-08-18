@@ -59,6 +59,7 @@ pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, Al
     Ok(true)
 }
 
+#[allow(dead_code)]
 pub fn shell_install_status(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
     let config = paths.load_config()?;
