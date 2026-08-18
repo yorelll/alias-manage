@@ -172,18 +172,19 @@ IDEM_OUT=""
 IDEM_RC=0
 IDEM_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
 if [[ $IDEM_RC -eq 0 ]]; then
-  # Count loader markers to verify no duplication
+  # Count occurrences of the unique START_MARKER to verify no duplication.
+  # "# >>> Alias Manager >>>" appears exactly once per install block.
   LOADER_COUNT=0
   INSTALL_BASHRC="$INSTALL_CONFIG/.bashrc"
   if [[ -f "$INSTALL_BASHRC" ]]; then
-    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$INSTALL_BASHRC" 2>/dev/null || echo 0)"
+    LOADER_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$INSTALL_BASHRC" 2>/dev/null || echo 0)"
   fi
   if [[ "$LOADER_COUNT" -le 1 ]]; then
     record_result "B-002" "bash loader install idempotence" "PASS" \
-      "second install does not duplicate loader" "loader occurrences: $LOADER_COUNT" "file"
+      "second install does not duplicate loader" "start-marker count: $LOADER_COUNT" "file"
   else
     record_result "B-002" "bash loader install idempotence" "FAIL" \
-      "second install does not duplicate loader" "loader count=$LOADER_COUNT (expected <=1)" "file"
+      "second install does not duplicate loader" "start-marker count=$LOADER_COUNT (expected <=1)" "file"
   fi
 elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
   record_result "B-002" "bash loader install idempotence" "EXPECTED-LIMITATION" \
