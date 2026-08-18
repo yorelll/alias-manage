@@ -139,15 +139,9 @@ function Invoke-Cli {
         $savedEnv[$key] = [System.Environment]::GetEnvironmentVariable($key)
         [System.Environment]::SetEnvironmentVariable($key, $CliEnv[$key])
     }
-    # Use SilentlyContinue to prevent PS5.1 ErrorRecord from 2>&1 becoming
-    # a terminating error under $ErrorActionPreference = 'Stop'
-    $savedEAP = $ErrorActionPreference
     try {
-        $ErrorActionPreference = 'SilentlyContinue'
-        $result = & $ArtifactPath @Arguments 2>&1 | Out-String
-        $result
+        & $ArtifactPath @Arguments 2>&1 | Out-String
     } finally {
-        $ErrorActionPreference = $savedEAP
         foreach ($key in $savedEnv.Keys) {
             [System.Environment]::SetEnvironmentVariable($key, $savedEnv[$key])
         }
@@ -284,22 +278,27 @@ Record-Result "PS51-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITA
     "ps51-builtin-alias-precedence"
 
 # PS51-008: ACL/target protection — invalid alias names should be rejected
-# PS5.1 strict-mode safe: cast command output before -match so a matching
-# collection cannot be passed accidentally as the result enum.
-$ps51_008_bad = [string](Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi"))
-if ($ps51_008_bad -match "error|invalid|not allowed|must start|illegal") {
-    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "PASS" `
-        "alias name starting with digit is rejected by CLI" `
-        "CLI rejected invalid alias name 1badname with error output" "stdout"
+# Temporarily allow native stderr to be captured without terminating PS5.1.
+$ps51_008_result = "EXPECTED-LIMITATION"
+$ps51_008_actual = "invalid name check deferred to manual verification"
+$ps51_008_out = ""
+$ErrorActionPreference = 'Continue'
+$ps51_008_out = [string](Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi"))
+$ErrorActionPreference = 'Stop'
+if ($ps51_008_out -match "error|invalid|not allowed|must start|illegal") {
+    $ps51_008_result = "PASS"
+    $ps51_008_actual = "CLI rejected invalid alias name 1badname"
 } else {
+    $ErrorActionPreference = 'Continue'
     Invoke-Cli @("remove", "--yes", "1badname") | Out-Null
-    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
-        "alias name starting with digit is rejected by CLI" `
-        "invalid name check deferred to manual verification" "stdout"
+    $ErrorActionPreference = 'Stop'
 }
+Record-Result "PS51-008" "ACL/target protection — invalid name rejected" $ps51_008_result `
+    "alias name starting with digit is rejected by CLI" `
+    $ps51_008_actual "stdout"
 
-# PS51-009: loader install/uninstall idempotence (static EXPECTED-LIMITATION)
-# shell uninstall --dry-run may not be available in all builds; mark as MANUAL-ONLY
+# PS51-009: loader install/uninstall idempotence (static EXPECTED-LIMITATION in CI)
+# shell uninstall --dry-run may not be a valid subcommand in all builds
 Record-Result "PS51-009" "loader install/uninstall idempotence" "EXPECTED-LIMITATION" `
     "uninstall --dry-run succeeds; no real profile modified" `
     "uninstall --dry-run not reliably available in CI; idempotence verification is MANUAL-ONLY in live shell" `
