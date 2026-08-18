@@ -15,8 +15,8 @@ impl SyncCoordinator {
     pub fn apply(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64) -> Result<SyncReceipt, AliasError> { let names = ManagedNameSet { current: aliases.iter().map(|alias| alias.name.clone()).collect(), retired: Vec::new() }; self.apply_internal(aliases, shells, revision, &names) }
     fn apply_internal(&self, aliases: &[AliasRecord], shells: &[ShellKind], revision: i64, names: &ManagedNameSet) -> Result<SyncReceipt, AliasError> {
         fs::create_dir_all(self.config_dir.join("generated"))?; fs::create_dir_all(self.config_dir.join("backups/generated"))?;
-        let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
+        let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
         let journal = self.config_dir.join("operation.journal"); let revision_from = revision.saturating_sub(1); let mut backups = Vec::new();
         for shell in shells { let path = self.generated_path(shell); if path.exists() { let backup = backup_path(&path, &self.config_dir); fs::copy(&path, &backup)?; backups.push(serde_json::json!({"target": path, "backup": backup})); } }
         fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=prepared\nbackups_json={}\n", serde_json::to_string(&backups)?))?;
