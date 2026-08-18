@@ -405,6 +405,9 @@ Use the existing `docs/gui/` manual conventions and test:
 
 ### Task C6: Human feedback and triage
 
+- [x] Created six detailed Task 21-2 manuals: Linux, PowerShell 5.1, PowerShell 7, Bash/Zsh user configuration, GUI workflow, and package/install lifecycle. Cases require Actual/Result/Evidence fields and preserve manual/environment boundaries.
+- [x] Existing matrix and feedback template remain unfilled; no manual PASS was inferred from CI.
+
 The user returns completed `test-matrix.md` or a copy of each case with:
 
 - result status;
