@@ -278,24 +278,24 @@ Record-Result "PS51-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITA
     "ps51-builtin-alias-precedence"
 
 # PS51-008: ACL/target protection — invalid alias names should be rejected
-# Temporarily allow native stderr to be captured without terminating PS5.1.
-$ps51_008_result = "EXPECTED-LIMITATION"
-$ps51_008_actual = "invalid name check deferred to manual verification"
+# Keep the command result separate from the result enum; PS5.1 native stderr may
+# otherwise produce a collection that is unsafe to pass as a string parameter.
 $ps51_008_out = ""
 $ErrorActionPreference = 'Continue'
 $ps51_008_out = [string](Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi"))
 $ErrorActionPreference = 'Stop'
 if ($ps51_008_out -match "error|invalid|not allowed|must start|illegal") {
-    $ps51_008_result = "PASS"
-    $ps51_008_actual = "CLI rejected invalid alias name 1badname"
+    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "PASS" `
+        "alias name starting with digit is rejected by CLI" `
+        "CLI rejected invalid alias name 1badname" "stdout"
 } else {
     $ErrorActionPreference = 'Continue'
     Invoke-Cli @("remove", "--yes", "1badname") | Out-Null
     $ErrorActionPreference = 'Stop'
+    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
+        "alias name starting with digit is rejected by CLI" `
+        "invalid name check deferred to manual verification" "stdout"
 }
-Record-Result "PS51-008" "ACL/target protection — invalid name rejected" $ps51_008_result `
-    "alias name starting with digit is rejected by CLI" `
-    $ps51_008_actual "stdout"
 
 # PS51-009: loader install/uninstall idempotence (static EXPECTED-LIMITATION in CI)
 # shell uninstall --dry-run may not be a valid subcommand in all builds
