@@ -86,13 +86,9 @@ jobs:
       - uses: actions/setup-node@v4.4.0
         with:
           node-version: "22"
-      # package-lock.json is not yet committed; use npm install.
-      # After the first passing run, commit crates/aliasmgr-gui/ui/package-lock.json
-      # and replace the two steps above with:
-      #   cache: npm
-      #   cache-dependency-path: crates/aliasmgr-gui/ui/package-lock.json
-      # and change the install step below to: npm ci
-      - run: npm install
+          cache: npm
+          cache-dependency-path: crates/aliasmgr-gui/ui/package-lock.json
+      - run: npm ci
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
@@ -108,13 +104,9 @@ jobs:
       - uses: actions/setup-node@v4.4.0
         with:
           node-version: "22"
-      # package-lock.json is not yet committed; use npm install.
-      # After the first passing run, commit crates/aliasmgr-gui/ui/package-lock.json
-      # and replace the two steps above with:
-      #   cache: npm
-      #   cache-dependency-path: crates/aliasmgr-gui/ui/package-lock.json
-      # and change the install step below to: npm ci
-      - run: npm install
+          cache: npm
+          cache-dependency-path: crates/aliasmgr-gui/ui/package-lock.json
+      - run: npm ci
       - run: npm test
       - run: npm run typecheck
       - run: npm run build

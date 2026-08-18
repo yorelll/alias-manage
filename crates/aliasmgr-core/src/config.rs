@@ -31,7 +31,18 @@ pub struct ShellPathOverrides {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retired_names: RetiredNameConfig, pub shells: ShellPathOverrides }
+pub struct ShellRuntimeConfig {
+    pub default_shell: Option<String>,
+    pub allow_relative_paths: bool,
+    pub execution_policy: Option<String>,
+    pub powershell5_bom: bool,
+    pub powershell7_bom: bool,
+    pub powershell5_line_ending: Option<String>,
+    pub powershell7_line_ending: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retired_names: RetiredNameConfig, pub shells: ShellPathOverrides, pub runtime: ShellRuntimeConfig }
 
 #[derive(Debug, Clone)]
 pub struct AppPaths { pub root: PathBuf }

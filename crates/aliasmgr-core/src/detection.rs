@@ -4,6 +4,15 @@ use std::{env, fs, path::{Path, PathBuf}, process::Command};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PowerShellInstallation { pub kind: ShellKind, pub executable: PathBuf, pub version: Option<String> }
 
+pub fn powershell_priority(installations: &[PowerShellInstallation]) -> Vec<PowerShellInstallation> {
+    let mut sorted = installations.to_vec();
+    sorted.sort_by(|left, right| {
+        let kind_order = |kind: &ShellKind| if matches!(kind, ShellKind::PowerShell7) { 0 } else { 1 };
+        kind_order(&left.kind).cmp(&kind_order(&right.kind)).then_with(|| right.version.cmp(&left.version)).then_with(|| left.executable.cmp(&right.executable))
+    });
+    sorted
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectionContext { pub explicit: Option<ShellKind>, pub parent_shell: Option<ShellKind>, pub shell_env: Option<String>, pub login_shell: Option<ShellKind> }
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -65,6 +74,18 @@ fn command_on_path(name: &str) -> bool { command_path(name).is_some() }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn powershell_priority_prefers_ps7_then_highest_version() {
+        let sorted = powershell_priority(&[
+            PowerShellInstallation { kind: ShellKind::PowerShell5, executable: PathBuf::from("powershell.exe"), version: Some("5.1".into()) },
+            PowerShellInstallation { kind: ShellKind::PowerShell7, executable: PathBuf::from("pwsh-7.2.exe"), version: Some("7.2".into()) },
+            PowerShellInstallation { kind: ShellKind::PowerShell7, executable: PathBuf::from("pwsh-7.4.exe"), version: Some("7.4".into()) },
+        ]);
+        assert_eq!(sorted[0].version.as_deref(), Some("7.4"));
+        assert_eq!(sorted[1].version.as_deref(), Some("7.2"));
+        assert_eq!(sorted[2].kind, ShellKind::PowerShell5);
+    }
+
     #[test]
     fn detection_precedence_is_explicit_parent_environment_login_installed() {
         let result = detect(&DetectionContext { explicit: Some(ShellKind::Zsh), parent_shell: Some(ShellKind::Bash), shell_env: Some("/bin/bash".into()), login_shell: Some(ShellKind::PowerShell7) });
