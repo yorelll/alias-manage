@@ -541,23 +541,18 @@ else
 fi
 
 # ─── L-018: shell install to isolated RC ────────────────────────
-ISOLATED_BASHRC="$TEMP_PROFILE/.bashrc-install-test"
-touch "$ISOLATED_BASHRC"
-
-# Use a config that points to the isolated RC via config file
+# Use --config-dir to give shell install a dedicated, isolated root.
+# Without a config.toml, the CLI falls back to $config_dir/.bashrc
+# as the RC path — fully isolated from real user files.
 SHELL_INSTALL_CONFIG="$TEMP_ROOT/shell-install-config"
 mkdir -p "$SHELL_INSTALL_CONFIG"
-
-# Write a minimal config pointing bash RC to our isolated file
-CONFIG_TOML="$SHELL_INSTALL_CONFIG/config.toml"
-cat > "$CONFIG_TOML" <<TOML
-[shells]
-bash_rc_path = "$ISOLATED_BASHRC"
-TOML
+ISOLATED_BASHRC="$SHELL_INSTALL_CONFIG/.bashrc"
+touch "$ISOLATED_BASHRC"
 
 INSTALL_OUT=""
 INSTALL_RC=0
-if INSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$SHELL_INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell install bash 2>&1)"; then
+INSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
+if [[ $INSTALL_RC -eq 0 ]]; then
   if grep -q "aliasmgr\|alias-manager\|generated" "$ISOLATED_BASHRC" 2>/dev/null; then
     record_result "L-018" "shell install bash to isolated RC" "PASS" \
       "loader installed in isolated RC" "[redacted path]" "file"
@@ -571,14 +566,15 @@ elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstal
     "shell install not available in this build: $INSTALL_OUT" "stdout"
 else
   record_result "L-018" "shell install bash to isolated RC" "FAIL" \
-    "loader installed in isolated RC" "exit $?: $INSTALL_OUT" "stdout"
+    "loader installed in isolated RC" "exit $INSTALL_RC: $INSTALL_OUT" "stdout"
 fi
 
 # ─── L-019: loader idempotence ──────────────────────────────────
 IDEM_OUT=""
 IDEM_RC=0
-if IDEM_OUT="$(ALIASMGR_CONFIG_DIR="$SHELL_INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell install bash 2>&1)"; then
-  # Count occurrences of loader marker in RC file
+IDEM_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
+if [[ $IDEM_RC -eq 0 ]]; then
+  # Count occurrences of loader marker in RC file to assert no duplication
   LOADER_COUNT=0
   if [[ -f "$ISOLATED_BASHRC" ]]; then
     LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$ISOLATED_BASHRC" 2>/dev/null || echo 0)"
@@ -596,7 +592,7 @@ elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled
     "shell install not available: $IDEM_OUT" "stdout"
 else
   record_result "L-019" "loader install idempotence" "FAIL" \
-    "second install does not duplicate loader" "exit $?: $IDEM_OUT" "stdout"
+    "second install does not duplicate loader" "exit $IDEM_RC: $IDEM_OUT" "stdout"
 fi
 
 # ─── argv summary ─────────────────────────────────────────────────

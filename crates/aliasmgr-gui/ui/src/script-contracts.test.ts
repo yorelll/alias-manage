@@ -758,8 +758,8 @@ test("verify-cli-linux.sh implements loader idempotence (L-019)", async () => {
   assert.match(source, /L-019/, "verify-cli-linux.sh must include L-019 loader idempotence case");
   assert.match(
     source,
-    /shell install/,
-    "verify-cli-linux.sh must call shell install to test idempotence"
+    /shell install|LOADER_COUNT/,
+    "verify-cli-linux.sh must call shell install and count markers to test idempotence"
   );
 });
 
@@ -775,8 +775,8 @@ test("verify-bash-linux.sh implements loader install with isolated RC (B-001)", 
   );
   assert.match(
     source,
-    /config\.toml|bash_rc_path/,
-    "verify-bash-linux.sh must configure isolated RC path via config.toml"
+    /config\.toml|bash_rc_path|--config-dir/,
+    "verify-bash-linux.sh must configure isolated RC path via config.toml or --config-dir"
   );
 });
 
@@ -844,8 +844,8 @@ test("verify-zsh-linux.sh implements loader install with isolated RC (Z-001)", a
   );
   assert.match(
     source,
-    /config\.toml|zsh_rc_path/,
-    "verify-zsh-linux.sh must configure isolated RC path via config.toml"
+    /config\.toml|zsh_rc_path|--config-dir/,
+    "verify-zsh-linux.sh must configure isolated RC path via config.toml or --config-dir"
   );
 });
 

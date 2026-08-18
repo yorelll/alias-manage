@@ -144,17 +144,18 @@ fi
 
 # ─── B-001: loader install to isolated .bashrc ──────────────────
 #
-# The shell install command reads rc_path from config.toml [shells.bash_rc_path].
-# Write a config that points to our isolated TEMP_BASHRC.
+# Use --config-dir to give shell install a dedicated isolated root.
+# Without a config.toml, the CLI falls back to $config_dir/.bashrc
+# as the RC path. We pre-create that file to satisfy write_profile_content.
 INSTALL_CONFIG="$TEMP_ROOT/install-config"
 mkdir -p "$INSTALL_CONFIG"
-cat > "$INSTALL_CONFIG/config.toml" <<TOML
-[shells]
-bash_rc_path = "$TEMP_BASHRC"
-TOML
+# The CLI will install to $INSTALL_CONFIG/.bashrc by default
+touch "$INSTALL_CONFIG/.bashrc"
 
 INSTALL_OUT=""
-if INSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell install bash 2>&1)"; then
+INSTALL_RC=0
+INSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
+if [[ $INSTALL_RC -eq 0 ]]; then
   record_result "B-001" "bash loader install to isolated RC" "PASS" \
     "loader installed to isolated .bashrc without error" "$INSTALL_OUT" "stdout"
 elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled"; then
@@ -163,16 +164,19 @@ elif echo "$INSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstal
     "shell install command not available in this build: $INSTALL_OUT" "stdout"
 else
   record_result "B-001" "bash loader install to isolated RC" "FAIL" \
-    "loader installed to isolated .bashrc without error" "exit $?: $INSTALL_OUT" "stdout"
+    "loader installed to isolated .bashrc without error" "exit $INSTALL_RC: $INSTALL_OUT" "stdout"
 fi
 
 # ─── B-002: loader idempotence (run install twice) ──────────────
 IDEM_OUT=""
-if IDEM_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell install bash 2>&1)"; then
+IDEM_RC=0
+IDEM_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
+if [[ $IDEM_RC -eq 0 ]]; then
   # Count loader markers to verify no duplication
   LOADER_COUNT=0
-  if [[ -f "$TEMP_BASHRC" ]]; then
-    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_BASHRC" 2>/dev/null || echo 0)"
+  INSTALL_BASHRC="$INSTALL_CONFIG/.bashrc"
+  if [[ -f "$INSTALL_BASHRC" ]]; then
+    LOADER_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$INSTALL_BASHRC" 2>/dev/null || echo 0)"
   fi
   if [[ "$LOADER_COUNT" -le 1 ]]; then
     record_result "B-002" "bash loader install idempotence" "PASS" \
@@ -187,12 +191,14 @@ elif echo "$IDEM_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInstalled
     "shell install not available: $IDEM_OUT" "stdout"
 else
   record_result "B-002" "bash loader install idempotence" "FAIL" \
-    "second install does not duplicate loader" "exit $?: $IDEM_OUT" "stdout"
+    "second install does not duplicate loader" "exit $IDEM_RC: $IDEM_OUT" "stdout"
 fi
 
 # ─── B-003: reload --print gives correct bash source line ────────
 RELOAD_OUT=""
-if RELOAD_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" reload --print 2>&1)"; then
+RELOAD_RC=0
+RELOAD_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" reload --print 2>&1)" || RELOAD_RC=$?
+if [[ $RELOAD_RC -eq 0 ]]; then
   if echo "$RELOAD_OUT" | grep -q "generated\|bash.sh"; then
     record_result "B-003" "bash reload --print guidance" "PASS" \
       "reload --print outputs bash source instruction" "[redacted]" "stdout"
@@ -202,7 +208,7 @@ if RELOAD_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CL
   fi
 else
   record_result "B-003" "bash reload --print guidance" "FAIL" \
-    "reload --print outputs bash source instruction" "exit $?: $RELOAD_OUT" "stdout"
+    "reload --print outputs bash source instruction" "exit $RELOAD_RC: $RELOAD_OUT" "stdout"
 fi
 
 # ─── B-004: argv boundary in bash: add + CRUD with complex args ──
@@ -281,10 +287,13 @@ run_cli remove --yes b_tagged_b 2>/dev/null || true
 
 # ─── B-006: tombstone / shell uninstall ──────────────────────────
 UNINSTALL_OUT=""
-if UNINSTALL_OUT="$(ALIASMGR_CONFIG_DIR="$INSTALL_CONFIG" HOME="$TEMP_PROFILE" "$CLI" shell uninstall bash 2>&1)"; then
+UNINSTALL_RC=0
+UNINSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell uninstall bash 2>&1)" || UNINSTALL_RC=$?
+if [[ $UNINSTALL_RC -eq 0 ]]; then
   # Verify loader line is no longer present
-  if [[ -f "$TEMP_BASHRC" ]]; then
-    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$TEMP_BASHRC" 2>/dev/null || echo 0)"
+  INSTALL_BASHRC="$INSTALL_CONFIG/.bashrc"
+  if [[ -f "$INSTALL_BASHRC" ]]; then
+    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$INSTALL_BASHRC" 2>/dev/null || echo 0)"
     if [[ "$RESIDUE_COUNT" -eq 0 ]]; then
       record_result "B-006" "bash shell uninstall removes loader" "PASS" \
         "shell uninstall clears loader from RC" "residue_count=$RESIDUE_COUNT" "file"
@@ -302,7 +311,7 @@ elif echo "$UNINSTALL_OUT" | grep -qi "not.*supported\|unsupported\|ShellNotInst
     "shell uninstall not available: $UNINSTALL_OUT" "stdout"
 else
   record_result "B-006" "bash shell uninstall removes loader" "FAIL" \
-    "shell uninstall clears loader from RC" "exit $?: $UNINSTALL_OUT" "stdout"
+    "shell uninstall clears loader from RC" "exit $UNINSTALL_RC: $UNINSTALL_OUT" "stdout"
 fi
 
 # ─── B-007: generated bash.sh syntax check ──────────────────────
