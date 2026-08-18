@@ -1637,7 +1637,7 @@ Task 1 CI enhancements adopted:
 - [x] 提供 Bash/Zsh/PowerShell 重新加载命令提示，但不宣称更新了已有父 Shell。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test diagnostics`，预期全部通过。
 - [x] 已完成：sync、dry-run、reload、shell detect、doctor、reload guidance、隔离 diagnostics 测试和 fast CI。
-- [ ] 人工/实现边界：durable shell_state 诊断已完成；marked loader install/uninstall、完整 syntax/checksum/permission/policy diagnostics 仍未实现，真实 Profile/ExecutionPolicy 需 Task 21-2。
+- [x] 已完成：marked Bash/Zsh loader install/uninstall 已实现并具备幂等测试；fast CI `32091690967`、integration `32091809299`。完整 syntax/checksum/permission/policy diagnostics 与真实 Profile/ExecutionPolicy 仍需 Task 21-2。
 - [x] 提交 `feat: add cli sync diagnostics and shell management`。
 
 ### Task 16：实现导入导出

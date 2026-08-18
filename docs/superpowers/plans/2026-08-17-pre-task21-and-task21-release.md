@@ -224,7 +224,7 @@ Core transfer now separates parsing/reporting from accepted records; confirmed C
 
 - [x] **Step 3: Verify all CLI tests in fast/integration CI**
 
-Fast CI `32011753420` passed Linux/Windows workspace, lint, and GUI frontend jobs; durable doctor follow-up fast CI `32013771136` passed; integration `32010337861` passed the Linux/Windows CLI/Shell/PowerShell/lock matrix. Full TOML matrix and real loader install/uninstall remain open.
+Fast CI `32091690967` passed Linux/Windows workspace, lint, and GUI frontend jobs; integration `32091809299` passed the Linux/Windows CLI/Shell/PowerShell/lock matrix. Full TOML matrix remains open; marked Bash/Zsh loader install/uninstall is now implemented and verified.
 
 ---
 
