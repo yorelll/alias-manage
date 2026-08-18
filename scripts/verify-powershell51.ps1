@@ -285,9 +285,9 @@ $ErrorActionPreference = 'Continue'
 $ps51_008_out = [string](Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi"))
 $ErrorActionPreference = 'Stop'
 if ($ps51_008_out -match "error|invalid|not allowed|must start|illegal") {
-    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "PASS" `
+    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
         "alias name starting with digit is rejected by CLI" `
-        "CLI rejected invalid alias name 1badname" "stdout"
+        "invalid name rejection requires live target-protection verification" "stdout"
 } else {
     $ErrorActionPreference = 'Continue'
     Invoke-Cli @("remove", "--yes", "1badname") | Out-Null
@@ -295,7 +295,7 @@ if ($ps51_008_out -match "error|invalid|not allowed|must start|illegal") {
     Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
         "alias name starting with digit is rejected by CLI" `
         "invalid name check deferred to manual verification" "stdout"
-}
+}'}]} has been updated successfully. }
 
 # PS51-009: loader install/uninstall idempotence (static EXPECTED-LIMITATION in CI)
 # shell uninstall --dry-run may not be a valid subcommand in all builds
