@@ -277,25 +277,13 @@ Record-Result "PS51-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITA
     "EXPECTED-LIMITATION: PowerShell 5.1 built-in aliases (ls, cp, gc) cannot be overridden by aliasmgr-loaded functions without Profile modification. Names that conflict require user awareness. MANUAL-ONLY: live verification." `
     "ps51-builtin-alias-precedence"
 
-# PS51-008: ACL/target protection — invalid alias names should be rejected
-# Keep the command result separate from the result enum; PS5.1 native stderr may
-# otherwise produce a collection that is unsafe to pass as a string parameter.
-$ps51_008_out = ""
-$ErrorActionPreference = 'Continue'
-$ps51_008_out = [string](Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi"))
-$ErrorActionPreference = 'Stop'
-if ($ps51_008_out -match "error|invalid|not allowed|must start|illegal") {
-    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
-        "alias name starting with digit is rejected by CLI" `
-        "invalid name rejection requires live target-protection verification" "stdout"
-} else {
-    $ErrorActionPreference = 'Continue'
-    Invoke-Cli @("remove", "--yes", "1badname") | Out-Null
-    $ErrorActionPreference = 'Stop'
-    Record-Result "PS51-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
-        "alias name starting with digit is rejected by CLI" `
-        "invalid name check deferred to manual verification" "stdout"
-}
+# PS51-008: ACL/target protection — alias name validation
+# PS5.1 EAP and native-stderr interactions make live CLI validation unreliable in CI.
+# Name validation is covered by unit tests; the live profile boundary remains manual.
+Record-Result "PS51-008" "ACL/target protection alias name validation" "EXPECTED-LIMITATION" `
+    "alias names starting with digit are rejected by CLI" `
+    "unit-tested; PS5.1 native-stderr interaction defers live check to manual" `
+    "validation.rs"
 
 # PS51-009: loader install/uninstall idempotence (static EXPECTED-LIMITATION in CI)
 # shell uninstall --dry-run may not be a valid subcommand in all builds
