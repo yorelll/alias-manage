@@ -4,24 +4,17 @@ This checklist defines the non-GUI release boundary. It does not certify the Tau
 
 ## Task 21-1 automated evidence
 
-- [ ] Current Phase B workflows have passed on the final commit; record run IDs here before release review.
-- [ ] Linux/Windows matrix includes Bash, Zsh, PowerShell 5.1/7, lock, CLI, benchmark, and GUI npm cache jobs.
-- [ ] Release dry-run reports packaging inputs and does not create a Release automatically.
-- [ ] Unsigned artifact checksums and sanitized manifest are available as short-lived CI artifacts.
-- [ ] No signing certificates, credentials, or publication tokens are stored in the repository.
+- [x] Current Phase B workflows passed: Fast CI `32093176327`; Integration `32093828288`; Release dry-run `32093979406`.
+- [x] Linux/Windows matrix includes Bash, Zsh, PowerShell 5.1/7, lock, CLI, benchmark, and GUI npm cache jobs.
+- [x] Release dry-run reports packaging inputs and does not create a Release automatically.
+- [x] Unsigned artifact checksums and sanitized manifest are available in `alias-manager-unsigned-source` from run `32093979406` with seven-day retention.
+- [x] No signing certificates, credentials, or publication tokens are stored in the repository.
 
 ## CI evidence
 
----
-
-## CI evidence
-
-Current pre-GUI documentation and CLI boundary are supported by the repository files listed in this checklist; the commands below are the authoritative remote verification runs.
-
-- [x] Fast CI run `31875233532` passed Linux tests, Windows tests, and lint.
-- [x] Integration run `31875307387` passed Bash, Zsh, PowerShell 5.1/7, lock, CLI-layer, and isolation jobs.
-- [x] Task-specific CI evidence is recorded beside the relevant Task 1–17 subordinate items in `plan.md`.
-- [ ] GUI build and frontend test jobs are intentionally outside this pre-GUI gate.
+- [x] Task-specific CI evidence is recorded beside the relevant Task 1–20 subordinate items in `plan.md`.
+- [x] GUI frontend jobs use the committed lockfile and are separate from the non-GUI core gate.
+- [x] Integration uses `fail-fast: false`, concurrency cancellation, timeouts, pinned actions, and isolated configuration directories.
 
 ## CLI/core scope
 
@@ -32,7 +25,7 @@ Current pre-GUI documentation and CLI boundary are supported by the repository f
 - [x] Import/export safety filters sensitive environment keys and rejects unsupported records.
 - [x] Uninstall protects referenced target files.
 - [x] Existing parent Shell sessions are not claimed to update automatically; reload guidance is required.
-- [ ] Durable SQLite shell-state transaction binding and full forward recovery remain incomplete.
+- [x] Durable shell state and committed forward recovery have focused CI evidence; full transaction binding/crash injection remains open.
 
 ## Documentation boundary
 
@@ -41,6 +34,7 @@ Current pre-GUI documentation and CLI boundary are supported by the repository f
 - [x] Exit-code meanings are documented as stable after publication; unused future codes remain reserved.
 - [x] Environment-dependent limitations are documented: PowerShell profiles/ExecutionPolicy, symlinked RC/Profile files, oh-my-zsh ordering, real terminal behavior, and GUI interaction.
 - [x] Package-manager and Windows MSI integration boundaries are documented in `docs/uninstall.md`.
+- [x] Automated behavior inventory is documented in `docs/ci-test-inventory.md`.
 
 ## Manual acceptance still required
 
@@ -54,18 +48,10 @@ Current pre-GUI documentation and CLI boundary are supported by the repository f
 
 - [x] Source scan excludes ordinary generated paths from `eval` and `Invoke-Expression`; `reload --print` is documented as an explicit command-output boundary.
 - [x] Existing import filtering and test fixtures avoid passwords, tokens, API keys, and sensitive environment values; Phase B adds workflow scans for environment dumps.
-- [ ] Confirm every generated-file write path uses the intended lock, backup, syntax-check, and atomic-replacement boundary; this remains a code-review/release-gate item until the full Phase B run passes.
-
----
+- [ ] Confirm every generated-file write path uses the intended lock, backup, syntax-check, and atomic-replacement boundary; this remains a code-review/release-gate item.
 
 ## Automated/manual boundary
 
 The following remain manual or environment-dependent and must not be checked from CI alone: real GUI windows, visual UX, clean-machine installation, Windows Profiles/OneDrive/ExecutionPolicy/ACL, oh-my-zsh user ordering, package hooks, MSI, signing, publishing, and release approval.
-
----
-
-- [ ] Search ordinary generated paths for `eval` and `Invoke-Expression`; `reload --print` is the only explicitly documented exception boundary.
-- [ ] Confirm logs, exports, and errors do not expose passwords, tokens, API keys, or sensitive environment values.
-- [ ] Confirm every generated-file write path uses the intended lock, backup, syntax-check, and atomic-replacement boundary.
 
 A checked CI item means the workflow passed. It does not replace manual machine acceptance.

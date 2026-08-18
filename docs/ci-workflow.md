@@ -22,8 +22,12 @@ See `docs/ci-test-inventory.md` for stable behavior IDs and their focused test t
 
 ## Current successful baseline
 
-- Fast CI: `31875233532`
-- Integration: `31875307387`
+- Fast CI: `32093176327`
+- Integration: `32093828288`
+- Release dry-run: `32093979406`
+- Unsigned artifact: `alias-manager-unsigned-source` from release run `32093979406`
+
+Legacy pre-GUI baselines remain in the task-specific history.
 
 These runs establish the current pre-GUI CLI verification baseline. Focused Task 8–17 runs are linked in `plan.md` beside the relevant subordinate checkboxes.
 

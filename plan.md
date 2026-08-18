@@ -1804,6 +1804,9 @@ Task 1 CI enhancements adopted:
 
 在 Task 1.1 建立的 `ci.yml` 骨架之上补全全部 job，并按 §11.10 的节奏加入 GUI 与打包。规格见 §11.4–§11.8，本任务只负责落地与验证。
 
+- [x] Phase B automated verification implemented: expanded integration matrix, benchmark/inventory, npm cache, safe release dry-run, unsigned artifact checksums, and source security scan. Fast CI `32093176327`, Integration `32093828288`, Release `32093979406`.
+- [ ] Phase B manual/runtime boundaries remain open: standalone Tauri compilation/windows, real GUI windows, clean-machine/profile acceptance, package hooks, signing, publishing, and release approval.
+
 **Files:**
 - Modify: `.github/workflows/ci.yml`
 - Create: `.github/workflows/integration.yml`
