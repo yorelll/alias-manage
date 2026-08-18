@@ -1694,15 +1694,15 @@ Task 1 CI enhancements adopted:
 | 5 | 部分完成，CI 已验证 | 评分、模糊搜索、limit、tag filter、`SortField`/descending 已由 core 搜索测试和 fast CI `32001624885` 验证；真实 CLI/GUI 全量查询验收仍按 Task 21-2 执行。 |
 | 6 | 部分完成，CI 已验证 | 配置路径、轮转、Linux writable 检查和跨进程锁已验证；Windows ACL 目前保守返回 `Unknown`，属于环境/原生 API 边界，未将其误标为通过。 |
 | 7 | 部分完成，CI 已验证 | 结构化 argv、占位符、Batch 安全、完整边界矩阵和 Linux/Windows 分版本 CI 已验证（fast `32004704944`、integration `32004874576`）；PS 宿主原生命令重构限制仍按文档和 Task 21-2 标记。 |
-| 8 | 部分完成，CI 已验证 | Bash/Zsh quoting、loader、真实语法、symlink/CRLF 边界和 cleanup 已验证；oh-my-zsh 顺序及 Windows 用户配置人工验收未完成。 |
-| 9 | 部分完成，CI 已验证 | PS 5.1/7 parser、preemption、安装版本发现已验证；Profile/OneDrive、BOM/CRLF、ExecutionPolicy、native 参数版本策略和真实 `Get-Command` 会话仍未完成。 |
-| 10 | 部分完成，CI 已验证 | loader、metadata、checksum 检测已验证；doctor 决策、fingerprint、真实 tombstone reload 和 override recovery 未完成。 |
-| 11 | 部分完成，CI 已验证 | atomic write、`backups_json`、prepared journal 恢复、committed forward recovery、per-shell receipt 和 SQLite durable `shell_state` 已验证（fast `32020126900`、integration `32086715396`）；完整 SQLite transaction binding 和崩溃注入仍未完成。 |
-| 12 | 部分完成，CI 已验证 | 检测优先级、PATH 冲突和 PowerShell executable/version discovery 已验证；PS7 多版本优先级、真实插件顺序和保留 alias discovery 未完成。 |
-| 13 | 部分完成，CI 已验证 | clap parser、table/JSON 基础输出、冲突/存储退出码已验证；非交互稳定码 14 与文档/实现尚未一致。 |
-| 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter、完整 list/find 字段以及排序、format/limit 请求传播已由 CLI 测试、fast CI `32001624885` 和 integration `32001809714` 验证；逐 Shell reload 提示与真实 Shell 会话仍按 Task 21-2 验收。 |
-| 15 | 部分完成，CI 已验证 | sync、dry-run 非写入、reload 基础输出和基础 doctor 已验证；durable doctor 诊断及 marked loader install/uninstall 未完成。 |
-| 16 | 部分完成，CI 已验证 | JSON/TOML metadata、敏感变量过滤、unsupported/relative-path 报告已验证；导入确认后持久化及完整 TOML safety/conflict matrix 未完成。 |
+| 8 | 部分完成，CI 已验证 | Bash/Zsh quoting、loader、metadata、真实语法、symlink/CRLF 边界和 cleanup 已验证；oh-my-zsh 后置覆盖顺序及 Windows 用户配置仍需人工/环境验收。 |
+| 9 | 部分完成，CI 已验证 | PS 5.1/7 parser、preemption、基础保留名判定和安装版本发现已验证；Profile/OneDrive、BOM/CRLF、ExecutionPolicy、native 参数版本策略和真实 `Get-Command` 会话属于 Windows 人工/环境边界。 |
+| 10 | 部分完成，CI 已验证 | loader、metadata、checksum、条件式 fingerprint cleanup 和 override recoverability storage 已验证；live-session skip、强制覆盖 capture、doctor 决策和真实 tombstone reload 仍未完成/需人工验收。 |
+| 11 | 部分完成，CI 已验证 | atomic write、`backups_json`、prepared rollback、committed forward recovery、per-shell receipt 和 SQLite durable `shell_state` 已验证（fast `32020126900`、integration `32086715396`）；完整 SQLite transaction binding 和崩溃注入仍未完成。 |
+| 12 | 部分完成，CI 已验证 | 检测优先级、PATH 冲突、PowerShell executable/version discovery 和 PS7 优先级 helper 已验证；真实用户插件来源顺序和保留 alias discovery 仍需人工/环境验收。 |
+| 13 | 部分完成，CI 已验证 | clap parser、table/JSON 完整 DTO、冲突/存储退出码已验证；CLI 文档中 NonInteractive code 14 与当前 `Config` fallback 仍需专门错误变体收敛。 |
+| 14 | 部分完成，CI 已验证 | CRUD、rename tombstone、tag AND filter、完整 list/find 字段以及排序、format/limit 请求传播已由 CLI 测试、fast CI `32001624885` 和 integration `32001809714` 验证；逐 Shell reload 提示已接入 sync，真实 Shell 会话仍需 Task 21-2。 |
+| 15 | 部分完成，CI 已验证 | sync、dry-run、reload、durable doctor 和 marked Bash/Zsh loader install/uninstall 已由 fast CI `32091690967`、integration `32091809299` 验证；PowerShell/Profile policy diagnostics 仍需人工/环境验收。 |
+| 16 | 部分完成，CI 已验证 | JSON/TOML metadata、敏感变量过滤、unsupported/relative-path 报告和 confirmed import persistence 已验证；完整 TOML safety/conflict matrix 仍未完成。 |
 | 17 | 部分完成，CI 已验证 | core retain/purge、target protection、CLI dispatch 和 uninstall 边界文档已验证；真实 package hook/MSI 集成与人工验收未完成。 |
 
 **CI evidence:** fast run `31875233532`（Linux/Windows/lint）和 integration run `31875307387`（Bash/Zsh/PowerShell/lock/CLI/isolation）均成功；后续 Task 12/11/10 专项成功 runs 记录在各 Task subordinate items 中。
