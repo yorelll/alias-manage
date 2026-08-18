@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**", ".github/workflows/integration.yml", "scripts/verify-*-linux.sh"]
+    paths: ["crates/aliasmgr-core/**", "crates/aliasmgr-tests/**", ".github/workflows/integration.yml", "scripts/verify-*-linux.sh", "scripts/verify-*-windows.ps1", "scripts/verify-powershell*.ps1"]
 
 concurrency:
   group: integration-${{ github.ref }}
@@ -52,6 +52,12 @@ jobs:
           - os: ubuntu-24.04
             shell: bash
             test: linux_verify_scripts
+          - os: windows-latest
+            shell: powershell
+            test: windows_verify_scripts_ps51
+          - os: windows-latest
+            shell: pwsh
+            test: windows_verify_scripts_ps7
 
       # Linux package installation is isolated to the Zsh/oh-my-zsh contract jobs.
       # If the runner package mirror is unavailable, the job records an environment blocker.
@@ -154,6 +160,64 @@ jobs:
           bash scripts/verify-zsh-linux.sh \
             --artifact target/release/aliasmgr
           cat /tmp/aliasmgr-zsh-last-result/verification-summary.json 2>/dev/null || true
+      # ── Windows PS5.1 verify scripts (separate job; shell: powershell) ──────────
+      - name: Build CLI binary for Windows PS5.1 verify scripts
+        if: matrix.test == 'windows_verify_scripts_ps51'
+        shell: pwsh
+        run: cargo build -p aliasmgr-cli --release
+      - name: Run verify-powershell51.ps1 (PS5.1)
+        if: matrix.test == 'windows_verify_scripts_ps51'
+        shell: powershell
+        run: |
+          $artifact = Join-Path $env:GITHUB_WORKSPACE 'target\release\aliasmgr.exe'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps51-verify'
+          powershell -ExecutionPolicy Bypass -File scripts\verify-powershell51.ps1 `
+            -ArtifactPath $artifact `
+            -OutputRoot $outputRoot `
+            -KeepTemp
+          $summary = Join-Path $outputRoot 'result\verification-summary.json'
+          if (Test-Path $summary) { Get-Content $summary }
+      - name: Assert PS5.1 result JSON is sanitized
+        if: matrix.test == 'windows_verify_scripts_ps51'
+        shell: powershell
+        run: |
+          $summary = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps51-verify\result\verification-summary.json'
+          if (-not (Test-Path $summary)) { Write-Error "PS5.1 summary not found"; exit 1 }
+          $json = Get-Content $summary -Raw | ConvertFrom-Json
+          if (-not $json.sensitive_data_redacted) { Write-Error "PS5.1 summary missing sensitive_data_redacted=true"; exit 1 }
+          if ($json.overall -notin @('PASS','PASS_WITH_EXPECTED_LIMITATIONS','BLOCKED')) {
+            Write-Error "PS5.1 overall result is FAIL: $($json.overall)"; exit 1
+          }
+          Write-Host "PS5.1 result sanitization check passed: overall=$($json.overall)"
+      # ── Windows PS7 verify scripts (separate job; shell: pwsh) ──────────────────
+      - name: Build CLI binary for Windows PS7 verify scripts
+        if: matrix.test == 'windows_verify_scripts_ps7'
+        shell: pwsh
+        run: cargo build -p aliasmgr-cli --release
+      - name: Run verify-powershell7.ps1 (PS7)
+        if: matrix.test == 'windows_verify_scripts_ps7'
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:GITHUB_WORKSPACE 'target\release\aliasmgr.exe'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps7-verify'
+          pwsh -File scripts\verify-powershell7.ps1 `
+            -ArtifactPath $artifact `
+            -OutputRoot $outputRoot `
+            -KeepTemp
+          $summary = Join-Path $outputRoot 'result\verification-summary.json'
+          if (Test-Path $summary) { Get-Content $summary }
+      - name: Assert PS7 result JSON is sanitized
+        if: matrix.test == 'windows_verify_scripts_ps7'
+        shell: pwsh
+        run: |
+          $summary = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps7-verify\result\verification-summary.json'
+          if (-not (Test-Path $summary)) { Write-Error "PS7 summary not found"; exit 1 }
+          $json = Get-Content $summary -Raw | ConvertFrom-Json
+          if (-not $json.sensitive_data_redacted) { Write-Error "PS7 summary missing sensitive_data_redacted=true"; exit 1 }
+          if ($json.overall -notin @('PASS','PASS_WITH_EXPECTED_LIMITATIONS','BLOCKED')) {
+            Write-Error "PS7 overall result is FAIL: $($json.overall)"; exit 1
+          }
+          Write-Host "PS7 result sanitization check passed: overall=$($json.overall)"
       - name: Run core tests
         run: cargo test -p aliasmgr-core
       - name: Assert isolated configuration on Linux
