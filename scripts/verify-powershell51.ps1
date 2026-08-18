@@ -304,13 +304,11 @@ Record-Result "PS51-009" "loader install/uninstall idempotence" "EXPECTED-LIMITA
     "uninstall --dry-run not reliably available in CI; idempotence verification is MANUAL-ONLY in live shell" `
     "ps51-uninstall-idempotence"
 
-# ConstrainedLanguage mode detection
-if ($LangMode -eq "ConstrainedLanguage") {
-    Record-Result "PS51-LANG-001" "ConstrainedLanguage mode detected" "EXPECTED-LIMITATION" `
-        "ConstrainedLanguage reported as explicit status; not bypassed" `
-        "ConstrainedLanguage mode active — some checks may not run" `
-        "SessionState.LanguageMode"
-}
+# ConstrainedLanguage mode detection is reported without bypassing policy.
+Record-Result "PS51-LANG-001" "ConstrainedLanguage mode status" "EXPECTED-LIMITATION" `
+    "LanguageMode is reported explicitly; ConstrainedLanguage is never bypassed" `
+    ("LanguageMode=" + $LangMode + "; live constrained-language behavior remains an environment check") `
+    "SessionState.LanguageMode"
 
 # argv summary — PS5.1 specific
 $ArgvCases = @(
