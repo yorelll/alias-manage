@@ -130,23 +130,25 @@ git push origin feature/alias-manager-mvp
 
 **Files:** `scripts/verify-cli-linux.sh`, `scripts/verify-bash-linux.sh`, `scripts/verify-zsh-linux.sh`.
 
-- [ ] **Step 1: Write source-contract tests**
+- [x] **Step 1: Write source-contract tests**
 
-Assert the Linux scripts check version, isolated config, CRUD, search/tag, argv, placeholders, import/export, target protection, loader idempotence, and cleanup; assert no `set -x`, `printenv`, or complete profile output.
+Assert the Linux scripts check version, isolated config, CRUD, search/tag, argv, placeholders, import/export, target protection, loader idempotence, and cleanup; assert no `set -x`, `printenv`, or complete profile output. Evidence: `crates/aliasmgr-gui/ui/src/script-contracts.test.ts` and Fast CI run `32118998771`.
 
-- [ ] **Step 2: Implement Linux CLI runner**
+- [x] **Step 2: Implement Linux CLI runner**
 
-Accept `--artifact PATH` and optional `--keep-temp`. Resolve the CLI binary without modifying PATH globally. Create a disposable target/dumper and run ordered cases L-001 through L-019 that are safe to automate. Write only summaries and sanitized paths.
+Accept `--artifact PATH` and optional `--keep-temp`. Resolve the CLI binary without modifying PATH globally. Create a disposable target/dumper and run ordered cases L-001 through L-019 that are safe to automate. Write only summaries and sanitized paths. Evidence: `scripts/verify-cli-linux.sh` with CRUD update, wildcard argv, environment isolation, target protection, import/export, loader idempotence, and sanitized result outputs.
 
-- [ ] **Step 3: Implement Bash and Zsh runners**
+- [x] **Step 3: Implement Bash and Zsh runners**
 
-Accept `--artifact PATH` and use the script’s own temporary RC paths. Run loader install/reload/idempotence, syntax, argv, tag/search, tombstone, and uninstall checks. Leave real login-chain, oh-my-zsh order, trusted symlink, and current-session manual checks clearly marked for the user.
+Accept `--artifact PATH` and use the script’s own temporary RC paths. Run loader install/reload/idempotence, syntax, argv, tag/search, tombstone, and uninstall checks. Leave real login-chain, oh-my-zsh order, trusted symlink, and current-session manual checks clearly marked for the user. Evidence: `scripts/verify-bash-linux.sh` and `scripts/verify-zsh-linux.sh`; manual-only cases remain explicitly classified.
 
-- [ ] **Step 4: Verify scripts through CI**
+- [x] **Step 4: Verify scripts through CI**
 
-Add a Linux workflow job that runs the scripts against CI-built CLI artifacts or a workspace binary, then run Fast CI and Integration through `gh`. No local Bash/Zsh/Cargo execution is allowed.
+Add a Linux workflow job that runs the scripts against CI-built CLI artifacts or a workspace binary, then run Fast CI and Integration through `gh`. No local Bash/Zsh/Cargo execution is allowed. Evidence: Integration run `32119029002` passed all 12 matrix jobs; Fast CI run `32118998771` passed the script contract checks.
 
-- [ ] **Step 5: Commit Linux scripts**
+- [x] **Step 5: Commit Linux scripts**
+
+Evidence commits: `01e6138`, `aac66da`, `fc90704`, `e8b69af`, `4e2e897`, `8a2b520`; integration merge `f834c23`.
 
 ```bash
 git add scripts .github/workflows/integration.yml
