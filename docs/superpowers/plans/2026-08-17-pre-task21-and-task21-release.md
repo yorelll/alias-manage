@@ -426,10 +426,64 @@ The agent must not check a failed/blocked/manual item until the feedback is revi
 
 ### Task D1: Reconcile all checkboxes
 
+- [x] Updated implementation-feasible Task 1–20 subordinate items and stale summaries with source/test/CI evidence in `plan.md`; remaining implementation gaps are explicitly named.
+- [x] Kept manual/environment items separate; six Chinese Task 21-2 manuals, matrix, and feedback template are committed. No manual results were fabricated.
+- [x] Kept Task 18–20 broad GUI checkboxes open because real-window/visual/manual evidence is absent.
+- [x] Marked Fish/POSIX, import scanner, plugin API, and related Tasks 24–26 as post-MVP/out-of-scope in the closure classification.
+
+### Task D2: Final status report
+
+- [x] Automated workflow table: Fast CI `32093176327`; Integration `32093828288`; Release dry-run `32093979406`.
+- [x] Test inventory: `docs/ci-test-inventory.md`, including model/validation/storage/search/argv/Shell/PowerShell/sync/CLI/GUI/failure/redaction/isolation/benchmark IDs.
+- [x] Artifacts/checksums: unsigned source archive, `SHA256SUMS`, and sanitized manifest in artifact `alias-manager-unsigned-source`, retained seven days.
+- [x] Task 21-2 human results: none returned yet; all manual matrix results remain blank.
+- [x] Failures/fixes: CI-only fixes and run IDs are recorded in commits and plan evidence; the cancelled Zsh run was classified as environment timeout, not a code PASS/FAIL.
+- [x] Environment-blocked cases: Windows ACL/Profile/OneDrive/ExecutionPolicy/BOM, real plugin order, real GUI windows, installers/package hooks, and signing remain explicit boundaries.
+- [x] Expected limitations and post-MVP scope are documented in `docs/limitations.md`, `docs/task21-2/`, and the closure ledger.
+- [x] No tag, release, publish, merge, or signing action was created automatically.
+
+### Task D3: Release decision
+
+- [ ] Do not create a release/tag workflow action until all required automated and human gates pass and the user explicitly approves.
+- [x] Do not merge, publish, or sign artifacts automatically.
+
+---
+
+### Final Phase D status report
+
+**Automated status:** Phase B automated workflows passed on the feature branch. Packaging inputs were absent, so only unsigned source artifacts were produced.
+
+**Manual status:** Phase C instructions are complete in Chinese, but no completed human report has been returned. Therefore no Task 21-2 case is marked `PASS`.
+
+**Release status:** Not releasable yet. Real GUI, clean-machine, Profile/ExecutionPolicy, package/installer, and other manual gates remain open. No tag, Release, signing, merge, or publish was performed.
+
+---
+
+### Task D1: Reconcile all checkboxes
+
 - [ ] Update every implementation-feasible Task 1–20 subordinate item with source/test/CI evidence.
 - [ ] Keep manual/environment items separate and attach Task 21-2 reports.
 - [ ] Keep GUI broad checkboxes open unless real-window/manual evidence exists.
 - [ ] Mark post-MVP Tasks 24–26 explicitly out of scope rather than pretending incomplete implementation is a release blocker.
+
+### Task D2: Produce final status report
+
+The report must include:
+
+- automated workflow/run/job table;
+- per-feature test inventory and counts;
+- artifacts/checksums;
+- Task 21-2 human results;
+- failures and fixes;
+- environment-blocked cases;
+- expected limitations;
+- remaining post-MVP scope;
+- explicit statement that no tag/release/publish was created automatically.
+
+### Task D3: Release decision
+
+- [ ] Only after all required automated and human gates pass, and after explicit user approval, create the release/tag workflow action.
+- [ ] Do not merge, publish, or sign artifacts automatically.
 
 ### Task D2: Produce final status report
 
