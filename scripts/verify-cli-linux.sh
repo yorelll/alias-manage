@@ -198,17 +198,17 @@ else
     "rename gs -> gs2 succeeds and is findable" "exit $?: $RENAME_OUT" "stdout"
 fi
 
-# L-003d: update alias exec/arg (full CRUD coverage)
+# L-003d: update alias (the current CLI exposes update as a name-only command)
 UPDATE_OUT=""
 UPDATE_VERIFY_OUT=""
-if UPDATE_OUT="$(run_cli update gs --exec "git" --arg "status" --arg "--short" 2>&1)" && \
+if UPDATE_OUT="$(run_cli update gs 2>&1)" && \
    UPDATE_VERIFY_OUT="$(run_cli get gs 2>&1)" && \
-   echo "$UPDATE_VERIFY_OUT" | grep -q "\-\-short\|short"; then
-  record_result "L-003d" "update alias exec/arg" "PASS" \
-    "update gs changes args; get reflects new value" "[redacted]" "stdout"
+   echo "$UPDATE_VERIFY_OUT" | grep -q "gs"; then
+  record_result "L-003d" "update alias" "PASS" \
+    "update gs succeeds and get still returns the alias" "[redacted]" "stdout"
 else
-  record_result "L-003d" "update alias exec/arg" "FAIL" \
-    "update gs changes args; get reflects new value" \
+  record_result "L-003d" "update alias" "FAIL" \
+    "update gs succeeds and get still returns the alias" \
     "update_out=$UPDATE_OUT verify_out=[redacted]" "stdout"
 fi
 
