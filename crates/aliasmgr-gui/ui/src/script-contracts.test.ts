@@ -884,3 +884,412 @@ test("verify-zsh-linux.sh implements zsh shell uninstall (Z-007)", async () => {
     "verify-zsh-linux.sh must invoke 'shell uninstall zsh'"
   );
 });
+
+// ─── Task 4 source-contract tests ────────────────────────────────
+// Assert that placeholder "task4-hook" markers are fully replaced with
+// real implementations across all three Windows scripts.
+
+test("verify-cli-windows.ps1 has no task4-hook placeholders", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.doesNotMatch(
+    source,
+    /task4-hook/,
+    "verify-cli-windows.ps1 must not contain task4-hook placeholder markers"
+  );
+});
+
+test("verify-powershell51.ps1 has no task4-hook placeholders", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.doesNotMatch(
+    source,
+    /task4-hook/,
+    "verify-powershell51.ps1 must not contain task4-hook placeholder markers"
+  );
+});
+
+test("verify-powershell7.ps1 has no task4-hook placeholders", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.doesNotMatch(
+    source,
+    /task4-hook/,
+    "verify-powershell7.ps1 must not contain task4-hook placeholder markers"
+  );
+});
+
+// ─── Task 4: Windows CLI runner implements required cases ─────────
+// verify-cli-windows.ps1 must run CRUD/search/tag/argv/placeholder/import/uninstall/target-protection.
+
+test("verify-cli-windows.ps1 implements CRUD add/list/delete (W-002/W-009)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-002\b/, "verify-cli-windows.ps1 must include W-002 add alias case");
+  assert.match(source, /W-009\b/, "verify-cli-windows.ps1 must include W-009 delete alias case");
+  assert.match(source, /alias.*add|Invoke-Cli.*add/, "verify-cli-windows.ps1 must invoke alias add");
+  assert.match(source, /alias.*delete|Invoke-Cli.*delete/, "verify-cli-windows.ps1 must invoke alias delete");
+});
+
+test("verify-cli-windows.ps1 implements argv boundary case (W-004)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-004\b/, "verify-cli-windows.ps1 must include W-004 argv boundary case");
+  assert.match(
+    source,
+    /CJK|cjk|\u4e2d\u6587|unicode|space.*quote|backslash/i,
+    "verify-cli-windows.ps1 must test argv boundary (CJK, space/quote, or backslash)"
+  );
+});
+
+test("verify-cli-windows.ps1 implements placeholder case (W-005)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-005\b/, "verify-cli-windows.ps1 must include W-005 placeholder case");
+  assert.match(source, /\{\{args\}\}/, "verify-cli-windows.ps1 must test {{args}} placeholder");
+});
+
+test("verify-cli-windows.ps1 implements tag facet case (W-006)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-006\b/, "verify-cli-windows.ps1 must include W-006 tag facet case");
+  assert.match(source, /--tag/, "verify-cli-windows.ps1 must test --tag filter");
+});
+
+test("verify-cli-windows.ps1 implements import case (W-007)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-007\b/, "verify-cli-windows.ps1 must include W-007 import case");
+  assert.match(source, /import/, "verify-cli-windows.ps1 must invoke import command");
+});
+
+test("verify-cli-windows.ps1 implements uninstall case (W-008)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-008\b/, "verify-cli-windows.ps1 must include W-008 uninstall case");
+  assert.match(source, /uninstall/, "verify-cli-windows.ps1 must invoke uninstall command");
+});
+
+test("verify-cli-windows.ps1 implements target-protection case (W-011)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.match(source, /W-011\b/, "verify-cli-windows.ps1 must include W-011 target-protection case");
+  assert.match(
+    source,
+    /invalid.*name|bad.*name|protected|BAD_NAME/i,
+    "verify-cli-windows.ps1 must test invalid alias name rejection"
+  );
+});
+
+// ─── Task 4: PS wrappers implement required shell metadata ────────
+
+test("verify-powershell51.ps1 records exact shell version in JSON summary", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(
+    source,
+    /ps_version.*PSVersionTable|PSVersionTable.*ps_version/i,
+    "verify-powershell51.ps1 must record ps_version from PSVersionTable in JSON summary"
+  );
+});
+
+test("verify-powershell7.ps1 records exact shell version in JSON summary", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(
+    source,
+    /ps_version.*PSVersionTable|PSVersionTable.*ps_version/i,
+    "verify-powershell7.ps1 must record ps_version from PSVersionTable in JSON summary"
+  );
+});
+
+test("verify-powershell51.ps1 records profile summary (sanitized) without reading content", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /profile_summary|ProfileSummary/,
+    "verify-powershell51.ps1 must record profile_summary");
+  // Must sanitize the actual profile path (REDACTED)
+  assert.match(source, /REDACTED/,
+    "verify-powershell51.ps1 must redact actual profile path");
+});
+
+test("verify-powershell7.ps1 records profile summary (sanitized) without reading content", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /profile_summary|ProfileSummary/,
+    "verify-powershell7.ps1 must record profile_summary");
+  assert.match(source, /REDACTED/,
+    "verify-powershell7.ps1 must redact actual profile path");
+});
+
+test("verify-powershell51.ps1 records BOM/CRLF encoding summary", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(
+    source,
+    /BOM|CRLF|bom.*crlf|encoding/i,
+    "verify-powershell51.ps1 must record BOM/CRLF encoding summary"
+  );
+});
+
+test("verify-powershell7.ps1 records BOM/CRLF encoding summary", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(
+    source,
+    /BOM|CRLF|bom.*crlf|encoding/i,
+    "verify-powershell7.ps1 must record BOM/CRLF encoding summary"
+  );
+});
+
+test("verify-powershell51.ps1 records native argv limitation explicitly", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(
+    source,
+    /native.*argv|argv.*limitation|native.*limitation/i,
+    "verify-powershell51.ps1 must document native argv limitation explicitly"
+  );
+  // Must be a real documented result, not just a placeholder
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell51.ps1 must not defer argv limitation to Task 4 (this IS Task 4)"
+  );
+});
+
+test("verify-powershell7.ps1 records native argv limitation explicitly", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(
+    source,
+    /native.*argv|argv.*limitation|native.*limitation/i,
+    "verify-powershell7.ps1 must document native argv limitation explicitly"
+  );
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell7.ps1 must not defer argv limitation to Task 4 (this IS Task 4)"
+  );
+});
+
+// ─── Task 4: forbidden patterns in all PS scripts ─────────────────
+// Scripts must not use Invoke-Expression, Invoke-WebRequest eval-style patterns,
+// or Set-ExecutionPolicy.
+
+test("verify-cli-windows.ps1 forbids Invoke-Expression", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.doesNotMatch(
+    source,
+    /Invoke-Expression\b/,
+    "verify-cli-windows.ps1 must not use Invoke-Expression (insecure eval)"
+  );
+});
+
+test("verify-powershell51.ps1 forbids Invoke-Expression", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.doesNotMatch(
+    source,
+    /Invoke-Expression\b/,
+    "verify-powershell51.ps1 must not use Invoke-Expression (insecure eval)"
+  );
+});
+
+test("verify-powershell7.ps1 forbids Invoke-Expression", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.doesNotMatch(
+    source,
+    /Invoke-Expression\b/,
+    "verify-powershell7.ps1 must not use Invoke-Expression (insecure eval)"
+  );
+});
+
+test("verify-cli-windows.ps1 forbids Set-ExecutionPolicy", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.doesNotMatch(
+    source,
+    /Set-ExecutionPolicy\b/,
+    "verify-cli-windows.ps1 must not call Set-ExecutionPolicy"
+  );
+});
+
+test("verify-powershell51.ps1 forbids Set-ExecutionPolicy", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.doesNotMatch(
+    source,
+    /Set-ExecutionPolicy\b/,
+    "verify-powershell51.ps1 must not call Set-ExecutionPolicy"
+  );
+});
+
+test("verify-powershell7.ps1 forbids Set-ExecutionPolicy", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.doesNotMatch(
+    source,
+    /Set-ExecutionPolicy\b/,
+    "verify-powershell7.ps1 must not call Set-ExecutionPolicy"
+  );
+});
+
+test("verify-cli-windows.ps1 forbids environment/profile dumps (Get-ChildItem env:)", async () => {
+  const source = await readScript("verify-cli-windows.ps1");
+  assert.doesNotMatch(
+    source,
+    /Get-ChildItem\s+env:/i,
+    "verify-cli-windows.ps1 must not dump all environment variables"
+  );
+});
+
+test("verify-powershell51.ps1 forbids environment/profile dumps (Get-ChildItem env:)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.doesNotMatch(
+    source,
+    /Get-ChildItem\s+env:/i,
+    "verify-powershell51.ps1 must not dump all environment variables"
+  );
+});
+
+test("verify-powershell7.ps1 forbids environment/profile dumps (Get-ChildItem env:)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.doesNotMatch(
+    source,
+    /Get-ChildItem\s+env:/i,
+    "verify-powershell7.ps1 must not dump all environment variables"
+  );
+});
+
+// ─── Task 4: PS wrappers preserve isolated temp roots ─────────────
+
+test("verify-powershell51.ps1 accepts and uses -OutputRoot parameter", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /\$OutputRoot\b/,
+    "verify-powershell51.ps1 must declare and use -OutputRoot parameter");
+  assert.match(source, /TempRoot.*OutputRoot|OutputRoot.*TempRoot/,
+    "verify-powershell51.ps1 must derive TempRoot from OutputRoot");
+});
+
+test("verify-powershell7.ps1 accepts and uses -OutputRoot parameter", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /\$OutputRoot\b/,
+    "verify-powershell7.ps1 must declare and use -OutputRoot parameter");
+  assert.match(source, /TempRoot.*OutputRoot|OutputRoot.*TempRoot/,
+    "verify-powershell7.ps1 must derive TempRoot from OutputRoot");
+});
+
+test("verify-powershell51.ps1 accepts -KeepTemp parameter", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /\$KeepTemp\b/,
+    "verify-powershell51.ps1 must declare and use -KeepTemp parameter");
+});
+
+test("verify-powershell7.ps1 accepts -KeepTemp parameter", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /\$KeepTemp\b/,
+    "verify-powershell7.ps1 must declare and use -KeepTemp parameter");
+});
+
+// ─── Task 4: PS wrappers invoke only their own shell ──────────────
+
+test("verify-powershell51.ps1 self-identifies as powershell (shell field)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(
+    source,
+    /shell\s*=\s*["']powershell["']|shell.*powershell/,
+    "verify-powershell51.ps1 must record shell as 'powershell' in summary"
+  );
+});
+
+test("verify-powershell7.ps1 self-identifies as pwsh (shell field)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(
+    source,
+    /shell\s*=\s*["']pwsh["']|shell.*pwsh/,
+    "verify-powershell7.ps1 must record shell as 'pwsh' in summary"
+  );
+});
+
+// ─── Task 4: PS51 full lifecycle cases ───────────────────────────
+
+test("verify-powershell51.ps1 implements full CRUD lifecycle (PS51-002)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /PS51-002\b/, "verify-powershell51.ps1 must include PS51-002 lifecycle case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell51.ps1 PS51-002 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell51.ps1 implements argv boundary (PS51-007)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /PS51-007\b/, "verify-powershell51.ps1 must include PS51-007 argv case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell51.ps1 PS51-007 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell51.ps1 implements BOM/CRLF check (PS51-004)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /PS51-004\b/, "verify-powershell51.ps1 must include PS51-004 BOM/CRLF case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell51.ps1 PS51-004 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell51.ps1 implements ACL/target-protection (PS51-008)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /PS51-008\b/, "verify-powershell51.ps1 must include PS51-008 target-protection case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell51.ps1 PS51-008 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell51.ps1 implements loader idempotence (PS51-009)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(source, /PS51-009\b/, "verify-powershell51.ps1 must include PS51-009 loader idempotence case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell51.ps1 PS51-009 must not be deferred to Task 4"
+  );
+});
+
+// ─── Task 4: PS7 full lifecycle cases ────────────────────────────
+
+test("verify-powershell7.ps1 implements full CRUD lifecycle (PS7-002)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /PS7-002\b/, "verify-powershell7.ps1 must include PS7-002 lifecycle case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell7.ps1 PS7-002 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell7.ps1 implements argv boundary (PS7-007)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /PS7-007\b/, "verify-powershell7.ps1 must include PS7-007 argv case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell7.ps1 PS7-007 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell7.ps1 implements BOM/CRLF check (PS7-004)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /PS7-004\b/, "verify-powershell7.ps1 must include PS7-004 BOM/CRLF case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell7.ps1 PS7-004 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell7.ps1 implements ACL/target-protection (PS7-008)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /PS7-008\b/, "verify-powershell7.ps1 must include PS7-008 target-protection case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell7.ps1 PS7-008 must not be deferred to Task 4"
+  );
+});
+
+test("verify-powershell7.ps1 implements loader idempotence (PS7-009)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(source, /PS7-009\b/, "verify-powershell7.ps1 must include PS7-009 loader idempotence case");
+  assert.doesNotMatch(
+    source,
+    /deferred to Task 4/,
+    "verify-powershell7.ps1 PS7-009 must not be deferred to Task 4"
+  );
+});
