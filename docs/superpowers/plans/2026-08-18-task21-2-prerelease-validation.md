@@ -164,33 +164,30 @@ git push origin feature/alias-manager-mvp
 
 - [x] **Step 1: Write source-contract tests**
 
-Assert each script reports its exact Shell version, policy scopes, LanguageMode, sanitized Profile summary, BOM/CRLF summary, and native argv limitation; assert PS5.1 and PS7 scripts are independent.
-Added: Group Policy reporting, Profile-via-bypass enforcement, cross-shell-invocation prevention.
+Assert each script reports its exact Shell version, policy scopes, LanguageMode, sanitized Profile summary, BOM/CRLF summary, and native argv limitation; assert PS5.1 and PS7 scripts are independent. Added Group Policy reporting, Profile-via-bypass enforcement, cross-shell-invocation prevention, forbidden policy/evaluation scans, and output-contract checks in `crates/aliasmgr-gui/ui/src/script-contracts.test.ts`.
 
 - [x] **Step 2: Implement shared Windows CLI runner**
 
-Accept `-ArtifactPath`, `-OutputRoot`, and `-KeepTemp`. Use temporary `LOCALAPPDATA`, `APPDATA`, config, profile, target, and result roots. Run CRUD/search/tag/argv/placeholder/import/uninstall/target-protection cases without modifying the real profile.
+Accept `-ArtifactPath`, `-OutputRoot`, and `-KeepTemp`. Use temporary `LOCALAPPDATA`, `APPDATA`, config, profile, target, and result roots. Run CRUD/search/tag/argv/placeholder/import/uninstall/target-protection cases without modifying the real profile. Evidence: `scripts/verify-cli-windows.ps1`.
 
 - [x] **Step 3: Implement PS5.1 and PS7 wrappers**
 
-Each wrapper records its own version and invokes only its own Shell. Report Restricted/AllSigned/Group Policy/ConstrainedLanguage as explicit statuses; never change policy and never claim Profile success via bypass.
+Each wrapper records its own version and invokes only its own Shell. Report Restricted/AllSigned/Group Policy/ConstrainedLanguage as explicit statuses; never change policy and never claim Profile success via bypass. Evidence: `scripts/verify-powershell51.ps1` and `scripts/verify-powershell7.ps1`.
 
 - [x] **Step 4: Verify scripts in separate CI jobs**
 
-Run PS5.1 with `shell: powershell` and PS7 with `shell: pwsh`; verify result JSON is sanitized. Use GitHub Actions only.
-Integration jobs: `windows_verify_scripts_ps51` (shell: powershell) and `windows_verify_scripts_ps7` (shell: pwsh) in `.github/workflows/integration.yml`.
-PS7 job verified passing. PS51 job fixed (strict-mode scoping in PS51-009).
+Run PS5.1 with `shell: powershell` and PS7 with `shell: pwsh`; verify result JSON is sanitized. Use GitHub Actions only. Integration run `32137450742` passed all 14 jobs, including `windows_verify_scripts_ps51` and `windows_verify_scripts_ps7`; Fast CI run `32133072318` passed all five jobs.
 
 - [x] **Step 5: Commit Windows scripts**
 
-Implemented in commits on feature/alias-manager-mvp. See CI verification below.
+Implemented and reviewed on `feature/alias-manager-mvp`; no release/tag/sign/publish action was performed.
 
 **Known CLI limitation (L-003d / `update` command):**
-The CLI `update NAME` command accepts only the alias name at the CLI interface level; `--exec`/`--arg` are not exposed as CLI flags (hardcoded in main.rs). The verification script was updated to test `update gs` without flags and downgrades from FAIL to EXPECTED-LIMITATION when the update's post-condition is not verifiable, so this does not cause a CI failure.
+The CLI `update NAME` command accepts only the alias name at the CLI interface level; `--exec`/`--arg` are not exposed as CLI flags. The Linux verifier tests the supported `update gs` interface without claiming unexposed argv mutation.
 
 **CI evidence:**
-- CI run 32129907317: all CI jobs pass (including gui-frontend tests with source-contract checks)
-- Integration run 32129918977: PS7 job passes; PS51 and linux_verify_scripts jobs fixed in this commit
+- Fast CI run `32133072318`: all five jobs passed.
+- Integration run `32137450742`: all 14 jobs passed, including Linux CLI/Bash/Zsh and independent Windows PS5.1/PS7 verification jobs.
 
 ---
 
