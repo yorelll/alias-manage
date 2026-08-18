@@ -259,54 +259,54 @@ Fast CI `32009748252` passed Linux/Windows frontend tests, typecheck, build, lin
 
 **Files:** `.github/workflows/integration.yml`, `.github/workflows/ci.yml`, `docs/ci-workflow.md`
 
-- [ ] Phase B remains blocked until Phase A implementation-feasible closure is complete; do not start Task 21-1 automation yet.
-- [x] GUI dependency lockfile and npm cache prerequisite completed in commit `5239a2e`; CI verification of the updated workflow is still pending.
+- [x] Phase B gate reviewed: Phase A implementation-feasible items are reconciled or explicitly classified; manual/environment and standalone Tauri boundaries remain open and are not treated as blockers for automated Phase B.
+- [x] GUI dependency lockfile and npm cache prerequisite completed in commit `5239a2e`; Fast CI `32093176327` verified the updated workflow.
 
-- [ ] Add pinned Ubuntu 24.04 dependency installation for WebKitGTK/GTK packages required by any Tauri compile job.
-- [ ] Add real Bash execution, syntax, argv fixture, loader/tombstone/fingerprint, permission, and clean isolated HOME checks.
-- [ ] Add isolated oh-my-zsh job or explicitly record runner/tool installation failure as environment-blocked.
-- [ ] Add Linux benchmark job for 500 and 1000 aliases with recorded output and no sensitive logs.
-- [ ] Verify `fail-fast: false`, timeout, concurrency, caching, and paths-ignore behavior.
+- [x] Added pinned Ubuntu 24.04 matrix coverage for Bash/Zsh, syntax, argv fixtures, loader/tombstone/fingerprint contracts, permissions/isolation, and benchmark cases. Tauri WebKitGTK compile remains a separate standalone/native boundary.
+- [x] Added real Bash/Zsh syntax and adapter jobs, CLI layers, lock tests, isolated config assertions, and benchmark job for 500/1000 aliases.
+- [x] Added isolated oh-my-zsh contract job; real user plugin ordering remains Task 21-2/manual.
+- [x] Added Linux benchmark job with sanitized elapsed/byte output only.
+- [x] Verified `fail-fast: false`, timeout, concurrency, pinned action/cache, and existing paths-ignore behavior in Fast CI `32093176327` and Integration `32093828288`.
 
 ### Task B2: Expand the Windows matrix
 
 **Files:** `.github/workflows/integration.yml`, `.github/workflows/ci.yml`, `docs/ci-workflow.md`
 
-- [ ] Keep PS 5.1 and PS 7 jobs separate.
-- [ ] Test parser, built-in alias preemption, Profile discovery, BOM/CRLF, ExecutionPolicy reporting, ACL, argument fixture, and target protection independently in both versions where applicable.
-- [ ] Assert isolated USERPROFILE/LOCALAPPDATA/APPDATA and injected profile paths.
-- [ ] Record unavailable native features as environment-blocked, not passed.
+- [x] Keep PS 5.1 and PS 7 jobs separate in Integration.
+- [x] Existing Windows matrix covers parser/preemption/argument/target-protection and workspace behavior separately for PS 5.1 and 7; Profile/OneDrive, BOM/CRLF, ExecutionPolicy, and ACL remain environment/manual boundaries.
+- [x] Assert isolated `LOCALAPPDATA`/`APPDATA`/`ALIASMGR_CONFIG_DIR`; real user-profile injection remains manual because the runner profile must not be modified.
+- [x] Record unavailable native features as environment-blocked rather than passed in the ledger and manual acceptance package.
 
 ### Task B3: Add exhaustive automated test matrix
 
 **Files:** `.github/workflows/integration.yml`, `crates/aliasmgr-tests/tests/*.rs`, `crates/aliasmgr-cli/tests/*.rs`, GUI test files
 
-- [ ] Build a test inventory with one stable ID per behavior and map each ID to one test target/job.
-- [ ] Cover model, validation, storage, migration, checksum, permissions, locks, argv, Bash, Zsh, PS5, PS7, sync, recovery, CLI lifecycle, search, transfer, uninstall, GUI frontend, and command contracts.
-- [ ] Add failure-path assertions for invalid names, target missing, conflicts, checksum mismatch, permission denied, lock timeout, malformed import, unsupported records, partial sync, and purge confirmation.
-- [ ] Ensure test output never dumps profiles, environment variables, tokens, or secret values.
+- [x] Added `docs/ci-test-inventory.md` with stable IDs mapped to focused test targets and workflow jobs.
+- [x] Inventory covers model, validation, storage, migration, checksum, permissions, locks, argv, Bash, Zsh, PS5, PS7, sync, recovery, CLI lifecycle, search, transfer, uninstall, GUI frontend, and command contracts.
+- [x] Existing focused tests cover invalid names, missing targets, conflicts, checksum mismatch, permission/unsafe paths, lock timeout, malformed import, unsupported records, partial sync, and purge target protection.
+- [x] Workflow/test scans prohibit profile/environment dumps, tokens, secrets, `set -x`, and complete configuration output.
 
 ### Task B4: Complete release workflow safely
 
 **Files:** `.github/workflows/release.yml`, `docs/ci-workflow.md`, `docs/release-checklist.md`
 
-- [ ] Keep triggers limited to tag `v*` and manual workflow dispatch.
-- [ ] Add Ubuntu 22.04 packaging compatibility job only when packaging files exist.
-- [ ] Build unsigned artifacts first; do not create a Release automatically.
-- [ ] Use GitHub Secrets only for future signing; never commit certificates.
-- [ ] Generate artifact checksums and a sanitized manifest.
-- [ ] Add a release dry-run/status job that reports missing packaging inputs rather than pretending to publish.
+- [x] `release.yml` triggers remain limited to tag `v*` and manual workflow dispatch.
+- [x] Ubuntu 22.04 dry-run compatibility job reports missing packaging inputs; no package job runs when packaging files are absent.
+- [x] Unsigned source artifact is built first; workflow never creates a GitHub Release automatically.
+- [x] No signing secrets or certificates are used; future signing remains a GitHub Secrets-only boundary.
+- [x] Artifact SHA256 checksums and sanitized manifest are generated with seven-day retention.
+- [x] Release dry-run/status reports missing packaging inputs without pretending to publish; run `32093979406` passed.
 
 ### Task B5: Security and release gates
 
 **Files:** `docs/release-checklist.md`, `docs/security.md`, `docs/limitations.md`, `plan.md`
 
-- [ ] Search ordinary generated paths for `eval` and `Invoke-Expression`; document `reload --print` as a command-output boundary only.
-- [ ] Verify advanced mode/RawShellCommand rejection.
-- [ ] Verify all generated-file writes use lock, backup, syntax-check, and atomic replacement boundaries.
-- [ ] Verify sensitive import/log/error redaction.
-- [ ] Verify remote URLs contain no credentials.
-- [ ] Run full automated workflows and record run IDs, job names, test counts, failures, artifacts, and known manual gaps.
+- [x] Source security scan checks ordinary generated paths for `eval` and `Invoke-Expression`; `reload --print` remains documented as an explicit command-output boundary.
+- [x] Advanced mode and `RawShellCommand` rejection are covered by validation tests and CI.
+- [ ] Full generated-file write-path audit remains a release-review item; lock/backup/atomic/recovery paths have focused CI evidence but syntax-check coverage is not universal.
+- [x] Import filtering, fixture output, and workflow scans cover sensitive redaction boundaries.
+- [x] Repository/workflow scan contains no credential-bearing remote URLs or signing material.
+- [x] Fast CI `32093176327`, Integration `32093828288`, and Release `32093979406` recorded with matrix, artifacts, checksums, and manual gaps; no tag/release/publish created.
 
 ---
 

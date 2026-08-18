@@ -13,7 +13,7 @@ This ledger classifies unchecked items before Task 21. It is an audit record, no
 | SQLite sync transaction/forward recovery | CI-verifiable | sync/storage tests | Per-Shell `shell_state` persists in SQLite; prepared rollback and committed forward recovery are covered; fast CI `32020126900` and integration `32086715396` passed. Full transaction binding and crash injection remain incomplete |
 | CLI reload/doctor/transfer persistence | CI-verifiable | CLI integration tests | CLI sync includes retired Shell names; preview is read-only; confirmed import persistence, durable doctor, and marked Bash/Zsh loader install/uninstall are covered by fast CI `32091690967` and integration `32091809299` |
 | GUI Task 19/20 runtime commands | CI-verifiable | standalone command tests + GUI frontend CI | Task 20 command responses now read core/config/generated files, import reports, uninstall core, and override storage; frontend tests/typecheck/build passed fast CI `32009748252`; standalone Tauri/native runtime remains open |
-| Task 21-1 automated matrix/release | implementation-feasible | workflow runs/artifacts | Not started |
+| Task 21-1 automated matrix/release | implementation-feasible | workflow runs/artifacts | Phase B automated matrix, benchmark/inventory, npm cache, release dry-run, unsigned checksums/manifest, and source security scan implemented; Fast CI `32093176327`, Integration `32093828288`, Release `32093979406` passed |
 | Task 21-2 clean-machine/Profile/GUI/package acceptance | manual/environment-dependent | user test reports | Not started |
 | Fish/POSIX, import scanner, plugin API | post-MVP/out-of-scope | future plans | Not part of Task 21 closure |
 

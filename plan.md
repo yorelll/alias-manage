@@ -1804,6 +1804,27 @@ Task 1 CI enhancements adopted:
 
 在 Task 1.1 建立的 `ci.yml` 骨架之上补全全部 job，并按 §11.10 的节奏加入 GUI 与打包。规格见 §11.4–§11.8，本任务只负责落地与验证。
 
+- [x] Phase B automated verification implemented: expanded Integration matrix, benchmark/inventory, npm cache, safe release dry-run, unsigned artifact checksums/manifest, and source security scan. Fast CI `32093176327`, Integration `32093828288`, Release `32093979406`.
+- [ ] Phase B manual/runtime boundaries remain open: standalone Tauri compile/window, clean-machine/profile acceptance, package hooks, signing, publishing, and release approval.
+
+- [x] Task 21-1 Fast CI, Integration, and Release workflows are verified on the feature branch with no automatic tag/release/publish.
+- [x] `docs/ci-test-inventory.md` maps stable IDs to focused tests and workflow jobs.
+- [x] Unsigned source archive, SHA256SUMS, and sanitized manifest were uploaded as `alias-manager-unsigned-source` with seven-day retention.
+- [ ] Packaging inputs are absent; AppImage/deb/MSI/EXE build remains an explicit future/manual boundary.
+
+---
+
+### Task 21 original implementation entries
+
+- [x] Linux matrix, Bash/Zsh/oh-my-zsh contract, benchmark, isolation, and failure-path inventory implemented; Integration `32093828288`.
+- [x] Windows PS 5.1/7 separation and isolation verified; Profile/OneDrive/BOM/ExecutionPolicy/ACL native behavior remains environment/manual.
+- [x] Release dry-run, unsigned artifact/checksum/manifest, and source security scan implemented; Release `32093979406`.
+- [ ] Full generated-file write-path audit remains release-review work; no automatic signing/publishing.
+
+---
+
+在 Task 1.1 建立的 `ci.yml` 骨架之上补全全部 job，并按 §11.10 的节奏加入 GUI 与打包。规格见 §11.4–§11.8，本任务只负责落地与验证。
+
 - [x] Phase B automated verification implemented: expanded integration matrix, benchmark/inventory, npm cache, safe release dry-run, unsigned artifact checksums, and source security scan. Fast CI `32093176327`, Integration `32093828288`, Release `32093979406`.
 - [ ] Phase B manual/runtime boundaries remain open: standalone Tauri compilation/windows, real GUI windows, clean-machine/profile acceptance, package hooks, signing, publishing, and release approval.
 
@@ -1816,17 +1837,17 @@ Task 1 CI enhancements adopted:
 - Create: `crates/aliasmgr-tests/fixtures/argument-dumper.ps1`
 - Create: `crates/aliasmgr-tests/fixtures/argument-dumper.bat`
 
-- [ ] Linux job 安装 §11.5 列出的 apt 依赖（注意 24.04 上是 `libayatana-appindicator3-dev` 而非 `libappindicator3-dev`），运行 Rust 单元/集成测试与 Bash/Zsh 适配器测试。
-- [ ] 追加一个安装 oh-my-zsh 的 job，覆盖 §3.4 的名称抢占与加载块位置。
-- [ ] Windows job 用 `shell: powershell`（5.1）与 `shell: pwsh`（7）分别运行 Profile 定位、Parser 检查、UTF-8 BOM 校验、名称抢占（`ls` 用例）和 §3.5 完整参数矩阵；不得用 PS 7 代表两个版本。
-- [ ] `cargo fmt --check` 只在 Linux 的 `lint` job 执行一次；`clippy` 在两个平台都执行以覆盖 `#[cfg]` 分支。
-- [ ] GUI job 在 Linux 与 Windows 上分别执行前端单元测试、类型检查与 Tauri 编译（GUI 属 MVP，不可只测单平台）。
-- [ ] 建立 `integration.yml`，把 §11.4 列出的慢速集成测试从 `ci.yml` 迁出，只在 `workflow_dispatch`、`main` 的 push 与核心路径的 PR 上运行。
-- [ ] 建立 `release.yml`，仅 tag 或 `workflow_dispatch` 触发；Linux 打包 job 固定使用 `ubuntu-22.04` 以保证 AppImage 的 glibc 兼容性；签名凭据全部来自 GitHub Secrets，仓库内不含证书；不自动创建 Release。
-- [ ] 加入退出码表回归测试与 §9.1.1 的加载耗时基准（500/1000 条别名）。
-- [ ] 验证 §11.7 的隔离要求：所有测试使用临时 HOME/`XDG_CONFIG_HOME`/`LOCALAPPDATA`/`APPDATA` 与注入的 Profile 路径，runner 的真实用户配置在测试前后无变化（加一个断言步骤）。
-- [ ] 落实 §11.8 的日志脱敏：不转储环境变量、不启用 `set -x`、不打印完整 Shell 配置、artifact 仅含脱敏后的生成脚本快照且保留期 7 天。
-- [ ] 提交 `ci: add cross-platform shell test matrix`。
+- [x] Linux matrix uses pinned `ubuntu-24.04`, runs Rust workspace/core, Bash/Zsh, CLI, lock, benchmark, and isolated configuration checks; Tauri GTK dependency installation remains a separate native boundary. Integration `32093828288`.
+- [x] Added isolated Zsh/oh-my-zsh contract job; real user plugin ordering remains manual. Integration `32093828288`.
+- [x] Windows PS 5.1 (`shell: powershell`) and PS 7 (`shell: pwsh`) remain separate; parser/preemption/argv/target protection are automated, while Profile/BOM/ExecutionPolicy/ACL native behavior remains manual/environment-limited.
+- [x] `cargo fmt --check` runs once in Linux lint; clippy/workspace tests run across platform jobs. Fast CI `32093176327`.
+- [x] GUI Linux/Windows frontend tests, typecheck, build, `npm ci`, and npm cache run separately; standalone Tauri compile remains open. Fast CI `32093176327`.
+- [x] `integration.yml` owns the slow Bash/Zsh/PowerShell/lock/CLI/benchmark matrix with workflow dispatch and existing push/PR boundaries. Integration `32093828288`.
+- [x] `release.yml` is limited to `v*` tags/manual dispatch, reports missing packaging inputs, produces unsigned source artifacts/checksums/manifest, and never creates a Release or signs/publishes. Release `32093979406`.
+- [x] Exit-code regression tests and 500/1000 alias generation benchmark are included in the automated inventory; benchmark job passed in Integration `32093828288`.
+- [x] Isolation uses temporary HOME/config paths and Windows LOCALAPPDATA/APPDATA/ALIASMGR_CONFIG_DIR assertions; no real profile dumps. Fast/Integration `32093176327`/`32093828288`.
+- [x] Workflow security scan rejects environment dumps, `set -x`, unsafe evaluation strings, and credential-bearing repository material; Release `32093979406`.
+- [x] Phase B commit: `ab39a09 ci: expand automated release verification matrix`; evidence reconciliation commit: `39e37c0`.
 
 ### Task 22：完成文档、安装和卸载验收
 

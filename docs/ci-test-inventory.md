@@ -20,4 +20,10 @@ This inventory maps stable behavior IDs to the focused test target and workflow 
 | N-001–N-003 | isolation, no environment dumps, no secret fixture output | `cli_layers`, workflow isolation assertions | Integration jobs |
 | PERF-001 | 500/1000 alias generation benchmark | `aliasmgr-tests --test benchmark` | Integration/benchmark job |
 
+## Phase B evidence
+
+- Fast CI `32093176327`: Linux/Windows workspace, lint, GUI npm cache with `npm ci`, and frontend tests/typecheck/build.
+- Integration `32093828288`: Bash, Zsh, oh-my-zsh contract, PowerShell 5.1/7, lock, CLI, benchmark, core, and isolated configuration jobs.
+- Release `32093979406`: dry-run packaging status, unsigned source archive, SHA256SUMS, sanitized manifest, and source security scan.
+
 Failure-path coverage includes invalid names, missing targets, exact/case-fold conflicts, checksum mismatch, permission/unsafe-path results, lock timeout, malformed imports, unsupported records, partial sync, and purge target protection. The inventory does not claim PowerShell Profile/ExecutionPolicy, OneDrive, oh-my-zsh ordering, installers, or real GUI windows.
