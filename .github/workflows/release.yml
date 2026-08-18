@@ -1,12 +1,92 @@
 name: Release
+
 on:
   workflow_dispatch:
   push:
     tags: ['v*']
+
+permissions:
+  contents: read
+
 jobs:
-  source-check:
+  dry-run-status:
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Detect packaging inputs
+        id: packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          if compgen -G 'packaging/**' > /dev/null || compgen -G 'installer/**' > /dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Report packaging boundary
+        shell: bash
+        run: |
+          if [ "${{ steps.packaging.outputs.present }}" = "true" ]; then
+            printf '%s\n' 'Packaging inputs detected; unsigned packaging remains an explicit future step.'
+          else
+            printf '%s\n' 'No packaging inputs found; unsigned package build is intentionally environment-blocked.'
+          fi
+
+  unsigned-source-artifacts:
+    needs: dry-run-status
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4.2.2
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate configuration
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/aliasmgr-home" "$RUNNER_TEMP/aliasmgr-config"
+          echo "HOME=$RUNNER_TEMP/aliasmgr-home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/aliasmgr-config" >> "$GITHUB_ENV"
+          echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
+      - name: Run workspace tests
+        run: cargo test --workspace
+      - name: Create unsigned source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=tar.gz --output=dist/alias-manager-source.tar.gz HEAD
+          sha256sum dist/alias-manager-source.tar.gz > dist/SHA256SUMS
+          python - <<'PY'
+          import json, pathlib
+          manifest = {
+              "artifact": "alias-manager-source.tar.gz",
+              "signed": False,
+              "published": False,
+              "release_created": False,
+              "manual_review_required": True,
+          }
+          pathlib.Path("dist/manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+      - name: Upload unsigned artifacts
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: alias-manager-unsigned-source
+          path: dist/
+          retention-days: 7
+
+  security-source-scan:
+    needs: dry-run-status
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - name: Scan generated paths and workflow safety
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RIn --exclude-dir=.git --exclude=plan.md --exclude='*.lock' -E '(^|[^[:alnum:]_])(eval|Invoke-Expression)([^[:alnum:]_]|$)' crates/aliasmgr-core/src crates/aliasmgr-cli/src crates/aliasmgr-gui/src-tauri/src
+          ! grep -RIn --exclude-dir=.git -E 'set -x|printenv|Get-ChildItem Env:' .github/workflows crates/aliasmgr-tests
+          git ls-files | grep -E '(^|/)(\.env|.*(certificate|private[-_]?key|secret))' && exit 1 || true

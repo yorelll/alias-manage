@@ -2,6 +2,18 @@
 
 This checklist defines the non-GUI release boundary. It does not certify the Tauri GUI, installers, package hooks, visual behavior, or real-user profile compatibility.
 
+## Task 21-1 automated evidence
+
+- [ ] Current Phase B workflows have passed on the final commit; record run IDs here before release review.
+- [ ] Linux/Windows matrix includes Bash, Zsh, PowerShell 5.1/7, lock, CLI, benchmark, and GUI npm cache jobs.
+- [ ] Release dry-run reports packaging inputs and does not create a Release automatically.
+- [ ] Unsigned artifact checksums and sanitized manifest are available as short-lived CI artifacts.
+- [ ] No signing certificates, credentials, or publication tokens are stored in the repository.
+
+## CI evidence
+
+---
+
 ## CI evidence
 
 Current pre-GUI documentation and CLI boundary are supported by the repository files listed in this checklist; the commands below are the authoritative remote verification runs.
@@ -39,6 +51,18 @@ Current pre-GUI documentation and CLI boundary are supported by the repository f
 - [ ] GUI startup, visual presentation, interaction, and cross-platform acceptance.
 
 ## Security review
+
+- [x] Source scan excludes ordinary generated paths from `eval` and `Invoke-Expression`; `reload --print` is documented as an explicit command-output boundary.
+- [x] Existing import filtering and test fixtures avoid passwords, tokens, API keys, and sensitive environment values; Phase B adds workflow scans for environment dumps.
+- [ ] Confirm every generated-file write path uses the intended lock, backup, syntax-check, and atomic-replacement boundary; this remains a code-review/release-gate item until the full Phase B run passes.
+
+---
+
+## Automated/manual boundary
+
+The following remain manual or environment-dependent and must not be checked from CI alone: real GUI windows, visual UX, clean-machine installation, Windows Profiles/OneDrive/ExecutionPolicy/ACL, oh-my-zsh user ordering, package hooks, MSI, signing, publishing, and release approval.
+
+---
 
 - [ ] Search ordinary generated paths for `eval` and `Invoke-Expression`; `reload --print` is the only explicitly documented exception boundary.
 - [ ] Confirm logs, exports, and errors do not expose passwords, tokens, API keys, or sensitive environment values.

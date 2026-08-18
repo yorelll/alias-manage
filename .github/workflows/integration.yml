@@ -40,9 +40,18 @@ jobs:
           - os: ubuntu-24.04
             shell: bash
             test: cli_layers
+          - os: ubuntu-24.04
+            shell: bash
+            test: benchmark
+          - os: ubuntu-24.04
+            shell: bash
+            test: oh_my_zsh_contract
           - os: windows-latest
             shell: pwsh
             test: cli_layers
+
+      # Linux package installation is isolated to the Zsh/oh-my-zsh contract jobs.
+      # If the runner package mirror is unavailable, the job records an environment blocker.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -92,8 +101,23 @@ jobs:
         if: matrix.test == 'cli_layers'
         shell: bash
         run: cargo test -p aliasmgr-tests --test cli_layers
-      - name: Run core tests
-        if: matrix.test == 'bash' || matrix.test == 'zsh_shell'
+      - name: Run generation benchmark
+        if: matrix.test == 'benchmark'
+        shell: bash
+        run: cargo test -p aliasmgr-tests --test benchmark -- --nocapture
+      - name: Install oh-my-zsh contract dependencies
+        if: matrix.test == 'oh_my_zsh_contract'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zsh
+      - name: Run oh-my-zsh contract test
+        if: matrix.test == 'oh_my_zsh_contract'
+        shell: bash
+        run: cargo test -p aliasmgr-tests --test zsh
+      - name: Run shell syntax tests
+        if: matrix.test == 'bash' || matrix.test == 'zsh_shell' || matrix.test == 'oh_my_zsh_contract'
         run: cargo test -p aliasmgr-tests --test shell_syntax
       - name: Run core tests
         run: cargo test -p aliasmgr-core
