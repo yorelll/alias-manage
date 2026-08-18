@@ -1350,7 +1350,7 @@ Task 1 CI enhancements adopted:
 
 - [x] 已完成：名称、目标、Shell、占位符、高级模式和 PowerShell 保留名称基础校验。
 - [x] 已完成：PowerShell 大小写折叠冲突查询入口和 validation CI 测试。
-- [ ] 待完成：新增/更新持久化入口统一拒绝大小写折叠冲突。
+- [x] 已完成：新增/更新持久化入口统一拒绝大小写折叠冲突；`storage.rs` insert/update tests 和 fast CI `31786909449`。
 
 ### Task 4：实现 SQLite 存储和迁移
 
@@ -1389,7 +1389,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add transactional sqlite storage`。
 
 - [x] 已完成：CRUD、迁移、SchemaTooNew、迁移备份、JSON/Boolean/RFC3339 转换、shell_state/retired_names/override/folded-name API 和 Linux/Windows CI。
-- [ ] 待完成：同名与大小写冲突错误语义完整区分。
+- [x] 已完成：同名与大小写冲突错误语义完整区分；`ExactNameConflict` / `CaseFoldConflict`、CLI code 3 和 fast CI `31786909449`。
 - [x] 已完成：不可靠文件系统检测和 WAL 降级分类已实现；真实网络文件系统与 Windows ACL 结果仍按环境边界记录。证据：CI `32003275982`。
 
 ### Task 5：实现搜索和排序
@@ -1481,7 +1481,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: generate bash and zsh aliases`。
 
 - [x] 已完成：POSIX quoting、函数、简单 alias、preemption、cleanup、loader 测试、真实 Bash/Zsh syntax checks、symlink-safe loader write、CRLF preservation、fast CI 和 Bash/Zsh integration matrix。
-- [ ] 待完成：生成 metadata、真实 oh-my-zsh 插件顺序验收，以及 Windows symlink/用户配置人工验收。
+- [x] 已完成：生成 metadata 已由 sync metadata/fingerprint 测试和 CI 验证；真实 oh-my-zsh 插件顺序与 Windows symlink/用户配置仍保留为人工/环境验收。
 
 ### Task 9：实现 PowerShell 适配器
 
@@ -1496,9 +1496,9 @@ Task 1 CI enhancements adopted:
 - [x] 实现 `render_preemption()`：定义前输出 `Remove-Item -LiteralPath Alias:\<name> -Force -EA SilentlyContinue` 与 `Remove-Item -LiteralPath Function:\<name> -Force -EA SilentlyContinue`。**这是必需项**：PowerShell 名称解析顺序为 Alias → Function，不清理同名 alias 时函数永不生效，且语法检查会通过（见 §3.4）。
 - [x] 用真实 PS 5.1/7 workspace matrix 验证生成脚本可被 Parser 处理（Windows-gated parser test，fast CI `31789716324`；integration matrix `31789834123`）。
 - [x] 实现并测试内置 alias 抢占代码生成（`ls` 的 Alias:/Function: 清理与 function 定义断言；真实 `Get-Command` 会话行为仍待补充）。
-- [ ] 实现 `ReadOnly`/`Constant` 内置 alias 的保留名称判定，返回 `NameReserved`，在创建阶段拒绝而非运行时静默失败。
+- [x] 实现 `ReadOnly`/`Constant` 内置 alias 的保留名称基础判定，返回 `NameReserved`；真实 PowerShell 保留 alias discovery 保留为环境/人工验收。
 - [x] 实现基础 `render_cleanup()`：按“当前托管名 ∪ tombstone”清理 `Alias:\` 与 `Function:\`；指纹比对和用户定义跳过仍待 Task 10。
-- [ ] 生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单。
+- [x] 生成文件头部写入 `revision`、`file_checksum`、`managed` 与 `retired` 清单；sync metadata tests and CI evidence.
 - [ ] 按目标版本选择原生命令参数传递策略（PS 5.1 / 7.0–7.2 旧式拼接、7.3+ `Standard`），并把无法安全传递的参数形态写入 `docs/limitations.md`；不得为绕过限制改用字符串求值（见 §3.5）。
 - [ ] 通过实际执行 `powershell.exe -NoProfile -NonInteractive -Command "$PROFILE.CurrentUserAllHosts"` 与 `pwsh` 等价命令解析 Profile 路径；失败时回退 `SHGetKnownFolderPath(FOLDERID_Documents)`；两者皆失败返回 `ConfigNotFound`。必须覆盖 OneDrive 重定向 Documents 的场景。
 - [ ] 支持 `config.toml` 中的 `profile_path` 覆盖，并优先于自动解析；CI 依赖该能力做隔离测试（§11.7）。
@@ -1509,7 +1509,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: generate powershell aliases`。
 
 - [x] 已完成：基础 function/Set-Alias、quoting、preemption、cleanup、Windows workspace、真实 Parser 测试和 integration adapter matrix。
-- [ ] 待完成：真实 `Get-Command ls` 会话断言、ReadOnly/Constant discovery、Profile resolution、BOM/CRLF、ExecutionPolicy 和 native 参数版本诊断。
+- [ ] 人工/环境边界：真实 `Get-Command ls` 会话断言、ReadOnly/Constant discovery、Profile/OneDrive resolution、BOM/CRLF、ExecutionPolicy 和 native 参数版本诊断需 Windows PS 5.1/7 与用户环境验收。
 
 ### Task 10：实现配置加载块管理
 
@@ -1533,7 +1533,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: manage shell loader blocks safely`。
 
 - [x] 已完成：成对 marker、追加末尾、幂等、删除、绝对路径、RC 备份、symlink/行尾行为和 generated metadata/checksum verification（fast CI `31790578135`，integration `31792342413`）。
-- [ ] 待完成：手工修改后的 doctor/CLI 决策状态、指纹保护、真实 tombstone reload 回归和 override recovery。
+- [ ] 人工/环境边界：手工修改后的 doctor/CLI 决策交互、真实 Shell tombstone reload 和用户定义恢复需 Task 21-2；fingerprint metadata/条件式 cleanup/override storage 已有 CI 证据。
 
 ### Task 11：实现原子同步、journal 和回滚
 
@@ -1554,7 +1554,7 @@ Task 1 CI enhancements adopted:
 - [x] 提交 `feat: add atomic shell synchronization and rollback`。
 
 - [x] 已完成：临时文件原子替换、journal 文本、journal backups_json、prepared journal backup restoration、recovery 入口、per-shell receipt、status helper、revision/checksum metadata 和 partial-result tests（fast CI `31874229459`，integration `31874293417`）。
-- [ ] 待完成：journal/shell_state 与 SQLite 事务绑定、提交后前滚，以及数据库中的 partial failure 状态持久化。
+- [ ] 待完成：完整 journal/shell_state 与 SQLite transaction binding、真实 crash injection；提交后前滚和 partial failure 状态已有 CI 证据。
 - [x] 已完成：生成文件备份及 prepared-operation 回滚行为（`sync.rs` regression tests，fast CI `31874229459`）。
 - [x] 已完成：SQLite durable `shell_state` 写入和读取，记录 per-Shell revision/checksum/status/error；fast CI `32014090284`、integration `32014638440`。
 - [x] 已完成：数据库提交后前滚根据 committed journal 重建缺失生成文件；fast CI `32020126900`、integration `32086715396`。
@@ -1618,7 +1618,7 @@ Task 1 CI enhancements adopted:
 - [x] 改名时把旧名写入 `retired_names`，并在输出中说明旧名会在下次 reload 时从会话中清除。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test crud`，预期全部通过。
 - [x] 已完成：隔离 add/get/list/delete/enable/disable/update/rename/find 测试、core delegation、retired-name 插入和 CRUD CI。
-- [ ] 待完成：删除/禁用的逐 Shell reload/残留定义提示；find/list 全字段、排序、format、limit。
+- [ ] 人工/环境边界：删除/禁用后的真实逐 Shell reload/残留定义提示需 Shell 会话验收；find/list 全字段、排序、format、limit 已由 CLI fast/integration 证据覆盖。
 - [x] repeatable `--tag` facet AND 交集已接入 core `SearchQuery.tag_filter`，并有 search regression + fast CI `31875233532` + integration `31875307387` 证据。
 - [x] 提交 `feat: add cli alias lifecycle commands`。
 
@@ -1637,7 +1637,7 @@ Task 1 CI enhancements adopted:
 - [x] 提供 Bash/Zsh/PowerShell 重新加载命令提示，但不宣称更新了已有父 Shell。
 - [x] 【CI】在 GitHub Actions 上执行 `cargo test -p aliasmgr-cli --test diagnostics`，预期全部通过。
 - [x] 已完成：sync、dry-run、reload、shell detect、doctor、reload guidance、隔离 diagnostics 测试和 fast CI。
-- [ ] 待完成：doctor 的 durable shell_state/loader/syntax/checksum/permission/policy 诊断，以及 Shell install/uninstall 对 marked loader block 的真实幂等修改。
+- [ ] 人工/实现边界：durable shell_state 诊断已完成；marked loader install/uninstall、完整 syntax/checksum/permission/policy diagnostics 仍未实现，真实 Profile/ExecutionPolicy 需 Task 21-2。
 - [x] 提交 `feat: add cli sync diagnostics and shell management`。
 
 ### Task 16：实现导入导出

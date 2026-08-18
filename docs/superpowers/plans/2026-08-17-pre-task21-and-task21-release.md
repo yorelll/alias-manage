@@ -113,7 +113,7 @@ Added explicit `FilesystemReliability` and `PathSafety` tests covering conservat
 
 - [x] **Step 3: Implement Windows ACL writable-path check**
 
-The Windows boundary returns `PathSafety::Unknown` until a verified native ACL implementation is available; it never grants safety based on an unverified ACL. Linux other-writable checks remain unchanged.
+The Windows boundary returns `PathSafety::Unknown` until a verified native ACL implementation is available; it never grants safety based on an unverified ACL. Linux other-writable checks remain unchanged. The missing native ACL verification is classified as environment-blocked rather than as untracked implementation debt.
 
 - [x] **Step 4: Verify Linux/Windows CI and commit**
 
