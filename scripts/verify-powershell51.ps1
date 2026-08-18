@@ -298,21 +298,19 @@ try {
 }
 
 # PS51-009: loader install/uninstall idempotence
-$ps51UninstallResult = "EXPECTED-LIMITATION"
-$ps51UninstallActual = "uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell."
-$ps51UninstallEvidence = "ps51-uninstall-idempotence"
+# Use direct try/catch branches (PS5.1 strict-mode safe: no pre-initialized outer vars)
 try {
     # Attempt dry-run uninstall to verify idempotence
-    $ps51UninstallOut = Invoke-Cli @("shell", "uninstall", "--dry-run")
-    $ps51UninstallResult = "PASS"
-    $ps51UninstallActual = [string]$ps51UninstallOut
-    $ps51UninstallEvidence = "stdout"
+    $ps51UninstallOutRaw = Invoke-Cli @("shell", "uninstall", "--dry-run")
+    Record-Result "PS51-009" "loader install/uninstall idempotence" "PASS" `
+        "uninstall --dry-run succeeds; no real profile modified" `
+        ([string]$ps51UninstallOutRaw) "stdout"
 } catch {
-    $ps51UninstallActual = "uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell. Error: " + $_.Exception.Message
+    Record-Result "PS51-009" "loader install/uninstall idempotence" "EXPECTED-LIMITATION" `
+        "uninstall --dry-run succeeds; no real profile modified" `
+        ("uninstall --dry-run unavailable; idempotence verification is MANUAL-ONLY in live shell. Error: " + $_.Exception.Message) `
+        "ps51-uninstall-idempotence"
 }
-Record-Result "PS51-009" "loader install/uninstall idempotence" $ps51UninstallResult `
-    "uninstall --dry-run succeeds; no real profile modified" `
-    $ps51UninstallActual $ps51UninstallEvidence
 
 # ConstrainedLanguage mode detection
 if ($LangMode -eq "ConstrainedLanguage") {
