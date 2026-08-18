@@ -184,7 +184,7 @@ if [[ $IDEM_RC -eq 0 ]]; then
   LOADER_COUNT=0
   INSTALL_ZSHRC="$INSTALL_CONFIG/.zshrc"
   if [[ -f "$INSTALL_ZSHRC" ]]; then
-    LOADER_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$INSTALL_ZSHRC" 2>/dev/null || echo 0)"
+    LOADER_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$INSTALL_ZSHRC" 2>/dev/null)" || true
   fi
   if [[ "$LOADER_COUNT" -le 1 ]]; then
     record_result "Z-002" "zsh loader install idempotence" "PASS" \
@@ -327,13 +327,16 @@ UNINSTALL_OUT="$(HOME="$TEMP_PROFILE" ZDOTDIR="$TEMP_PROFILE" "$CLI" --config-di
 if [[ $UNINSTALL_RC -eq 0 ]]; then
   INSTALL_ZSHRC="$INSTALL_CONFIG/.zshrc"
   if [[ -f "$INSTALL_ZSHRC" ]]; then
-    RESIDUE_COUNT="$(grep -c "aliasmgr\|alias-manager\|generated" "$INSTALL_ZSHRC" 2>/dev/null || echo 0)"
+    # Use grep -cF on the unique START_MARKER; grep -c outputs a number even on no match.
+    # Do not add || echo 0 here — grep -c always emits the count, exit 1 just means 0 matches.
+    RESIDUE_COUNT=0
+    RESIDUE_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$INSTALL_ZSHRC" 2>/dev/null)" || true
     if [[ "$RESIDUE_COUNT" -eq 0 ]]; then
       record_result "Z-007" "zsh shell uninstall removes loader" "PASS" \
-        "shell uninstall clears loader from .zshrc" "residue_count=$RESIDUE_COUNT" "file"
+        "shell uninstall clears loader from .zshrc" "start-marker count=$RESIDUE_COUNT" "file"
     else
       record_result "Z-007" "zsh shell uninstall removes loader" "FAIL" \
-        "shell uninstall clears loader from .zshrc" "residue_count=$RESIDUE_COUNT (expected 0)" "file"
+        "shell uninstall clears loader from .zshrc" "start-marker count=$RESIDUE_COUNT (expected 0)" "file"
     fi
   else
     record_result "Z-007" "zsh shell uninstall removes loader" "PASS" \
