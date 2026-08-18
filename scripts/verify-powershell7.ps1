@@ -308,12 +308,11 @@ try {
         "ps7-uninstall-idempotence"
 }
 
-# ConstrainedLanguage mode detection
-if ($LangMode -eq "ConstrainedLanguage") {
-    $langExpected = "ConstrainedLanguage reported as explicit status; not bypassed"
-    $langActual = "ConstrainedLanguage mode active — some checks may not run"
-    Record-Result "PS7-LANG-001" "ConstrainedLanguage mode detected" "EXPECTED-LIMITATION" $langExpected $langActual "SessionState.LanguageMode"
-}
+# ConstrainedLanguage mode detection is reported without bypassing policy.
+Record-Result "PS7-LANG-001" "ConstrainedLanguage mode status" "EXPECTED-LIMITATION" `
+    "LanguageMode is reported explicitly; ConstrainedLanguage is never bypassed" `
+    ("LanguageMode=" + $LangMode + "; live constrained-language behavior remains an environment check") `
+    "SessionState.LanguageMode"
 
 # argv summary — PS7 specific
 $ArgvCases = @(
