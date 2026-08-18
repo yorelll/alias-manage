@@ -1293,3 +1293,97 @@ test("verify-powershell7.ps1 implements loader idempotence (PS7-009)", async () 
     "verify-powershell7.ps1 PS7-009 must not be deferred to Task 4"
   );
 });
+
+// ─── Task 4: Group Policy reporting ─────────────────────────────────
+// PS wrappers must reference "Group Policy" explicitly so that enterprise
+// environments with UserPolicy/MachinePolicy restrictions are documented.
+
+test("verify-powershell51.ps1 references Group Policy in status report", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  assert.match(
+    source,
+    /Group Policy/,
+    "verify-powershell51.ps1 must reference Group Policy as an explicit ExecutionPolicy status"
+  );
+});
+
+test("verify-powershell7.ps1 references Group Policy in status report", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  assert.match(
+    source,
+    /Group Policy/,
+    "verify-powershell7.ps1 must reference Group Policy as an explicit ExecutionPolicy status"
+  );
+});
+
+// ─── Task 4: No Profile success via bypass ────────────────────────────
+// Scripts must not claim profile load succeeded via -ExecutionPolicy Bypass
+// in executable code (comments explaining usage are allowed).
+
+test("verify-powershell51.ps1 does not claim Profile success via bypass in executable code", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  const executableLines = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  // No Set-ExecutionPolicy Bypass in non-comment code
+  assert.doesNotMatch(
+    executableLines,
+    /Set-ExecutionPolicy\s+Bypass/i,
+    "verify-powershell51.ps1 must not call Set-ExecutionPolicy Bypass in executable code"
+  );
+  // No loading $PROFILE after a bypass claim
+  assert.doesNotMatch(
+    executableLines,
+    /\.\s+\$PROFILE/,
+    "verify-powershell51.ps1 must not dot-source the real Profile"
+  );
+});
+
+test("verify-powershell7.ps1 does not claim Profile success via bypass in executable code", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  const executableLines = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  assert.doesNotMatch(
+    executableLines,
+    /Set-ExecutionPolicy\s+Bypass/i,
+    "verify-powershell7.ps1 must not call Set-ExecutionPolicy Bypass in executable code"
+  );
+  assert.doesNotMatch(
+    executableLines,
+    /\.\s+\$PROFILE/,
+    "verify-powershell7.ps1 must not dot-source the real Profile"
+  );
+});
+
+// ─── Task 4: Wrappers use their own shell's invoke (not cross-invoke) ─────
+// PS5.1 wrapper uses 'powershell' identifier; PS7 uses 'pwsh'.
+// Neither should invoke the other's shell binary.
+
+test("verify-powershell51.ps1 does not invoke pwsh.exe (cross-shell invocation)", async () => {
+  const source = await readScript("verify-powershell51.ps1");
+  const executableLines = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  assert.doesNotMatch(
+    executableLines,
+    /\bpwsh\b/,
+    "verify-powershell51.ps1 must not invoke pwsh (PS7 binary) in executable code"
+  );
+});
+
+test("verify-powershell7.ps1 does not invoke powershell.exe (cross-shell invocation)", async () => {
+  const source = await readScript("verify-powershell7.ps1");
+  const executableLines = source
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  assert.doesNotMatch(
+    executableLines,
+    /\bpowershell\.exe\b/i,
+    "verify-powershell7.ps1 must not invoke powershell.exe (PS5.1 binary) in executable code"
+  );
+});
