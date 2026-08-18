@@ -13,6 +13,10 @@
 - artifact SHA256：
 - 配置/Profile 路径（脱敏）：
 - 结果：PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE
+- 脚本摘要路径（result/verification-summary.json 路径，脱敏）：
+- 完整日志路径（result/verification.log 路径，脱敏）：
+- argv 摘要路径（如适用，result/argv-summary.json 路径，脱敏）：
+- 截图路径（如适用，脱敏）：
 
 ## 复现
 
