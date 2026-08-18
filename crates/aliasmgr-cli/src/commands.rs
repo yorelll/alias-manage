@@ -36,77 +36,8 @@ pub fn shell_detect() -> aliasmgr_core::detection::DetectionResult { aliasmgr_co
 pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasError> { if dry_run { return Ok(String::new()); } let aliases = list(config_dir)?; let database = database(config_dir)?; let mut shells = aliases.iter().flat_map(|alias| alias.shells.clone()).collect::<Vec<_>>(); for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] { if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) { shells.push(shell); } } shells.sort(); shells.dedup(); let coordinator = aliasmgr_core::sync::SyncCoordinator::new(config_dir.unwrap_or(".alias-manager")); let mut results = Vec::new(); for shell in &shells { let names = database.managed_name_set(shell)?; results.extend(coordinator.apply_with_managed_names(&aliases, std::slice::from_ref(shell), 1, &names)?.results); } Ok(format!("synced {} shell results", results.len())) }
 pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String { let root = config_dir.unwrap_or(".alias-manager"); match shell { "zsh" => format!("source '{root}/generated/zsh.sh'"), "powershell5" => format!(". '{root}/generated/powershell5.ps1'"), "powershell7" => format!(". '{root}/generated/powershell7.ps1'"), _ => format!(". '{root}/generated/bash.sh'"), } }
 
-pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let shell_name = shell.to_ascii_lowercase();
-    let (rc_path, generated) = match shell_name.as_str() {
-        "bash" => (config.shells.bash_rc_path.unwrap_or_else(|| paths.root.join(".bashrc")), paths.generated_path("bash")),
-        "zsh" => (config.shells.zsh_rc_path.unwrap_or_else(|| paths.root.join(".zshrc")), paths.generated_path("zsh")),
-        _ => return Err(AliasError::ShellNotInstalled),
-    };
-    let loader = aliasmgr_core::shells::common::render_loader(&generated);
-    let before = std::fs::read_to_string(&rc_path).unwrap_or_default();
-    let installed = aliasmgr_core::shells::common::install_loader(&before, &loader)?;
-    if installed == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &loader)?;
-    Ok(true)
-}
-
-pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let shell_name = shell.to_ascii_lowercase();
-    let rc_path = match shell_name.as_str() {
-        "bash" => config.shells.bash_rc_path.unwrap_or_else(|| paths.root.join(".bashrc")),
-        "zsh" => config.shells.zsh_rc_path.unwrap_or_else(|| paths.root.join(".zshrc")),
-        _ => return Err(AliasError::ShellNotInstalled),
-    };
-    if !rc_path.exists() { return Ok(false); }
-    let before = std::fs::read_to_string(&rc_path)?;
-    let cleaned = aliasmgr_core::shells::common::remove_loader(&before)?;
-    if cleaned == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &cleaned)?;
-    Ok(true)
-}
-
-pub fn shell_install_status(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let rc_path = match shell.to_ascii_lowercase().as_str() { "bash" => config.shells.bash_rc_path.unwrap_or_else(|| paths.root.join(".bashrc")), "zsh" => config.shells.zsh_rc_path.unwrap_or_else(|| paths.root.join(".zshrc")), _ => return Err(AliasError::ShellNotInstalled) };
-    Ok(rc_path.exists() && aliasmgr_core::shells::common::loader_position(&std::fs::read_to_string(rc_path)?)? == aliasmgr_core::shells::common::LoaderPosition::AtEnd)
-}
-
 pub fn import_file(file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { import_preview(None, file) }
 pub fn export_file(config_dir: Option<&str>, file: &str) -> Result<(), AliasError> { let aliases = list(config_dir)?; let path = Path::new(file); if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::export_toml(path, &aliases) } else { aliasmgr_core::transfer::export_json(path, &aliases) } }
-
-pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let (rc_path, generated) = match shell.to_ascii_lowercase().as_str() {
-        "bash" => (config.shells.bash_rc_path.unwrap_or_else(|| paths.root.join(".bashrc")), paths.generated_path("bash")),
-        "zsh" => (config.shells.zsh_rc_path.unwrap_or_else(|| paths.root.join(".zshrc")), paths.generated_path("zsh")),
-        _ => return Err(AliasError::ShellNotInstalled),
-    };
-    let loader = aliasmgr_core::shells::common::render_loader(&generated);
-    let before = std::fs::read_to_string(&rc_path).unwrap_or_default();
-    let installed = aliasmgr_core::shells::common::install_loader(&before, &loader)?;
-    if installed == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &loader)?;
-    Ok(true)
-}
-
-pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let rc_path = match shell.to_ascii_lowercase().as_str() { "bash" => config.shells.bash_rc_path.unwrap_or_else(|| paths.root.join(".bashrc")), "zsh" => config.shells.zsh_rc_path.unwrap_or_else(|| paths.root.join(".zshrc")), _ => return Err(AliasError::ShellNotInstalled) };
-    if !rc_path.exists() { return Ok(false); }
-    let before = std::fs::read_to_string(&rc_path)?;
-    let cleaned = aliasmgr_core::shells::common::remove_loader(&before)?;
-    if cleaned == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &cleaned)?;
-    Ok(true)
-}
 
 pub fn import_file(file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { import_preview(None, file) }
 pub fn import_preview(config_dir: Option<&str>, file: &str) -> Result<aliasmgr_core::transfer::ImportReport, AliasError> { let path = Path::new(file); let existing = if config_dir.is_some() { list(config_dir)?.into_iter().map(|alias| (alias.name.clone(), alias)).collect() } else { std::collections::BTreeMap::new() }; let aliases = if path.extension().and_then(|value| value.to_str()) == Some("toml") { aliasmgr_core::transfer::read_toml(path)? } else { aliasmgr_core::transfer::read_json(path)? }; aliasmgr_core::transfer::import_records(aliases, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask).map(|report| report.into_public()) }
