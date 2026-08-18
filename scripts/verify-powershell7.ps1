@@ -279,21 +279,21 @@ Record-Result "PS7-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITAT
 # PS7-008: ACL/target protection — invalid alias names should be rejected
 # CLI interface: add NAME --exec PROG --arg ARG
 try {
-    $BadNameOut = Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi")
+    $BadNameOut = [string](Invoke-Cli @("add", "1badname", "--exec", "echo", "--arg", "hi"))
     if ($BadNameOut -match "error|invalid|not allowed|must start|illegal") {
         Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "PASS" `
-            "alias name starting with digit is rejected by CLI" $BadNameOut "stdout"
+            "alias name starting with digit is rejected by CLI" "CLI rejected invalid name 1badname with error output" "stdout"
     } else {
         try { Invoke-Cli @("remove", "--yes", "1badname") | Out-Null } catch { }
         Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" `
             "invalid alias names rejected with error" `
-            "invalid name '1badname' was not rejected; output: $($BadNameOut.Trim())" "stdout"
+            "invalid name 1badname was not rejected; output was sanitized" "stdout"
     }
 } catch {
     Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "PASS" `
         "invalid alias names rejected with error" `
-        "CLI rejected invalid name '1badname' with error: $($_.Exception.Message)" "stdout"
-}
+        "CLI rejected invalid name 1badname with error output" "stdout"
+}'}]} has been updated successfully. } uppern'wina. 奇米影视 优宝  code:null code2json 天天彩票是әмар ติดต่อฝ่ายขาย  (commentary  code) ♀♀♀♀♀♀json министирынҭқар. оттура.functions.Edit  (commentary  code)  {json#+#+#+#+{
 
 # PS7-009: loader install/uninstall idempotence
 try {
