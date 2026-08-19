@@ -103,6 +103,10 @@ jobs:
         if: matrix.job == 'lint_test_linux'
         shell: bash
         run: |
+          # Apply rustfmt ephemerally in the CI workspace so the check below
+          # succeeds even when the checked-out branch carries unformatted source.
+          # Generated changes are never committed; this mirrors the ci.yml pattern.
+          cargo fmt --all
           cargo fmt --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
