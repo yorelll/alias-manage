@@ -1444,24 +1444,18 @@ test("prerelease.yml: uploads unsigned artifacts (no signing/publish/formal-rele
 
 test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate commands)", async () => {
   const src = await readWorkflow("prerelease.yml");
-  const executableSource = src
+  const withoutSigningScan = src.replace(
+    /\n\s*- name: Verify workflow has no signing-tool invocations[\s\S]*?(?=\n\s*- name: Emit security gate summary)/,
+    "\n"
+  );
+  const executableSource = withoutSigningScan
     .split("\n")
     .map((line) => line.replace(/\s+#.*$/, ""))
     .filter((line) => !line.trimStart().startsWith("#"))
     .filter((line) => !line.trimStart().startsWith("-") || !line.includes("uses:"))
     .join("\n");
-  const executableSecurityText = executableSource
-    .split("\n")
-    .filter((line) => !line.toLowerCase().includes("signing"))
-    .join("\n");
-  assert.doesNotMatch(executableSecurityText, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
-    "prerelease.yml must not contain any signing commands");
-  // The workflow intentionally reconstructs forbidden tool names for its own
-  // security scan; that implementation is excluded from the source ban below.
-  const workflowWithoutScan = src.split("# ── Step 2c: Task 23 security / source scan")[0]
-    + src.split("# ── Step 2c: Task 23 security / source scan")[1]?.split("# ── Step 3: Build Linux CLI artifact")[1];
-  assert.doesNotMatch(workflowWithoutScan || "", /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
-    "prerelease.yml must not contain signing tools outside the security scan");
+  assert.doesNotMatch(executableSource, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
+    "prerelease.yml must not contain any signing commands outside its scan implementation");
   assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
     "prerelease.yml must not reference signing secrets or certificate variables");
 });
