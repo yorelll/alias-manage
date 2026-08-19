@@ -1427,11 +1427,29 @@ test("prerelease.yml: requires exact CREATE-PRERELEASE confirmation string", asy
 
 test("prerelease.yml: uploads unsigned artifacts (no signing/publish/formal-release)", async () => {
   const src = await readWorkflow("prerelease.yml");
+  const nonCommentSource = src
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
   assert.match(src, /upload-artifact/, "prerelease.yml must upload artifacts");
-  // Must not sign artifacts
-  assert.doesNotMatch(src, /codesign|signtool|gpg\s+--sign|notarize/i, "prerelease.yml must not sign artifacts");
-  // Must not publish to registries or package managers
-  assert.doesNotMatch(src, /cargo publish|npm publish|publish-to-registry/i, "prerelease.yml must not publish packages");
+  // Explanatory comments may name forbidden tools; only executable/non-comment
+  // workflow text can represent a signing or publish action.
+  assert.doesNotMatch(nonCommentSource, /\bcodesign\b|\bsigntool\s+sign\b|\bgpg\s+--sign\b|\bnotarize\b/i,
+    "prerelease.yml must not sign artifacts");
+  assert.doesNotMatch(nonCommentSource, /\bcargo publish\b|\bnpm publish\b|\bpublish-to-registry\b/i,
+    "prerelease.yml must not publish packages");
+});
+
+test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate commands)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  const nonCommentSource = src
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n");
+  assert.doesNotMatch(nonCommentSource, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
+    "prerelease.yml must not contain any signing commands");
+  assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
+    "prerelease.yml must not reference signing secrets or certificate variables");
 });
 
 test("prerelease.yml: prerelease creation is conditional on all gates and exact confirmation", async () => {
