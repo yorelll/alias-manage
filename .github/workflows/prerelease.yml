@@ -362,21 +362,7 @@ jobs:
       - name: Build Linux CLI release binary
         shell: bash
         run: cargo build -p aliasmgr-cli --release
-      - name: Attempt Tauri GUI build (environment-blocked if unavailable)
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          # Tauri build requires webkit2gtk system libraries which are not provisioned
-          # on standard ubuntu-24.04 runners without additional apt packages.
-          # We attempt the build and record environment-blocked if it fails.
-          if ! apt-cache show libwebkit2gtk-4.1-dev > /dev/null 2>&1; then
-            echo "webkit2gtk-4.1-dev not available; GUI build is environment-blocked."
-            echo "gui_linux_status=environment-blocked" >> "$GITHUB_ENV"
-          else
-            echo "gui_linux_status=available" >> "$GITHUB_ENV"
-          fi
-      - name: Package Linux artifacts
+      - name: Package Linux CLI artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -385,23 +371,19 @@ jobs:
           sha256sum "dist/aliasmgr-linux-x86_64-${{ inputs.version }}" >> dist/SHA256SUMS
           python3 - <<'PY'
           import json, os, pathlib
-          gui_status = os.environ.get("gui_linux_status", "environment-blocked")
           manifest = {
               "version": os.environ.get("INPUT_VERSION", "unknown"),
               "platform": "linux-x86_64",
               "artifacts": {
                   "cli": f"aliasmgr-linux-x86_64-{os.environ.get('INPUT_VERSION', 'unknown')}",
-                  "gui_appimage": "environment-blocked",
-                  "gui_deb": "environment-blocked",
               },
-              "gui_build_status": gui_status,
               "signed": False,
               "published": False,
               "release_created": False,
               "manual_review_required": True,
               "sensitive_data_redacted": True,
           }
-          pathlib.Path("dist/manifest-linux.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          pathlib.Path("dist/manifest-linux-cli.json").write_text(json.dumps(manifest, indent=2) + "\n")
           PY
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -434,19 +416,7 @@ jobs:
           "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
       - name: Build Windows CLI release binary
         run: cargo build -p aliasmgr-cli --release
-      - name: Attempt Tauri GUI build status check (environment-blocked if unavailable)
-        shell: pwsh
-        run: |
-          # Tauri GUI build on Windows requires WebView2 and additional native tooling.
-          # We record environment-blocked if native GUI compilation inputs are absent.
-          if (-not (Test-Path 'crates\aliasmgr-gui\src-tauri\Cargo.toml')) {
-            Write-Host "Tauri src-tauri Cargo.toml not found in workspace; GUI build is environment-blocked."
-            "GUI_WINDOWS_STATUS=environment-blocked" >> $env:GITHUB_ENV
-          } else {
-            Write-Host "Tauri inputs present; GUI build attempted on native runner."
-            "GUI_WINDOWS_STATUS=environment-blocked-no-webview2-provisioned" >> $env:GITHUB_ENV
-          }
-      - name: Package Windows artifacts
+      - name: Package Windows CLI artifacts
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
@@ -459,17 +429,14 @@ jobs:
             platform = "windows-x86_64"
             artifacts = @{
               cli = $exeName
-              gui_msi = "environment-blocked"
-              gui_exe = "environment-blocked"
             }
-            gui_build_status = $env:GUI_WINDOWS_STATUS
             signed = $false
             published = $false
             release_created = $false
             manual_review_required = $true
             sensitive_data_redacted = $true
           }
-          $manifest | ConvertTo-Json -Depth 5 | Out-File -FilePath dist\manifest-windows.json -Encoding utf8
+          $manifest | ConvertTo-Json -Depth 5 | Out-File -FilePath dist\manifest-windows-cli.json -Encoding utf8
       - name: Upload Windows CLI artifact
         uses: actions/upload-artifact@v4.6.2
         with:
@@ -477,7 +444,7 @@ jobs:
           path: dist/
           retention-days: 14
 
-  # ── Step 5a: Build Linux Tauri GUI artifact ───────────────────────────────
+  # ── Step 5a: Build Linux Tauri GUI artifact ────────────────────────────────
   build_linux_gui:
     name: Build Linux Tauri GUI
     needs: [fast_ci_gate, integration_gate, security_gate]
@@ -637,7 +604,7 @@ jobs:
           path: dist-gui-linux/
           retention-days: 14
 
-  # ── Step 5b: Build Windows Tauri GUI artifact ──────────────────────────────
+  # ── Step 5b: Build Windows Tauri GUI artifact ─────────────────────────────
   build_windows_gui:
     name: Build Windows Tauri GUI
     needs: [fast_ci_gate, integration_gate, security_gate]
@@ -692,21 +659,17 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist-gui-windows | Out-Null
           $BuildLog = "dist-gui-windows\tauri-build.log"
-          $BuildErrLog = $BuildLog + ".err"
           $Proc = Start-Process -FilePath "cargo" `
             -ArgumentList "tauri","build","--config",'{\"bundle\":{\"active\":true}}',
                           "--manifest-path","crates/aliasmgr-gui/src-tauri/Cargo.toml" `
-            -Wait -PassThru -RedirectStandardOutput $BuildLog -RedirectStandardError $BuildErrLog
+            -Wait -PassThru -RedirectStandardOutput $BuildLog -RedirectStandardError "$BuildLog.err"
           if ($Proc.ExitCode -eq 0) {
             "gui_windows_build_status=success" >> $env:GITHUB_OUTPUT
             Write-Host "Tauri Windows build succeeded."
           } else {
             "gui_windows_build_status=environment-blocked" >> $env:GITHUB_OUTPUT
             Write-Host "Tauri Windows build failed; recording environment-blocked status."
-            Write-Host "=== Last 30 lines of stdout ==="
             Get-Content $BuildLog -ErrorAction SilentlyContinue | Select-Object -Last 30
-            Write-Host "=== Last 30 lines of stderr ==="
-            Get-Content $BuildErrLog -ErrorAction SilentlyContinue | Select-Object -Last 30
           }
       - name: Collect Windows GUI artifacts or record environment-blocked
         shell: pwsh
@@ -766,7 +729,7 @@ jobs:
           path: dist-gui-windows/
           retention-days: 14
 
-  # ── Step 5c: Build combined checksums, manifest, and bundle manuals ────────
+  # ── Step 6: Build combined checksums, manifest, and bundle manuals ─────────
   build_artifact_bundle:
     name: Build artifact bundle (SHA256SUMS + manifest + manuals)
     needs: [build_linux_cli, build_windows_cli, build_linux_gui, build_windows_gui]
@@ -776,12 +739,12 @@ jobs:
       - uses: actions/checkout@v4.2.2
         with:
           ref: ${{ inputs.source_ref }}
-      - name: Download Linux artifacts
+      - name: Download Linux CLI artifacts
         uses: actions/download-artifact@v4.2.1
         with:
           name: aliasmgr-linux-cli-${{ inputs.version }}
           path: dist-linux/
-      - name: Download Windows artifacts
+      - name: Download Windows CLI artifacts
         uses: actions/download-artifact@v4.2.1
         with:
           name: aliasmgr-windows-cli-${{ inputs.version }}
@@ -801,35 +764,45 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist-bundle
-          # Combine checksums from both platforms
+          # Combine CLI checksums
           cat dist-linux/SHA256SUMS dist-windows/SHA256SUMS > dist-bundle/SHA256SUMS
+          # Append GUI checksums only if the file exists (build may have been environment-blocked)
           [ -f dist-linux-gui/SHA256SUMS-gui ] && cat dist-linux-gui/SHA256SUMS-gui >> dist-bundle/SHA256SUMS || true
           [ -f dist-windows-gui/SHA256SUMS-gui ] && cat dist-windows-gui/SHA256SUMS-gui >> dist-bundle/SHA256SUMS || true
           python3 - <<'PY'
           import json, pathlib, os
-          linux_m  = json.loads(pathlib.Path("dist-linux/manifest-linux.json").read_text())
-          windows_m = json.loads(pathlib.Path("dist-windows/manifest-windows.json").read_text())
-          linux_gui_m = {}
-          windows_gui_m = {}
-          if pathlib.Path("dist-linux-gui/manifest-linux-gui.json").exists():
-              linux_gui_m = json.loads(pathlib.Path("dist-linux-gui/manifest-linux-gui.json").read_text())
-          if pathlib.Path("dist-windows-gui/manifest-windows-gui.json").exists():
-              windows_gui_m = json.loads(pathlib.Path("dist-windows-gui/manifest-windows-gui.json").read_text())
+
+          linux_cli_m  = json.loads(pathlib.Path("dist-linux/manifest-linux-cli.json").read_text())
+          windows_cli_m = json.loads(pathlib.Path("dist-windows/manifest-windows-cli.json").read_text())
+          linux_gui_m   = json.loads(pathlib.Path("dist-linux-gui/manifest-linux-gui.json").read_text())
+          windows_gui_m = json.loads(pathlib.Path("dist-windows-gui/manifest-windows-gui.json").read_text())
+
+          linux_gui_status   = linux_gui_m.get("gui_build_status", "environment-blocked")
+          windows_gui_status = windows_gui_m.get("gui_build_status", "environment-blocked")
+
+          def gui_artifact(manifest, key):
+              v = manifest.get("artifacts", {}).get(key, "environment-blocked")
+              return v if v else "environment-blocked"
+
           combined = {
               "version": os.environ.get("INPUT_VERSION", "unknown"),
               "build_ref": os.environ.get("INPUT_SOURCE_REF", "unknown"),
               "platforms": {
-                  "linux": linux_m,
-                  "windows": windows_m,
+                  "linux": {
+                      "cli": linux_cli_m,
+                      "gui": linux_gui_m,
+                  },
+                  "windows": {
+                      "cli": windows_cli_m,
+                      "gui": windows_gui_m,
+                  },
               },
-              "gui_status": {
-                  "linux": linux_gui_m.get("gui_build_status", "environment-blocked"),
-                  "windows": windows_gui_m.get("gui_build_status", "environment-blocked"),
-              },
-              "gui_appimage": linux_gui_m.get("artifacts", {}).get("gui_appimage", "environment-blocked"),
-              "gui_deb": linux_gui_m.get("artifacts", {}).get("gui_deb", "environment-blocked"),
-              "gui_msi": windows_gui_m.get("artifacts", {}).get("gui_msi", "environment-blocked"),
-              "gui_exe": windows_gui_m.get("artifacts", {}).get("gui_exe", "environment-blocked"),
+              "gui_linux_build_status": linux_gui_status,
+              "gui_windows_build_status": windows_gui_status,
+              "gui_appimage": gui_artifact(linux_gui_m, "gui_appimage"),
+              "gui_deb":      gui_artifact(linux_gui_m, "gui_deb"),
+              "gui_msi":      gui_artifact(windows_gui_m, "gui_msi"),
+              "gui_exe":      gui_artifact(windows_gui_m, "gui_exe"),
               "signed": False,
               "published": False,
               "release_created": False,
@@ -838,7 +811,9 @@ jobs:
               "sensitive_data_redacted": True,
               "notes": [
                   "Unsigned test build — not a production release.",
-                  "GUI/installer artifacts are environment-blocked only when the native build dependencies are missing or the build fails.",
+                  "GUI/installer artifacts are included when builds succeed; "
+                  "environment-blocked entries mean the Tauri build failed or dependencies "
+                  "were unavailable — no GUI binary was fabricated.",
                   "Manual CLI/Shell scripts and GUI click-through required before any promotion.",
                   "PowerShell 5.1 and 7 are independent; Linux Bash/Zsh are formal supported shells.",
                   "Windows Git Bash is exploratory only.",
@@ -846,7 +821,7 @@ jobs:
               ],
           }
           pathlib.Path("dist-bundle/manifest.json").write_text(json.dumps(combined, indent=2) + "\n")
-          print("Combined manifest written.")
+          print(f"Combined manifest written. Linux GUI: {linux_gui_status}  Windows GUI: {windows_gui_status}")
           PY
         env:
           INPUT_VERSION: ${{ inputs.version }}
@@ -863,7 +838,7 @@ jobs:
             [ -f "$script" ] && cp "$script" dist-bundle/scripts/ || true
           done
           echo "Manuals and scripts bundled."
-      - name: Copy CLI binaries into bundle
+      - name: Copy CLI binaries into bundle (required)
         shell: bash
         run: |
           set -euo pipefail
@@ -887,32 +862,40 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Copy GUI artifacts only if they exist (non-fatal if environment-blocked).
-          if [ -f dist-linux-gui/manifest-linux-gui.json ]; then
-            APPIMAGE=$(ls dist-linux-gui/aliasmgr-linux-x86_64-*.AppImage 2>/dev/null | head -1)
-            if [ -n "$APPIMAGE" ]; then
-              cp "$APPIMAGE" dist-bundle/
-              echo "Copied Linux AppImage: $(basename $APPIMAGE)"
-            fi
-            DEB=$(ls dist-linux-gui/aliasmgr-linux-x86_64-*.deb 2>/dev/null | head -1)
-            if [ -n "$DEB" ]; then
-              cp "$DEB" dist-bundle/
-              echo "Copied Linux deb: $(basename $DEB)"
-            fi
+          GUI_COPIED=0
+          # AppImage — only copy if the file actually exists (not a placeholder)
+          APPIMAGE=$(ls dist-linux-gui/aliasmgr-linux-x86_64-*.AppImage 2>/dev/null | head -1)
+          if [ -n "$APPIMAGE" ]; then
+            cp "$APPIMAGE" dist-bundle/
+            echo "Copied Linux AppImage: $APPIMAGE"
+            GUI_COPIED=$((GUI_COPIED+1))
           fi
-          if [ -f dist-windows-gui/manifest-windows-gui.json ]; then
-            MSI=$(ls dist-windows-gui/aliasmgr-windows-x86_64-*.msi 2>/dev/null | head -1)
-            if [ -n "$MSI" ]; then
-              cp "$MSI" dist-bundle/
-              echo "Copied Windows MSI: $(basename $MSI)"
-            fi
-            EXE=$(ls dist-windows-gui/aliasmgr-windows-x86_64-*-setup.exe 2>/dev/null | head -1)
-            if [ -n "$EXE" ]; then
-              cp "$EXE" dist-bundle/
-              echo "Copied Windows setup EXE: $(basename $EXE)"
-            fi
+          # deb — only copy if present
+          DEB=$(ls dist-linux-gui/aliasmgr-linux-x86_64-*.deb 2>/dev/null | head -1)
+          if [ -n "$DEB" ]; then
+            cp "$DEB" dist-bundle/
+            echo "Copied Linux deb: $DEB"
+            GUI_COPIED=$((GUI_COPIED+1))
           fi
-          echo "GUI artifacts copy complete (non-fatal if environment-blocked)."
+          # MSI — only copy if present
+          MSI=$(ls dist-windows-gui/aliasmgr-windows-x86_64-*.msi 2>/dev/null | head -1)
+          if [ -n "$MSI" ]; then
+            cp "$MSI" dist-bundle/
+            echo "Copied Windows MSI: $MSI"
+            GUI_COPIED=$((GUI_COPIED+1))
+          fi
+          # NSIS setup.exe — only copy if present
+          SETUP=$(ls dist-windows-gui/aliasmgr-windows-x86_64-*-setup.exe 2>/dev/null | head -1)
+          if [ -n "$SETUP" ]; then
+            cp "$SETUP" dist-bundle/
+            echo "Copied Windows NSIS setup: $SETUP"
+            GUI_COPIED=$((GUI_COPIED+1))
+          fi
+          if [ "$GUI_COPIED" -eq 0 ]; then
+            echo "No GUI artifacts available; bundle contains CLI-only artifacts (GUI build was environment-blocked)."
+          else
+            echo "$GUI_COPIED GUI artifact(s) copied into bundle."
+          fi
       - name: Upload combined artifact bundle
         uses: actions/upload-artifact@v4.6.2
         with:
@@ -920,7 +903,7 @@ jobs:
           path: dist-bundle/
           retention-days: 14
 
-  # ── Step 6: Create GitHub prerelease (only when all gates pass + explicit auth) ─
+  # ── Step 7: Create GitHub prerelease (only when all gates pass + explicit auth) ─
   create_release:
     name: Create GitHub prerelease
     needs: [fast_ci_gate, integration_gate, security_gate, build_artifact_bundle]
@@ -948,8 +931,8 @@ jobs:
           set -euo pipefail
           # Fail explicitly if required release assets are missing.
           # An absent CLI binary would produce a silent empty-glob upload; validate now.
-          LINUX_BIN=$(ls dist-bundle/aliasmgr-linux-x86_64-* 2>/dev/null | head -1)
-          WINDOWS_BIN=$(ls dist-bundle/aliasmgr-windows-x86_64-*.exe 2>/dev/null | head -1)
+          LINUX_BIN=$(ls dist-bundle/aliasmgr-linux-x86_64-* 2>/dev/null | grep -v '\.AppImage$' | grep -v '\.deb$' | head -1)
+          WINDOWS_BIN=$(ls dist-bundle/aliasmgr-windows-x86_64-*.exe 2>/dev/null | grep -v '\-setup\.exe$' | head -1)
           if [ -z "$LINUX_BIN" ]; then
             echo "ERROR: Linux CLI binary not found in dist-bundle/ — aborting release creation." >&2
             exit 1
@@ -966,7 +949,53 @@ jobs:
             echo "ERROR: SHA256SUMS not found in dist-bundle/ — aborting release creation." >&2
             exit 1
           fi
+          # Read GUI status from manifest and report (GUI assets are optional).
+          python3 - <<'PY'
+          import json, pathlib
+          m = json.loads(pathlib.Path("dist-bundle/manifest.json").read_text())
+          linux_gui  = m.get("gui_linux_build_status", "environment-blocked")
+          windows_gui = m.get("gui_windows_build_status", "environment-blocked")
+          gui_appimage = m.get("gui_appimage", "environment-blocked")
+          gui_deb      = m.get("gui_deb", "environment-blocked")
+          gui_msi      = m.get("gui_msi", "environment-blocked")
+          gui_exe      = m.get("gui_exe", "environment-blocked")
+          print(f"Linux GUI build: {linux_gui}")
+          print(f"Windows GUI build: {windows_gui}")
+          print(f"  AppImage: {gui_appimage}")
+          print(f"  deb:      {gui_deb}")
+          print(f"  MSI:      {gui_msi}")
+          print(f"  setup.exe:{gui_exe}")
+          # Validate: no environment-blocked entry should have a matching file in dist-bundle/
+          import os
+          for label, name in [("AppImage", gui_appimage), ("deb", gui_deb),
+                               ("MSI", gui_msi), ("setup.exe", gui_exe)]:
+              if name == "environment-blocked":
+                  continue
+              path = pathlib.Path("dist-bundle") / name
+              if not path.exists():
+                  raise SystemExit(f"ERROR: manifest lists GUI artifact {name} but file not found in bundle")
+          print("Asset validation passed.")
+          PY
           echo "Asset validation passed: $LINUX_BIN  $WINDOWS_BIN  manifest.json  SHA256SUMS"
+      - name: Build release upload file list
+        id: upload_list
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Collect all files to upload: required CLI assets + optional GUI assets.
+          FILES="dist-bundle/manifest.json dist-bundle/SHA256SUMS"
+          FILES="$FILES $(ls dist-bundle/aliasmgr-linux-x86_64-* 2>/dev/null | grep -v '\.AppImage$' | grep -v '\.deb$')"
+          FILES="$FILES $(ls dist-bundle/aliasmgr-windows-x86_64-*.exe 2>/dev/null | grep -v '\-setup\.exe$')"
+          # GUI artifacts — only include files that exist
+          for f in \
+            dist-bundle/aliasmgr-linux-x86_64-*.AppImage \
+            dist-bundle/aliasmgr-linux-x86_64-*.deb \
+            dist-bundle/aliasmgr-windows-x86_64-*.msi \
+            dist-bundle/aliasmgr-windows-x86_64-*-setup.exe; do
+            [ -f "$f" ] && FILES="$FILES $f" || true
+          done
+          echo "files=$FILES" >> "$GITHUB_OUTPUT"
+          echo "Files to upload: $FILES"
       - name: Create GitHub prerelease
         shell: bash
         env:
@@ -974,13 +1003,20 @@ jobs:
         run: |
           set -euo pipefail
           TAG="v${{ inputs.version }}-prerelease"
+
+          # Read GUI build status from manifest for release notes.
+          LINUX_GUI_STATUS=$(python3 -c "import json,pathlib; m=json.loads(pathlib.Path('dist-bundle/manifest.json').read_text()); print(m.get('gui_linux_build_status','environment-blocked'))")
+          WINDOWS_GUI_STATUS=$(python3 -c "import json,pathlib; m=json.loads(pathlib.Path('dist-bundle/manifest.json').read_text()); print(m.get('gui_windows_build_status','environment-blocked'))")
+
           NOTES="## Alias Manager ${{ inputs.version }} — Unsigned Prerelease
 
           > **This is an unsigned test build. It is NOT a production release.**
 
           ### What this build is
           - Automated gate checks passed (Fast CI, Integration, Task 23 security scan).
-          - GUI and installer artifacts are **environment-blocked** (native build dependencies not provisioned).
+          - Linux Tauri GUI build: **${LINUX_GUI_STATUS}**
+          - Windows Tauri GUI build: **${WINDOWS_GUI_STATUS}**
+          - GUI artifacts are included in this release only when the Tauri build succeeded.
           - Manual CLI/Shell script acceptance and GUI click-through **required** before any promotion.
 
           ### How to test
@@ -992,7 +1028,7 @@ jobs:
 
           ### What is NOT included
           - No signed artifacts.
-          - No MSI/AppImage/deb/EXE installers (environment-blocked).
+          - GUI/installer files (MSI/AppImage/deb/EXE setup) are included only when the Tauri build succeeded; otherwise they are environment-blocked and absent from this release.
           - No production promotion or merge.
 
           ### Feedback
@@ -1008,9 +1044,6 @@ jobs:
             gh release create "$TAG" --prerelease \
               --title "Alias Manager ${{ inputs.version }} prerelease" \
               --notes "$NOTES" \
-              dist-bundle/manifest.json \
-              dist-bundle/SHA256SUMS \
-              dist-bundle/aliasmgr-linux-x86_64-* \
-              dist-bundle/aliasmgr-windows-x86_64-*.exe
+              ${{ steps.upload_list.outputs.files }}
             echo "Prerelease $TAG created."
           fi

@@ -15,11 +15,12 @@ This checklist defines the non-GUI release boundary. It does not certify the Tau
 - [x] `prerelease.yml` added with `workflow_dispatch` only — no push, PR, or schedule trigger.
 - [x] Required inputs: `source_ref`, `version`, `create_prerelease`, `confirmation` (must equal `CREATE-PRERELEASE`).
 - [x] Automated gates: Fast CI (lint + Rust workspace + GUI frontend), Integration (Bash/Zsh/PS5.1/PS7/CLI scripts), Task 23 security/source scan.
-- [x] Builds unsigned Linux and Windows CLI binaries. GUI/installer artifacts (MSI/AppImage/deb/EXE) are `environment-blocked` in manifest.
+- [x] Builds unsigned Linux and Windows CLI binaries via separate `build_linux_cli` and `build_windows_cli` jobs.
+- [x] Attempts actual Tauri GUI builds via `build_linux_gui` (ubuntu-24.04) and `build_windows_gui` (windows-latest) jobs. Each job installs native dependencies (webkit2gtk/appindicator on Linux, checks WebView2 on Windows), runs `cargo tauri build`, and collects produced AppImage/deb/MSI/NSIS artifacts. If a build fails, the job records `gui_build_status: environment-blocked` in its manifest and uploads a diagnostic artifact — it does not fabricate a GUI binary or fail the pipeline silently.
 - [x] Produces `SHA256SUMS`, sanitized `manifest.json` (`signed:false`, `published:false`), and bundles Chinese task21-2 manuals and terminal scripts.
 - [x] Prerelease creation requires all gates passed AND `create_prerelease == true` AND `confirmation == CREATE-PRERELEASE`.
 - [x] `contents: write` scoped to creation job only; no codesign/signtool/gpg/notarize.
-- [x] Source-contract tests for workflow added to `crates/aliasmgr-gui/ui/src/script-contracts.test.ts`.
+- [x] Source-contract tests for workflow and GUI build jobs added to `crates/aliasmgr-gui/ui/src/script-contracts.test.ts` (Task 6: Tauri build commands, platform jobs, GUI artifact upload/download/bundle, environment-blocked fallback, no fabricated GUI names).
 - [ ] Prerelease workflow dry-run (with `create_prerelease=false`) — pending CI run.
 - [ ] Manual CLI/Shell/GUI/package acceptance — pending user execution.
 

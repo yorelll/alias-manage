@@ -2,6 +2,15 @@
 
 必须在 Linux 和 Windows 分别运行候选 GUI artifact。CI 前端测试不能替代真实窗口、视觉、可访问性和 runtime persistence 验收。记录系统/架构、GUI 版本、artifact SHA256、脱敏配置路径、显示环境、实际结果、结果枚举、证据、复现说明和脱敏确认。
 
+## GUI Artifact 获取说明
+
+`prerelease.yml` 包含实际的 Tauri 构建 job。GUI artifact 的获取方式取决于 remote CI 结果：
+
+- **当 CI Tauri 构建成功时**：从 prerelease bundle 中下载 AppImage（Linux）或 MSI/setup.exe（Windows）。检查 `manifest.json` 中 `gui_linux_build_status` 或 `gui_windows_build_status` 字段：若为 `success`，对应 artifact 文件在 bundle 中存在。
+- **当 CI Tauri 构建为 environment-blocked 时**：GUI artifact 不存在于 bundle 中。在测试矩阵中标记 `BLOCKED`，说明"CI Tauri 构建因原生依赖问题未能生成 artifact，等待下次成功的 prerelease run"。不要使用本地构建的 binary 代替远程 CI artifact。
+
+在执行本手册的任何步骤之前，必须先确认 prerelease bundle 中存在 GUI artifact（通过 `manifest.json` 的 `gui_*_build_status: success`）。如果 manifest 显示 environment-blocked，则跳过本手册所有步骤并在矩阵中记录 `BLOCKED`。
+
 ## GUI-001/GUI-002：启动、状态和导航
 
 1. 启动 artifact。
