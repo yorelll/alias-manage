@@ -195,33 +195,29 @@ The CLI `update NAME` command accepts only the alias name at the CLI interface l
 
 **Files:** `.github/workflows/prerelease.yml`, `docs/ci-workflow.md`, `docs/release-checklist.md`, `docs/final-release-status.md`.
 
-- [ ] **Step 1: Write workflow contract checks**
+- [x] **Step 1: Write workflow contract checks**
 
-Add source-contract checks asserting the workflow is `workflow_dispatch` only, defines `source_ref`, `version`, `create_prerelease`, and confirmation inputs, requires exact `CREATE-PRERELEASE`, uploads unsigned artifacts, creates no Release unless explicitly requested, and contains no signing/publish/force-push step.
+Added source-contract checks in `crates/aliasmgr-gui/ui/src/script-contracts.test.ts` for `workflow_dispatch` only, required inputs, exact `CREATE-PRERELEASE`, unsigned artifacts, no signing/publish/force-push, environment-blocked package status, checksum/manifest/manual bundle, least privilege, asset validation, and release failure propagation.
 
-- [ ] **Step 2: Add Linux and Windows build jobs**
+- [x] **Step 2: Add Linux and Windows build jobs**
 
-Build CLI binaries on fixed Linux/Windows runners. Attempt Tauri GUI build using fixed native dependencies. If MSI/AppImage/deb/EXE inputs are absent or native compilation fails, write `environment-blocked` to the manifest and do not fabricate an installer.
+Added fixed Linux/Windows CLI builds and explicit GUI/package `environment-blocked` manifest entries when native GUI/installer inputs are unavailable. No installer is fabricated. Evidence: `.github/workflows/prerelease.yml`.
 
-- [ ] **Step 3: Add gate and artifact jobs**
+- [x] **Step 3: Add gate and artifact jobs**
 
-Run Fast CI, Integration, Task 23 source scan, terminal script contract tests, and GUI frontend checks. Build `SHA256SUMS`, sanitized `manifest.json`, and bundle Chinese manuals/scripts.
+Added Fast CI, Integration, Task 23 security/source scan, terminal script contract, and GUI frontend gate jobs; bundle generation creates `SHA256SUMS`, sanitized `manifest.json`, Chinese Task 21-2 manuals, and verification scripts.
 
-- [ ] **Step 4: Add explicit prerelease creation job**
+- [x] **Step 4: Add explicit prerelease creation job**
 
-Condition creation on all automated jobs passing, `create_prerelease == true`, and `confirmation == 'CREATE-PRERELEASE'`. Use least-privilege `contents: write` only on the creation job. Use `gh release create --prerelease` or the GitHub release action only inside this condition. Never sign or publish a formal release.
+Creation requires all automated gates, `create_prerelease == true`, and exact `confirmation == 'CREATE-PRERELEASE'`; `contents: write` is scoped to the creation job. Release creation uses an explicit existing-release check and propagates genuine `gh` failures. No signing or formal publish is performed.
 
 - [ ] **Step 5: Verify safely without creating a Release**
 
-Run the workflow with `create_prerelease=false` and a non-matching confirmation. Confirm artifacts/status jobs pass and creation is skipped. Do not trigger the creation path in this implementation task.
+Not triggered during implementation. The creation path remains unexecuted; no prerelease URL exists. A dry-run dispatch with `create_prerelease=false` and non-matching confirmation remains the next safe verification action.
 
-- [ ] **Step 6: Commit prerelease workflow**
+- [x] **Step 6: Commit prerelease workflow**
 
-```bash
-git add .github/workflows/prerelease.yml docs/ci-workflow.md docs/release-checklist.md docs/final-release-status.md
-git commit -m "ci: prepare manually confirmed prerelease artifacts"
-git push origin feature/alias-manager-mvp
-```
+Evidence commits: `0c5c1c3`, `f03a853`, `836f639`, and merge `bcb8164`; pushed to `feature/alias-manager-mvp`. No release/tag/sign/publish action was performed.
 
 ---
 
