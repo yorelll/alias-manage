@@ -1444,11 +1444,11 @@ test("prerelease.yml: uploads unsigned artifacts (no signing/publish/formal-rele
 
 test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate commands)", async () => {
   const src = await readWorkflow("prerelease.yml");
-  const withoutSigningScan = src.replace(
-    /\n\s*- name: Verify workflow has no signing-tool invocations[\s\S]*?(?=\n\s*- name: Emit security gate summary)/,
-    "\n"
+  const workflowWithoutSecurityScan = src.replace(
+    /# ── Step 2c: Task 23 security \/ source scan[\s\S]*?# ── Step 3: Build Linux CLI artifact/,
+    "# security scan removed for command ban"
   );
-  const executableSource = withoutSigningScan
+  const executableSource = workflowWithoutSecurityScan
     .split("\n")
     .map((line) => line.replace(/\s+#.*$/, ""))
     .filter((line) => !line.trimStart().startsWith("#"))
@@ -1458,6 +1458,13 @@ test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate com
     "prerelease.yml must not contain any signing commands outside its scan implementation");
   assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
     "prerelease.yml must not reference signing secrets or certificate variables");
+});
+
+
+test("prerelease.yml: retains explicit signing scan gate", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /SIGN_PATTERN=/, "prerelease.yml must retain signing scan pattern");
+  assert.match(src, /Verify workflow has no signing-tool invocations/, "prerelease.yml must retain signing scan job");
 });
 
 test("prerelease.yml: prerelease creation is conditional on all gates and exact confirmation", async () => {
