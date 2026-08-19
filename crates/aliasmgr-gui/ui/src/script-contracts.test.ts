@@ -1524,3 +1524,79 @@ test("prerelease.yml: manifest declares signed:false and published:false", async
   assert.match(src, /published.*[Ff]alse|[Ff]alse.*published/,
     "prerelease.yml manifest must declare published: false");
 });
+
+// ─── Task 5: no unconditional failure suppression in release creation ─────────
+// The gh release create step must not use `|| true` to hide gh failures.
+// Idempotency must be achieved via explicit `gh release view` pre-check.
+
+test("prerelease.yml: gh release create does not use unconditional || true suppression", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Extract only the create_release job section for focused analysis.
+  // The pattern `gh release create ... || true` must not appear.
+  assert.doesNotMatch(
+    src,
+    /gh release create[^#\n]*\|\|\s*true/m,
+    "prerelease.yml must not suppress gh release create failures with || true"
+  );
+});
+
+test("prerelease.yml: gh release idempotency uses explicit view pre-check (not || true)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Must use an explicit `gh release view` guard for idempotency.
+  assert.match(
+    src,
+    /gh release view/,
+    "prerelease.yml must use 'gh release view' to check for existing release before creating"
+  );
+});
+
+// ─── Task 5: CLI binary asset validation before release creation ──────────────
+// The workflow must explicitly validate that CLI binaries exist before attempting
+// to create the release, so that an empty glob does not produce a silent missing-
+// asset upload or a false-positive success.
+
+test("prerelease.yml: validates Linux CLI binary exists before release creation", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /aliasmgr-linux-x86_64.*not found|Linux CLI binary not found/,
+    "prerelease.yml must fail explicitly when Linux CLI binary is absent"
+  );
+});
+
+test("prerelease.yml: validates Windows CLI binary exists before release creation", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /aliasmgr-windows-x86_64.*not found|Windows CLI binary not found/,
+    "prerelease.yml must fail explicitly when Windows CLI binary is absent"
+  );
+});
+
+test("prerelease.yml: validates manifest.json exists before release creation", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /manifest\.json.*not found|not found.*manifest\.json/,
+    "prerelease.yml must fail explicitly when manifest.json is absent"
+  );
+});
+
+// ─── Task 5: SIGN_PATTERN uses ERE alternation (not BRE \\| pipe) ────────────
+// grep -E requires ERE syntax; using BRE \\| inside -E produces a literal match
+// rather than alternation, making the signing-tool check ineffective.
+
+test("prerelease.yml: SIGN_PATTERN uses ERE alternation (plain | not BRE \\\\|)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // The sign pattern must NOT be constructed with the BRE \| escape sequence.
+  // In the original buggy code: SIGN_PATTERN="...\\|..." where \\| is passed to grep -E
+  // but grep -E treats \| as a literal | (not alternation), making detection unreliable.
+  // A correct ERE build assembles the pattern as: SIGN_PATTERN="${P1}|${P2}|${P3}"
+  // We look for the specific buggy form: a literal backslash immediately before the pipe
+  // character inside the SIGN_PATTERN assignment.
+  assert.doesNotMatch(
+    src,
+    /SIGN_PATTERN=["'].*\\\\[|].*["']/,
+    "prerelease.yml SIGN_PATTERN must not embed BRE \\\\| escape — use ERE | alternation via shell variable concatenation"
+  );
+});

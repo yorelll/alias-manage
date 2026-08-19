@@ -301,15 +301,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Build the pattern from parts to avoid the pattern itself triggering future scans.
-          SIGN_PATTERN="$(printf '%s' 'code' 'sign')\\|$(printf '%s' 'sign' 'tool').*sign\\|$(printf '%s' 'notar' 'ize')"
-          # Exclude this workflow file from the scan to avoid false positives on the pattern string.
+          # Build the ERE alternation pattern from parts so that this file's own source
+          # text does not contain the literal signing-tool names and won't self-match
+          # if this workflow is ever scanned by another tool.
+          P1="$(printf '%s' 'code' 'sign')"   # codesign
+          P2="$(printf '%s' 'sign' 'tool')"   # signtool
+          P3="$(printf '%s' 'notar' 'ize')"   # notarize
+          SIGN_PATTERN="${P1}|${P2}|${P3}"
+          # Exclude this workflow file from the scan to avoid false positives on the
+          # reconstructed pattern string stored in the variables above.
           if grep -RIn --exclude-dir=.git --exclude='prerelease.yml' \
-              -E "$SIGN_PATTERN" .github/workflows 2>/dev/null; then
-            echo "ERROR: signing-tool invocation found in workflows" >&2
+              -E "$SIGN_PATTERN" .github/workflows crates/aliasmgr-core/src crates/aliasmgr-cli/src 2>/dev/null; then
+            echo "ERROR: signing-tool invocation found in workflows or source" >&2
             exit 1
           fi
-          echo "No signing-tool invocations found in other workflows."
+          echo "No signing-tool invocations found in other workflows or source files."
       - name: Emit security gate summary
         shell: bash
         run: |
@@ -544,9 +550,22 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cp dist-linux/*.sha256 dist-bundle/ 2>/dev/null || true
-          cp dist-linux/aliasmgr-linux-x86_64-* dist-bundle/ 2>/dev/null || true
-          cp dist-windows/aliasmgr-windows-x86_64-*.exe dist-bundle/ 2>/dev/null || true
+          # Copy any optional .sha256 sidecar files (non-fatal if absent).
+          for f in dist-linux/*.sha256; do [ -f "$f" ] && cp "$f" dist-bundle/; done
+          # CLI binaries are required; fail explicitly if they are missing.
+          LINUX_BIN=$(ls dist-linux/aliasmgr-linux-x86_64-* 2>/dev/null | head -1)
+          if [ -z "$LINUX_BIN" ]; then
+            echo "ERROR: Linux CLI binary not found in dist-linux/ — artifact bundle incomplete." >&2
+            exit 1
+          fi
+          cp dist-linux/aliasmgr-linux-x86_64-* dist-bundle/
+          WINDOWS_BIN=$(ls dist-windows/aliasmgr-windows-x86_64-*.exe 2>/dev/null | head -1)
+          if [ -z "$WINDOWS_BIN" ]; then
+            echo "ERROR: Windows CLI binary not found in dist-windows/ — artifact bundle incomplete." >&2
+            exit 1
+          fi
+          cp dist-windows/aliasmgr-windows-x86_64-*.exe dist-bundle/
+          echo "CLI binaries copied into bundle: $(ls dist-bundle/aliasmgr-* 2>/dev/null)"
       - name: Upload combined artifact bundle
         uses: actions/upload-artifact@v4.6.2
         with:
@@ -576,6 +595,31 @@ jobs:
         with:
           name: aliasmgr-prerelease-bundle-${{ inputs.version }}
           path: dist-bundle/
+      - name: Validate release assets exist
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Fail explicitly if required release assets are missing.
+          # An absent CLI binary would produce a silent empty-glob upload; validate now.
+          LINUX_BIN=$(ls dist-bundle/aliasmgr-linux-x86_64-* 2>/dev/null | head -1)
+          WINDOWS_BIN=$(ls dist-bundle/aliasmgr-windows-x86_64-*.exe 2>/dev/null | head -1)
+          if [ -z "$LINUX_BIN" ]; then
+            echo "ERROR: Linux CLI binary not found in dist-bundle/ — aborting release creation." >&2
+            exit 1
+          fi
+          if [ -z "$WINDOWS_BIN" ]; then
+            echo "ERROR: Windows CLI binary not found in dist-bundle/ — aborting release creation." >&2
+            exit 1
+          fi
+          if [ ! -f dist-bundle/manifest.json ]; then
+            echo "ERROR: manifest.json not found in dist-bundle/ — aborting release creation." >&2
+            exit 1
+          fi
+          if [ ! -f dist-bundle/SHA256SUMS ]; then
+            echo "ERROR: SHA256SUMS not found in dist-bundle/ — aborting release creation." >&2
+            exit 1
+          fi
+          echo "Asset validation passed: $LINUX_BIN  $WINDOWS_BIN  manifest.json  SHA256SUMS"
       - name: Create GitHub prerelease
         shell: bash
         env:
@@ -609,12 +653,17 @@ jobs:
 
           **No automatic promotion. Release approval requires explicit user authorization.**"
 
-          gh release create "$TAG" --prerelease \
-            --title "Alias Manager ${{ inputs.version }} prerelease" \
-            --notes "$NOTES" \
-            dist-bundle/manifest.json \
-            dist-bundle/SHA256SUMS \
-            dist-bundle/aliasmgr-linux-x86_64-* \
-            dist-bundle/aliasmgr-windows-x86_64-*.exe \
-            || true
-          echo "Prerelease created or already exists."
+          # Idempotency: skip creation if the release already exists; otherwise create.
+          # Genuine gh failures (network, auth, invalid tag) are NOT suppressed.
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            echo "Release $TAG already exists; skipping creation."
+          else
+            gh release create "$TAG" --prerelease \
+              --title "Alias Manager ${{ inputs.version }} prerelease" \
+              --notes "$NOTES" \
+              dist-bundle/manifest.json \
+              dist-bundle/SHA256SUMS \
+              dist-bundle/aliasmgr-linux-x86_64-* \
+              dist-bundle/aliasmgr-windows-x86_64-*.exe
+            echo "Prerelease $TAG created."
+          fi

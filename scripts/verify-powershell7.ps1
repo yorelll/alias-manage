@@ -82,7 +82,7 @@ Write-Log ("Profile summary: " + $ProfileSummary)
 
 # Detect Group Policy-driven restrictions (UserPolicy/MachinePolicy scopes)
 $GpScopes = Get-ExecutionPolicy -List | Where-Object { $_.Scope -in @("UserPolicy","MachinePolicy") -and $_.ExecutionPolicy -ne "Undefined" }
-$GroupPolicyNote = if ($GpScopes) { "Group Policy restriction detected: $(($GpScopes | ForEach-Object { '$($_.Scope)=$($_.ExecutionPolicy)' }) -join '; ')" } else { "Group Policy: no Group Policy restriction detected" }
+$GroupPolicyNote = if ($GpScopes) { "Group Policy restriction detected: $(($GpScopes | ForEach-Object { "$($_.Scope)=$($_.ExecutionPolicy)" }) -join '; ')" } else { "Group Policy: no Group Policy restriction detected" }
 Write-Log $GroupPolicyNote
 
 $PolicyStatus = if ((Get-ExecutionPolicy -Scope CurrentUser) -in @("Restricted","AllSigned")) { "EXPECTED-LIMITATION" } else { "PASS" }
