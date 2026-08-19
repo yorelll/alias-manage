@@ -1454,7 +1454,11 @@ test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate com
     "prerelease.yml must not contain any signing commands");
   assert.doesNotMatch(executableSource, /\bprintf\s+.*code|\bprintf\s+.*sign|\bprintf\s+.*notar/i,
     "prerelease.yml signing scan must not contain signing tool commands");
-  assert.doesNotMatch(src.replace(/SIGN_PATTERN[\s\S]*?No signing-tool invocations found[\s\S]*?\n(?=\s*- name:)/, ""),
+  const withoutSigningScanner = src
+    .split("\n")
+    .filter((line) => !line.includes("P1=") && !line.includes("P2=") && !line.includes("P3=") && !line.includes("SIGN_PATTERN") && !line.includes("signing-tool"))
+    .join("\n");
+  assert.doesNotMatch(withoutSigningScanner,
     /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
     "prerelease.yml must not reference signing tools outside the scan implementation");
   assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
