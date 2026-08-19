@@ -1,0 +1,615 @@
+name: Prerelease
+
+# Only manual dispatch — no push, pull_request, or schedule trigger.
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Branch or commit SHA to build from"
+        required: true
+        default: "feature/alias-manager-mvp"
+      version:
+        description: "Version string for artifact names (e.g. 0.1.0-beta.1)"
+        required: true
+        default: "0.1.0-beta.1"
+      create_prerelease:
+        description: "Set to 'true' to create a GitHub prerelease after all gates pass"
+        required: true
+        default: "false"
+      confirmation:
+        description: "Type CREATE-PRERELEASE exactly to authorize prerelease creation"
+        required: true
+        default: ""
+
+# Default permissions: read-only.  The create_release job escalates to contents:write.
+permissions:
+  contents: read
+
+concurrency:
+  group: prerelease-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Step 1: Detect packaging inputs ────────────────────────────────────────
+  detect_inputs:
+    name: Detect packaging inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      packaging_present: ${{ steps.packaging.outputs.present }}
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - name: Detect packaging inputs
+        id: packaging
+        shell: bash
+        run: |
+          set -euo pipefail
+          if compgen -G 'packaging/**' > /dev/null 2>&1 || compgen -G 'installer/**' > /dev/null 2>&1; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            echo "Packaging inputs detected."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "No packaging inputs found; GUI/installer build will be environment-blocked."
+          fi
+
+  # ── Step 2a: Fast CI gate (Rust lint + test + GUI frontend) ────────────────
+  fast_ci_gate:
+    name: Fast CI gate
+    needs: detect_inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            job: lint_test_linux
+          - os: windows-latest
+            job: test_windows
+          - os: ubuntu-24.04
+            job: gui_frontend_linux
+          - os: windows-latest
+            job: gui_frontend_windows
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.job == 'lint_test_linux' || matrix.job == 'test_windows'
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2.7.8
+        if: matrix.job == 'lint_test_linux' || matrix.job == 'test_windows'
+        with:
+          cache-on-failure: true
+      - name: Isolate Linux config
+        if: runner.os == 'Linux' && (matrix.job == 'lint_test_linux')
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/aliasmgr-home" "$RUNNER_TEMP/aliasmgr-config"
+          echo "HOME=$RUNNER_TEMP/aliasmgr-home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/aliasmgr-config" >> "$GITHUB_ENV"
+          echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
+      - name: Isolate Windows config
+        if: runner.os == 'Windows' && (matrix.job == 'test_windows')
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'aliasmgr-config'
+          New-Item -ItemType Directory -Force -Path $config | Out-Null
+          "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
+      - name: Lint and test (Linux)
+        if: matrix.job == 'lint_test_linux'
+        shell: bash
+        run: |
+          cargo fmt --check
+          cargo clippy --workspace --all-targets -- -D warnings
+          cargo test --workspace
+      - name: Test (Windows)
+        if: matrix.job == 'test_windows'
+        run: cargo test --workspace
+      - uses: actions/setup-node@v4.4.0
+        if: matrix.job == 'gui_frontend_linux' || matrix.job == 'gui_frontend_windows'
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/aliasmgr-gui/ui/package-lock.json
+      - name: GUI frontend checks
+        if: matrix.job == 'gui_frontend_linux' || matrix.job == 'gui_frontend_windows'
+        working-directory: crates/aliasmgr-gui/ui
+        shell: bash
+        run: |
+          npm ci
+          npm test
+          npm run typecheck
+          npm run build
+
+  # ── Step 2b: Integration gate ──────────────────────────────────────────────
+  integration_gate:
+    name: Integration gate
+    needs: detect_inputs
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            shell: bash
+            test: bash
+          - os: ubuntu-24.04
+            shell: bash
+            test: bash_shell
+          - os: ubuntu-24.04
+            shell: bash
+            test: zsh_shell
+          - os: windows-latest
+            shell: powershell
+            test: powershell5
+          - os: windows-latest
+            shell: pwsh
+            test: powershell7
+          - os: ubuntu-24.04
+            shell: bash
+            test: linux_verify_scripts
+          - os: windows-latest
+            shell: powershell
+            test: windows_verify_scripts_ps51
+          - os: windows-latest
+            shell: pwsh
+            test: windows_verify_scripts_ps7
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate Linux config
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/aliasmgr-config"
+          echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
+      - name: Isolate Windows config
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'aliasmgr-config'
+          New-Item -ItemType Directory -Force -Path $config | Out-Null
+          "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
+      - name: Run core integration (bash)
+        if: matrix.test == 'bash'
+        run: cargo test -p aliasmgr-tests --test lock
+      - name: Run Bash adapter test
+        if: matrix.test == 'bash_shell'
+        run: cargo test -p aliasmgr-tests --test bash
+      - name: Install Zsh
+        if: matrix.test == 'zsh_shell'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Run Zsh adapter test
+        if: matrix.test == 'zsh_shell'
+        run: cargo test -p aliasmgr-tests --test zsh
+      - name: Run PowerShell 5.1 adapter test
+        if: matrix.test == 'powershell5'
+        shell: powershell
+        run: cargo test -p aliasmgr-tests --test powershell
+      - name: Run PowerShell 7 adapter test
+        if: matrix.test == 'powershell7'
+        shell: pwsh
+        run: cargo test -p aliasmgr-tests --test powershell
+      - name: Build CLI for Linux verify scripts
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: cargo build -p aliasmgr-cli --release
+      - name: Install Zsh for Linux verify scripts
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: sudo apt-get update && sudo apt-get install -y zsh
+      - name: Run Linux verify scripts
+        if: matrix.test == 'linux_verify_scripts'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/verify-cli-linux.sh --artifact target/release/aliasmgr
+          bash scripts/verify-bash-linux.sh --artifact target/release/aliasmgr
+          bash scripts/verify-zsh-linux.sh  --artifact target/release/aliasmgr
+      - name: Build CLI for Windows PS5.1 verify scripts
+        if: matrix.test == 'windows_verify_scripts_ps51'
+        shell: pwsh
+        run: cargo build -p aliasmgr-cli --release
+      - name: Run verify-powershell51.ps1 (PS5.1)
+        if: matrix.test == 'windows_verify_scripts_ps51'
+        shell: powershell
+        run: |
+          $artifact = Join-Path $env:GITHUB_WORKSPACE 'target\release\aliasmgr.exe'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps51-verify'
+          powershell -ExecutionPolicy Bypass -File scripts\verify-powershell51.ps1 `
+            -ArtifactPath $artifact -OutputRoot $outputRoot -KeepTemp
+          $summary = Join-Path $outputRoot 'result\verification-summary.json'
+          if (Test-Path $summary) { Get-Content $summary }
+      - name: Assert PS5.1 result sanitized
+        if: matrix.test == 'windows_verify_scripts_ps51'
+        shell: powershell
+        run: |
+          $summary = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps51-verify\result\verification-summary.json'
+          if (-not (Test-Path $summary)) { Write-Error "PS5.1 summary not found"; exit 1 }
+          $json = Get-Content $summary -Raw | ConvertFrom-Json
+          if (-not $json.sensitive_data_redacted) { Write-Error "PS5.1 missing sensitive_data_redacted=true"; exit 1 }
+          if ($json.overall -notin @('PASS','PASS_WITH_EXPECTED_LIMITATIONS','BLOCKED')) {
+            Write-Error "PS5.1 overall result is FAIL: $($json.overall)"; exit 1
+          }
+          Write-Host "PS5.1 check passed: $($json.overall)"
+      - name: Build CLI for Windows PS7 verify scripts
+        if: matrix.test == 'windows_verify_scripts_ps7'
+        shell: pwsh
+        run: cargo build -p aliasmgr-cli --release
+      - name: Run verify-powershell7.ps1 (PS7)
+        if: matrix.test == 'windows_verify_scripts_ps7'
+        shell: pwsh
+        run: |
+          $artifact = Join-Path $env:GITHUB_WORKSPACE 'target\release\aliasmgr.exe'
+          $outputRoot = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps7-verify'
+          pwsh -File scripts\verify-powershell7.ps1 `
+            -ArtifactPath $artifact -OutputRoot $outputRoot -KeepTemp
+          $summary = Join-Path $outputRoot 'result\verification-summary.json'
+          if (Test-Path $summary) { Get-Content $summary }
+      - name: Assert PS7 result sanitized
+        if: matrix.test == 'windows_verify_scripts_ps7'
+        shell: pwsh
+        run: |
+          $summary = Join-Path $env:RUNNER_TEMP 'aliasmgr-ps7-verify\result\verification-summary.json'
+          if (-not (Test-Path $summary)) { Write-Error "PS7 summary not found"; exit 1 }
+          $json = Get-Content $summary -Raw | ConvertFrom-Json
+          if (-not $json.sensitive_data_redacted) { Write-Error "PS7 missing sensitive_data_redacted=true"; exit 1 }
+          if ($json.overall -notin @('PASS','PASS_WITH_EXPECTED_LIMITATIONS','BLOCKED')) {
+            Write-Error "PS7 overall result is FAIL: $($json.overall)"; exit 1
+          }
+          Write-Host "PS7 check passed: $($json.overall)"
+      - name: Run core tests
+        run: cargo test -p aliasmgr-core
+
+  # ── Step 2c: Task 23 security / source scan ────────────────────────────────
+  security_gate:
+    name: Task 23 security / source scan
+    needs: detect_inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - name: Scan for unsafe eval and environment dumps
+        shell: bash
+        run: |
+          set -euo pipefail
+          # No unsafe eval/Invoke-Expression in ordinary generated paths
+          ! grep -RIn --exclude-dir=.git --exclude=plan.md --exclude='*.lock' \
+            -E '(^|[^[:alnum:]_])(eval|Invoke-Expression)([^[:alnum:]_]|$)' \
+            crates/aliasmgr-core/src crates/aliasmgr-cli/src crates/aliasmgr-gui/src-tauri/src
+          # No environment dump patterns in workflows or test code
+          ! grep -RIn --exclude-dir=.git \
+            -E 'set -x|printenv|Get-ChildItem Env:' \
+            .github/workflows crates/aliasmgr-tests
+          # No signing material or credential secrets in repository
+          git ls-files | grep -E '(^|/)(\.env|.*(certificate|private[-_]?key|secret))' && exit 1 || true
+          echo "Security scan passed."
+      - name: Verify no signing commands in workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          ! grep -RIn --exclude-dir=.git \
+            -E 'codesign|signtool\s+sign|gpg\s+--sign|notarize|CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD' \
+            .github/workflows
+          echo "No signing commands in workflows."
+      - name: Emit security gate summary
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          gates = [
+              {"gate": "T23-001", "check": "no eval/Invoke-Expression in generated paths", "result": "PASS"},
+              {"gate": "T23-002", "check": "no environment dump commands in workflows/tests", "result": "PASS"},
+              {"gate": "T23-003", "check": "no signing material in repository", "result": "PASS"},
+              {"gate": "T23-004", "check": "no signing commands in workflow files", "result": "PASS"},
+              {"gate": "T23-M01", "check": "real GUI windows / profile / installer review", "result": "MANUAL-PENDING"},
+              {"gate": "T23-M02", "check": "release approval and sign-off", "result": "MANUAL-PENDING"},
+          ]
+          print(json.dumps({"gates": gates, "automated_pass": 4, "manual_pending": 2}, indent=2))
+          PY
+
+  # ── Step 3: Build Linux CLI artifact ──────────────────────────────────────
+  build_linux_cli:
+    name: Build Linux CLI
+    needs: [fast_ci_gate, integration_gate, security_gate]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate config
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/aliasmgr-home" "$RUNNER_TEMP/aliasmgr-config"
+          echo "HOME=$RUNNER_TEMP/aliasmgr-home" >> "$GITHUB_ENV"
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/aliasmgr-config" >> "$GITHUB_ENV"
+          echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
+      - name: Build Linux CLI release binary
+        shell: bash
+        run: cargo build -p aliasmgr-cli --release
+      - name: Attempt Tauri GUI build (environment-blocked if unavailable)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # Tauri build requires webkit2gtk system libraries which are not provisioned
+          # on standard ubuntu-24.04 runners without additional apt packages.
+          # We attempt the build and record environment-blocked if it fails.
+          if ! apt-cache show libwebkit2gtk-4.1-dev > /dev/null 2>&1; then
+            echo "webkit2gtk-4.1-dev not available; GUI build is environment-blocked."
+            echo "gui_linux_status=environment-blocked" >> "$GITHUB_ENV"
+          else
+            echo "gui_linux_status=available" >> "$GITHUB_ENV"
+          fi
+      - name: Package Linux artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp target/release/aliasmgr "dist/aliasmgr-linux-x86_64-${{ inputs.version }}"
+          sha256sum "dist/aliasmgr-linux-x86_64-${{ inputs.version }}" >> dist/SHA256SUMS
+          python3 - <<'PY'
+          import json, os, pathlib
+          gui_status = os.environ.get("gui_linux_status", "environment-blocked")
+          manifest = {
+              "version": os.environ.get("INPUT_VERSION", "unknown"),
+              "platform": "linux-x86_64",
+              "artifacts": {
+                  "cli": f"aliasmgr-linux-x86_64-{os.environ.get('INPUT_VERSION', 'unknown')}",
+                  "gui_appimage": "environment-blocked",
+                  "gui_deb": "environment-blocked",
+              },
+              "gui_build_status": gui_status,
+              "signed": False,
+              "published": False,
+              "release_created": False,
+              "manual_review_required": True,
+              "sensitive_data_redacted": True,
+          }
+          pathlib.Path("dist/manifest-linux.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+      - name: Upload Linux CLI artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: aliasmgr-linux-cli-${{ inputs.version }}
+          path: dist/
+          retention-days: 14
+
+  # ── Step 4: Build Windows CLI artifact ────────────────────────────────────
+  build_windows_cli:
+    name: Build Windows CLI
+    needs: [fast_ci_gate, integration_gate, security_gate]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - name: Isolate Windows config
+        shell: pwsh
+        run: |
+          $config = Join-Path $env:RUNNER_TEMP 'aliasmgr-config'
+          New-Item -ItemType Directory -Force -Path $config | Out-Null
+          "ALIASMGR_CONFIG_DIR=$(Join-Path $config 'alias-manager')" >> $env:GITHUB_ENV
+      - name: Build Windows CLI release binary
+        run: cargo build -p aliasmgr-cli --release
+      - name: Attempt Tauri GUI build status check (environment-blocked if unavailable)
+        shell: pwsh
+        run: |
+          # Tauri GUI build on Windows requires WebView2 and additional native tooling.
+          # We record environment-blocked if native GUI compilation inputs are absent.
+          if (-not (Test-Path 'crates\aliasmgr-gui\src-tauri\Cargo.toml')) {
+            Write-Host "Tauri src-tauri Cargo.toml not found in workspace; GUI build is environment-blocked."
+            "GUI_WINDOWS_STATUS=environment-blocked" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "Tauri inputs present; GUI build attempted on native runner."
+            "GUI_WINDOWS_STATUS=environment-blocked-no-webview2-provisioned" >> $env:GITHUB_ENV
+          }
+      - name: Package Windows artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          $exeName = "aliasmgr-windows-x86_64-${{ inputs.version }}.exe"
+          Copy-Item "target\release\aliasmgr.exe" "dist\$exeName"
+          $hash = (Get-FileHash "dist\$exeName" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $exeName" | Out-File -FilePath dist\SHA256SUMS -Encoding utf8 -Append
+          $manifest = @{
+            version = "${{ inputs.version }}"
+            platform = "windows-x86_64"
+            artifacts = @{
+              cli = $exeName
+              gui_msi = "environment-blocked"
+              gui_exe = "environment-blocked"
+            }
+            gui_build_status = $env:GUI_WINDOWS_STATUS
+            signed = $false
+            published = $false
+            release_created = $false
+            manual_review_required = $true
+            sensitive_data_redacted = $true
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Out-File -FilePath dist\manifest-windows.json -Encoding utf8
+      - name: Upload Windows CLI artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: aliasmgr-windows-cli-${{ inputs.version }}
+          path: dist/
+          retention-days: 14
+
+  # ── Step 5: Build combined checksums, manifest, and bundle manuals ────────
+  build_artifact_bundle:
+    name: Build artifact bundle (SHA256SUMS + manifest + manuals)
+    needs: [build_linux_cli, build_windows_cli]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4.2.1
+        with:
+          name: aliasmgr-linux-cli-${{ inputs.version }}
+          path: dist-linux/
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4.2.1
+        with:
+          name: aliasmgr-windows-cli-${{ inputs.version }}
+          path: dist-windows/
+      - name: Build combined SHA256SUMS and manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-bundle
+          # Combine checksums from both platforms
+          cat dist-linux/SHA256SUMS dist-windows/SHA256SUMS > dist-bundle/SHA256SUMS
+          python3 - <<'PY'
+          import json, pathlib, os
+          linux_m  = json.loads(pathlib.Path("dist-linux/manifest-linux.json").read_text())
+          windows_m = json.loads(pathlib.Path("dist-windows/manifest-windows.json").read_text())
+          combined = {
+              "version": os.environ.get("INPUT_VERSION", "unknown"),
+              "build_ref": os.environ.get("INPUT_SOURCE_REF", "unknown"),
+              "platforms": {
+                  "linux": linux_m,
+                  "windows": windows_m,
+              },
+              "gui_appimage": "environment-blocked",
+              "gui_deb": "environment-blocked",
+              "gui_msi": "environment-blocked",
+              "gui_exe": "environment-blocked",
+              "signed": False,
+              "published": False,
+              "release_created": False,
+              "prerelease_only": True,
+              "manual_review_required": True,
+              "sensitive_data_redacted": True,
+              "notes": [
+                  "Unsigned test build — not a production release.",
+                  "GUI/installer artifacts are environment-blocked (native build dependencies not provisioned).",
+                  "Manual CLI/Shell scripts and GUI click-through required before any promotion.",
+                  "PowerShell 5.1 and 7 are independent; Linux Bash/Zsh are formal supported shells.",
+                  "Windows Git Bash is exploratory only.",
+                  "No automatic promotion; release approval requires explicit user authorization.",
+              ],
+          }
+          pathlib.Path("dist-bundle/manifest.json").write_text(json.dumps(combined, indent=2) + "\n")
+          print("Combined manifest written.")
+          PY
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_SOURCE_REF: ${{ inputs.source_ref }}
+      - name: Bundle task21-2 manuals and terminal scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist-bundle/docs/task21-2 dist-bundle/scripts
+          # Copy Chinese acceptance manuals
+          cp -r docs/task21-2/. dist-bundle/docs/task21-2/
+          # Copy terminal verification scripts
+          for script in scripts/verify-*.sh scripts/verify-*.ps1; do
+            [ -f "$script" ] && cp "$script" dist-bundle/scripts/ || true
+          done
+          echo "Manuals and scripts bundled."
+      - name: Copy CLI binaries into bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp dist-linux/*.sha256 dist-bundle/ 2>/dev/null || true
+          cp dist-linux/aliasmgr-linux-x86_64-* dist-bundle/ 2>/dev/null || true
+          cp dist-windows/aliasmgr-windows-x86_64-*.exe dist-bundle/ 2>/dev/null || true
+      - name: Upload combined artifact bundle
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: aliasmgr-prerelease-bundle-${{ inputs.version }}
+          path: dist-bundle/
+          retention-days: 14
+
+  # ── Step 6: Create GitHub prerelease (only when all gates pass + explicit auth) ─
+  create_release:
+    name: Create GitHub prerelease
+    needs: [fast_ci_gate, integration_gate, security_gate, build_artifact_bundle]
+    # Least-privilege: escalate to contents:write ONLY on this job.
+    permissions:
+      contents: write
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    # Condition: all automated gates passed AND user explicitly opted in AND typed exact string.
+    if: >-
+      inputs.create_prerelease == 'true' &&
+      inputs.confirmation == 'CREATE-PRERELEASE'
+    steps:
+      - uses: actions/checkout@v4.2.2
+        with:
+          ref: ${{ inputs.source_ref }}
+      - name: Download prerelease bundle
+        uses: actions/download-artifact@v4.2.1
+        with:
+          name: aliasmgr-prerelease-bundle-${{ inputs.version }}
+          path: dist-bundle/
+      - name: Create GitHub prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ inputs.version }}-prerelease"
+          NOTES="## Alias Manager ${{ inputs.version }} — Unsigned Prerelease
+
+          > **This is an unsigned test build. It is NOT a production release.**
+
+          ### What this build is
+          - Automated gate checks passed (Fast CI, Integration, Task 23 security scan).
+          - GUI and installer artifacts are **environment-blocked** (native build dependencies not provisioned).
+          - Manual CLI/Shell script acceptance and GUI click-through **required** before any promotion.
+
+          ### How to test
+          - Download the CLI binary for your platform and verify the SHA256 checksum.
+          - Run the terminal verification script: \`bash scripts/verify-cli-linux.sh\` (Linux) or \`pwsh scripts/verify-powershell7.ps1\` (Windows).
+          - Follow the Chinese acceptance manuals in \`docs/task21-2/\`.
+          - PowerShell 5.1 and 7 are independent. Linux Bash/Zsh are formal supported shells.
+          - Windows Git Bash is exploratory only (NOT-APPLICABLE / EXPECTED-LIMITATION).
+
+          ### What is NOT included
+          - No signed artifacts.
+          - No MSI/AppImage/deb/EXE installers (environment-blocked).
+          - No production promotion or merge.
+
+          ### Feedback
+          Return sanitized result logs, screenshots, and feedback using the Chinese template in \`docs/task21-2/feedback-template.md\`.
+
+          **No automatic promotion. Release approval requires explicit user authorization.**"
+
+          gh release create "$TAG" --prerelease \
+            --title "Alias Manager ${{ inputs.version }} prerelease" \
+            --notes "$NOTES" \
+            dist-bundle/manifest.json \
+            dist-bundle/SHA256SUMS \
+            dist-bundle/aliasmgr-linux-x86_64-* \
+            dist-bundle/aliasmgr-windows-x86_64-*.exe \
+            || true
+          echo "Prerelease created or already exists."

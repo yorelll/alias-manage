@@ -11,15 +11,32 @@
 | Fast CI | 32093176327 | PASS | Linux/Windows workspace、lint、GUI npm ci/cache、前端 test/typecheck/build |
 | Integration | 32093828288 | PASS | Bash、Zsh、oh-my-zsh contract、PowerShell 5.1/7、lock、CLI、benchmark、隔离 |
 | Release dry-run | 32093979406 | PASS | packaging dry-run、unsigned source archive、SHA256SUMS、sanitized manifest、security scan |
+| Prerelease workflow | — | 待执行 | `workflow_dispatch` only；门禁：Fast CI + Integration + Task 23；需 `create_prerelease=true` + `confirmation=CREATE-PRERELEASE` 才创建 prerelease |
 
 ## 测试与产物
 
 - 自动化测试清单：`docs/ci-test-inventory.md`
 - Task 21-2 测试矩阵：`docs/task21-2/test-matrix.md`
-- 未签名源代码 artifact：`alias-manager-unsigned-source`
+- 未签名源代码 artifact：`alias-manager-unsigned-source`（release dry-run `32093979406`）
 - 产物内容：source archive、`SHA256SUMS`、sanitized `manifest.json`
-- artifact 保留期：7 天
+- artifact 保留期：7 天（release）/ 14 天（prerelease bundle）
 - 未执行自动签名、发布或 GitHub Release 创建。
+
+### Prerelease 产物说明
+
+`prerelease.yml` 产生以下产物（`workflow_dispatch` 手动触发，不自动触发）：
+
+| 产物 | 状态 |
+|---|---|
+| `aliasmgr-linux-x86_64-<version>` | CLI 二进制（未签名） |
+| `aliasmgr-windows-x86_64-<version>.exe` | CLI 二进制（未签名） |
+| `SHA256SUMS` | CLI 二进制校验和 |
+| `manifest.json` | 清洁 manifest（`signed:false`、`published:false`、`release_created:false`） |
+| `docs/task21-2/` | 中文验收手册 bundle |
+| `scripts/verify-*.sh` / `scripts/verify-*.ps1` | 终端验证脚本 |
+| GUI/installer（MSI/AppImage/deb/EXE） | `environment-blocked`（原生构建依赖未配置） |
+
+**注意：** 不在实现阶段触发 prerelease 创建。prerelease URL 只在用户明确授权且创建工作流成功后更新。
 
 ## 人工验收状态
 
