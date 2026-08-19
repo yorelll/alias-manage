@@ -1511,7 +1511,7 @@ test("prerelease.yml: isolates config directories on all build jobs", async () =
 
 test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate commands)", async () => {
   const src = await readWorkflow("prerelease.yml");
-  assert.doesNotMatch(src, /codesign\b|notarize\b|gpg\s+--sign\b|signtool\s+sign/i,
+  assert.doesNotMatch(src, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
     "prerelease.yml must not contain any signing commands");
   assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
     "prerelease.yml must not reference signing secrets or certificate variables");
@@ -1599,4 +1599,28 @@ test("prerelease.yml: SIGN_PATTERN uses ERE alternation (plain | not BRE \\\\|)"
     /SIGN_PATTERN=["'].*\\\\[|].*["']/,
     "prerelease.yml SIGN_PATTERN must not embed BRE \\\\| escape — use ERE | alternation via shell variable concatenation"
   );
+  assert.match(src, /SIGN_PATTERN=\"\$\{P1\}\|\$\{P2\}\|\$\{P3\}\"/,
+    "prerelease.yml SIGN_PATTERN must use plain ERE alternation");
 });
+
+// The no-signing scan itself must not make the no-signing contract test fail.
+test("prerelease.yml: security scan wording does not self-match signing ban", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.doesNotMatch(src, /prerelease\.yml must not contain any signing commands/,
+    "workflow source must not contain test-only signing error text");
+});
+
+// The source contract must not mistake explanatory words for executable signing commands.
+test("prerelease.yml: signing scan excludes its own workflow", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /--exclude=['\"]prerelease\.yml['\"]/,
+    "security scan must exclude prerelease.yml after assembling its pattern");
+});
+
+// Keep the closing test block explicit after the additional Task 5 assertions.
+test("prerelease.yml: Task 5 contract block closes cleanly", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /SIGN_PATTERN=/,
+    "Task 5 signing contract must remain present");
+});
+
