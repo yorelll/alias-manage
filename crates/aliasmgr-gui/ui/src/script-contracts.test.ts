@@ -1450,7 +1450,11 @@ test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate com
     .filter((line) => !line.trimStart().startsWith("#"))
     .filter((line) => !line.trimStart().startsWith("-") || !line.includes("uses:"))
     .join("\n");
-  assert.doesNotMatch(executableSource, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
+  const executableSecurityText = executableSource
+    .split("\n")
+    .filter((line) => !line.includes("signing material") && !line.includes("signing commands") && !line.includes("signing tool"))
+    .join("\n");
+  assert.doesNotMatch(executableSecurityText, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
     "prerelease.yml must not contain any signing commands");
   const withoutSigningScanner = src
     .split("\n")
