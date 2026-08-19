@@ -22,9 +22,9 @@ See `docs/ci-test-inventory.md` for stable behavior IDs and their focused test t
 
 ## Current successful baseline
 
-- Fast CI: `32093176327`
-- Integration: `32093828288`
-- Release dry-run: `32093979406`
+- Fast CI: `32245518564` (post-GUI-artifact-build commit ed28bac)
+- Integration: `32245524584` (post-GUI-artifact-build commit ed28bac)
+- Previous baselines: Fast CI `32093176327`, Integration `32093828288`, Release dry-run `32093979406`
 - Unsigned artifact: `alias-manager-unsigned-source` from release run `32093979406`
 
 Legacy pre-GUI baselines remain in the task-specific history.
