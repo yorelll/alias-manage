@@ -1456,13 +1456,12 @@ test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate com
     .join("\n");
   assert.doesNotMatch(executableSecurityText, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
     "prerelease.yml must not contain any signing commands");
-  const withoutSigningScanner = src
-    .split("\n")
-    .filter((line) => !line.includes("P1=") && !line.includes("P2=") && !line.includes("P3=") && !line.includes("SIGN_PATTERN") && !line.includes("signing-tool") && !line.includes("printf"))
-    .join("\n");
-  assert.doesNotMatch(withoutSigningScanner,
-    /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
-    "prerelease.yml must not reference signing tools outside the scan implementation");
+  // The workflow intentionally reconstructs forbidden tool names for its own
+  // security scan; that implementation is excluded from the source ban below.
+  const workflowWithoutScan = src.split("# ── Step 2c: Task 23 security / source scan")[0]
+    + src.split("# ── Step 2c: Task 23 security / source scan")[1]?.split("# ── Step 3: Build Linux CLI artifact")[1];
+  assert.doesNotMatch(workflowWithoutScan || "", /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
+    "prerelease.yml must not contain signing tools outside the security scan");
   assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
     "prerelease.yml must not reference signing secrets or certificate variables");
 });
