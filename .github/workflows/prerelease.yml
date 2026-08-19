@@ -474,47 +474,110 @@ jobs:
           echo "HOME=$RUNNER_TEMP/aliasmgr-home" >> "$GITHUB_ENV"
           echo "XDG_CONFIG_HOME=$RUNNER_TEMP/aliasmgr-config" >> "$GITHUB_ENV"
           echo "ALIASMGR_CONFIG_DIR=$RUNNER_TEMP/aliasmgr-config/alias-manager" >> "$GITHUB_ENV"
-      - name: Fix Ubuntu apt sources (DEB822 / Azure mirror)
+      - name: Fix Ubuntu apt sources (legacy .list / DEB822 .sources / apt-mirrors.txt)
         shell: bash
         run: |
           set -euo pipefail
-          # Rewrite any legacy .list sources to use official Ubuntu archives.
-          sudo sed -i -E \
-            's#https?://[a-zA-Z0-9.-]*\.archive\.ubuntu\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g;
-             s#https?://security\.ubuntu\.com/ubuntu/?#http://security.ubuntu.com/ubuntu/#g' \
-            /etc/apt/sources.list \
-            /etc/apt/sources.list.d/*.list 2>/dev/null || true
-          # Remove any stale DEB822 sources that may conflict.
-          sudo rm -f /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+          # ── 1. Legacy .list files ──────────────────────────────────────────────
+          # Rewrite any Azure/regional mirror endpoints to official Ubuntu archives.
+          # Use HTTPS for both archive and security endpoints.
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list; do
+            [ -f "$f" ] || continue
+            sudo sed -i -E \
+              's#https?://[a-zA-Z0-9._-]*azure[a-zA-Z0-9._-]*\.archive\.ubuntu\.com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g;
+               s#https?://[a-zA-Z0-9._-]*\.archive\.ubuntu\.com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g;
+               s#https?://security\.ubuntu\.com/ubuntu/?#https://security.ubuntu.com/ubuntu/#g' \
+              "$f"
+            echo "Fixed legacy .list: $f"
+          done
+          # ── 2. DEB822 .sources files ───────────────────────────────────────────
+          # Rewrite URIs: lines inside any DEB822 .sources files in-place.
+          # Do NOT delete ubuntu.sources; instead rewrite its URIs to official endpoints.
+          for f in /etc/apt/sources.list.d/*.sources; do
+            [ -f "$f" ] || continue
+            sudo sed -i -E \
+              's#(URIs:[[:space:]]*)https?://[a-zA-Z0-9._-]*azure[a-zA-Z0-9._-]*\.archive\.ubuntu\.com/ubuntu/?#\1https://archive.ubuntu.com/ubuntu/#g;
+               s#(URIs:[[:space:]]*)https?://[a-zA-Z0-9._-]*\.archive\.ubuntu\.com/ubuntu/?#\1https://archive.ubuntu.com/ubuntu/#g;
+               s#(URIs:[[:space:]]*)https?://security\.ubuntu\.com/ubuntu/?#\1https://security.ubuntu.com/ubuntu/#g' \
+              "$f"
+            echo "Fixed DEB822 .sources: $f"
+          done
+          # ── 3. apt-mirrors.txt (if present) ───────────────────────────────────
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i -E \
+              's#https?://[a-zA-Z0-9._-]*azure[a-zA-Z0-9._-]*\.archive\.ubuntu\.com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g;
+               s#https?://[a-zA-Z0-9._-]*\.archive\.ubuntu\.com/ubuntu/?#https://archive.ubuntu.com/ubuntu/#g;
+               s#https?://security\.ubuntu\.com/ubuntu/?#https://security.ubuntu.com/ubuntu/#g' \
+              /etc/apt/apt-mirrors.txt
+            echo "Fixed apt-mirrors.txt"
+          fi
+          # ── 4. Verify: no azure.archive.ubuntu.com remains ────────────────────
+          echo "--- Active apt source paths (no secrets) ---"
+          for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources /etc/apt/apt-mirrors.txt; do
+            [ -f "$f" ] && echo "  $f" || true
+          done
+          if grep -rE 'azure\.archive\.ubuntu\.com' \
+               /etc/apt/sources.list \
+               /etc/apt/sources.list.d/ \
+               /etc/apt/apt-mirrors.txt 2>/dev/null; then
+            echo "ERROR: azure.archive.ubuntu.com still present after rewrite" >&2
+            exit 1
+          fi
+          echo "apt source rewrite complete: no azure.archive.ubuntu.com remaining."
       - name: Install Tauri Linux native dependencies
+        id: apt_install_tauri_deps
         shell: bash
         run: |
-          set -euo pipefail
-          # Bounded retry: up to 3 attempts with 30-second timeout per apt call.
+          set -uo pipefail
           APT_OPTS="-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30"
+          # ── apt-get update with bounded retry ─────────────────────────────────
+          UPDATE_OK=false
           for attempt in 1 2 3; do
-            if sudo apt-get $APT_OPTS update -qq; then
+            if sudo apt-get $APT_OPTS update -qq 2>&1 | tail -5; then
+              UPDATE_OK=true
               break
             fi
-            echo "apt-get update attempt $attempt failed; retrying..."
+            echo "apt-get update attempt $attempt failed; retrying in 5s..."
             sleep 5
           done
-          # webkit2gtk-4.1 is the Tauri v2 requirement on Ubuntu 24.04 (GTK4/WebKit2GTK 4.1).
+          if [ "$UPDATE_OK" = "false" ]; then
+            echo "apt-get update failed after 3 attempts; marking environment-blocked."
+            echo "tauri_deps_status=environment-blocked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ── Verify package candidates before install ───────────────────────────
+          # webkit2gtk-4.1 is the Tauri v2 requirement on Ubuntu 24.04.
           # libayatana-appindicator3-dev provides tray icon support.
-          sudo apt-get $APT_OPTS install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            pkg-config \
-            libgtk-3-dev \
-            libglib2.0-dev \
-            2>&1 | tail -20
+          PKGS="libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev pkg-config libgtk-3-dev libglib2.0-dev"
+          echo "--- Package candidates ---"
+          apt-cache policy $PKGS 2>&1 | grep -E 'libwebkit2gtk|libayatana|libgtk|libglib|Candidate:|none' | head -30 || true
+          MISSING=""
+          for pkg in $PKGS; do
+            CAND=$(apt-cache policy "$pkg" 2>/dev/null | grep 'Candidate:' | awk '{print $2}')
+            if [ -z "$CAND" ] || [ "$CAND" = "(none)" ]; then
+              MISSING="$MISSING $pkg"
+            fi
+          done
+          if [ -n "$MISSING" ]; then
+            echo "Packages not available as candidates:$MISSING"
+            echo "Marking environment-blocked; no package install attempted."
+            echo "tauri_deps_status=environment-blocked" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # ── Install packages ───────────────────────────────────────────────────
+          if sudo apt-get $APT_OPTS install -y --no-install-recommends $PKGS 2>&1 | tail -20; then
+            echo "tauri_deps_status=success" >> "$GITHUB_OUTPUT"
+            echo "Tauri native dependencies installed successfully."
+          else
+            echo "apt-get install failed; marking environment-blocked."
+            echo "tauri_deps_status=environment-blocked" >> "$GITHUB_OUTPUT"
+          fi
       - name: Install Tauri CLI
+        if: steps.apt_install_tauri_deps.outputs.tauri_deps_status == 'success'
         shell: bash
         run: cargo install tauri-cli --version "^2" --locked 2>&1 | tail -5
       - name: Build frontend
+        if: steps.apt_install_tauri_deps.outputs.tauri_deps_status == 'success'
         shell: bash
         working-directory: crates/aliasmgr-gui/ui
         run: |
@@ -527,6 +590,12 @@ jobs:
           set -uo pipefail
           mkdir -p dist-gui-linux
           BUILD_LOG="dist-gui-linux/tauri-build.log"
+          # Short-circuit: if native deps were unavailable, skip the build immediately.
+          if [ "${{ steps.apt_install_tauri_deps.outputs.tauri_deps_status }}" != "success" ]; then
+            echo "gui_linux_build_status=environment-blocked" >> "$GITHUB_OUTPUT"
+            echo "Native dependencies not available; skipping Tauri build (environment-blocked)."
+            exit 0
+          fi
           if cargo tauri build \
               --config '{"bundle":{"active":true}}' \
               --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml \

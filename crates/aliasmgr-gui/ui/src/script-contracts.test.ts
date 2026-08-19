@@ -1808,3 +1808,136 @@ test("prerelease.yml: GUI build log is tailed (not fully dumped) on failure", as
     "GUI build jobs must tail the build log (not fully dump it) on failure");
 });
 
+// ─── Task 7: Linux apt source rewrite completeness ───────────────────────────
+// These tests assert that the Linux GUI job rewrites ALL relevant apt source
+// representations (legacy .list, DEB822 .sources URIs:, apt-mirrors.txt) and
+// verifies no azure.archive.ubuntu.com endpoint remains before apt-get update.
+
+test("prerelease.yml: Linux GUI apt-source fix rewrites DEB822 URIs: lines (not just .list)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // The fix must target the URIs: key in DEB822 .sources files, not only deb lines.
+  assert.match(
+    src,
+    /URIs:/,
+    "Linux GUI apt-source fix must rewrite URIs: lines in DEB822 .sources files"
+  );
+  // Must use *.sources glob to reach DEB822 files
+  assert.match(
+    src,
+    /\*\.sources/,
+    "Linux GUI apt-source fix must glob *.sources to reach DEB822 files"
+  );
+});
+
+test("prerelease.yml: Linux GUI apt-source fix handles apt-mirrors.txt when present", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /apt-mirrors\.txt/,
+    "Linux GUI apt-source fix must handle /etc/apt/apt-mirrors.txt"
+  );
+  // Must guard with -f existence check (apt-mirrors.txt may be absent)
+  assert.match(
+    src,
+    /-f.*apt-mirrors\.txt|apt-mirrors\.txt.*-f/,
+    "Linux GUI apt-source fix must guard apt-mirrors.txt rewrite with -f existence check"
+  );
+});
+
+test("prerelease.yml: Linux GUI apt-source fix uses HTTPS for official archive endpoints", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // The replacement target must use https:// not http:// for archive.ubuntu.com
+  assert.match(
+    src,
+    /https:\/\/archive\.ubuntu\.com\/ubuntu/,
+    "Linux GUI apt-source fix must rewrite to https://archive.ubuntu.com/ubuntu"
+  );
+  assert.match(
+    src,
+    /https:\/\/security\.ubuntu\.com\/ubuntu/,
+    "Linux GUI apt-source fix must rewrite to https://security.ubuntu.com/ubuntu"
+  );
+});
+
+test("prerelease.yml: Linux GUI apt-source fix does NOT blindly delete ubuntu.sources", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // The correct approach rewrites URIs: in .sources files; deleting them was the old broken approach.
+  assert.doesNotMatch(
+    src,
+    /rm\s+-f[^\n]*ubuntu\.sources/,
+    "Linux GUI apt-source fix must not blindly rm -f ubuntu.sources (rewrite URIs instead)"
+  );
+});
+
+test("prerelease.yml: Linux GUI apt-source fix verifies no azure.archive.ubuntu.com remains", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Must have a grep/verification step that fails the job if azure endpoint is still present
+  assert.match(
+    src,
+    /azure\.archive\.ubuntu\.com.*still present|ERROR.*azure\.archive\.ubuntu\.com/,
+    "Linux GUI apt-source fix must verify no azure.archive.ubuntu.com remains after rewrite"
+  );
+  assert.match(
+    src,
+    /grep.*azure\.archive\.ubuntu\.com|azure\.archive\.ubuntu\.com.*grep/,
+    "Linux GUI apt-source fix must grep for remaining azure.archive.ubuntu.com references"
+  );
+});
+
+test("prerelease.yml: Linux GUI apt-source fix logs source paths without secrets", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /Active apt source paths.*no secrets|apt source paths.*no secrets/,
+    "Linux GUI apt-source fix must log source paths with note that no secrets are revealed"
+  );
+});
+
+test("prerelease.yml: Linux GUI native dep install checks package candidates before install", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /apt-cache policy/,
+    "Linux GUI native dep install must check package candidates with apt-cache policy before installing"
+  );
+  assert.match(
+    src,
+    /Candidate:/,
+    "Linux GUI native dep install must check Candidate: field in apt-cache policy output"
+  );
+});
+
+test("prerelease.yml: Linux GUI native dep install produces tauri_deps_status output", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(
+    src,
+    /tauri_deps_status=success/,
+    "Linux GUI dep install step must set tauri_deps_status=success on success"
+  );
+  assert.match(
+    src,
+    /tauri_deps_status=environment-blocked/,
+    "Linux GUI dep install step must set tauri_deps_status=environment-blocked on failure"
+  );
+});
+
+test("prerelease.yml: Linux GUI tauri build skips when native deps are environment-blocked", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // The tauri build step must check the dep status and short-circuit
+  assert.match(
+    src,
+    /tauri_deps_status.*!=.*success|Native dependencies not available.*skipping Tauri build/,
+    "Linux GUI tauri build must short-circuit to environment-blocked when native deps unavailable"
+  );
+});
+
+test("prerelease.yml: Linux GUI apt-get update failure marks environment-blocked (not hard-fail)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Update retry loop must exit 0 (not 1) on failure, propagating environment-blocked status.
+  assert.match(
+    src,
+    /apt-get update failed after.*3 attempts.*environment-blocked|update failed.*marking environment-blocked/i,
+    "Linux GUI job must mark environment-blocked when apt-get update fails after retries"
+  );
+});
+
