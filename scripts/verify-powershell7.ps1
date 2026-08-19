@@ -20,8 +20,8 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Error ("[error] verify-powershell7.ps1 requires PowerShell 7; detected " + $PSVersionTable.PSVersion)
+if (-not ($PSVersionTable.PSVersion.Major -ge 7)) {
+    Write-Error ("[error] verify-powershell7.ps1 requires PowerShell 7+; detected " + $PSVersionTable.PSVersion)
     exit 3
 }
 if (-not (Test-Path $ArtifactPath)) {
@@ -80,8 +80,13 @@ Write-Log ("LanguageMode: " + $LangMode)
 $ProfileSummary = if ($PROFILE) { "profile_path=REDACTED exists=$(Test-Path $PROFILE)" } else { "profile_path=undefined" }
 Write-Log ("Profile summary: " + $ProfileSummary)
 
+# Detect Group Policy-driven restrictions (UserPolicy/MachinePolicy scopes)
+$GpScopes = Get-ExecutionPolicy -List | Where-Object { $_.Scope -in @("UserPolicy","MachinePolicy") -and $_.ExecutionPolicy -ne "Undefined" }
+$GroupPolicyNote = if ($GpScopes) { "Group Policy restriction detected: $(($GpScopes | ForEach-Object { '$($_.Scope)=$($_.ExecutionPolicy)' }) -join '; ')" } else { "Group Policy: no Group Policy restriction detected" }
+Write-Log $GroupPolicyNote
+
 $PolicyStatus = if ((Get-ExecutionPolicy -Scope CurrentUser) -in @("Restricted","AllSigned")) { "EXPECTED-LIMITATION" } else { "PASS" }
-Record-Result "PS7-006" "ExecutionPolicy scope report" $PolicyStatus "ExecutionPolicy reported per scope; policy not changed" $PolicyReport "Get-ExecutionPolicy -List"
+Record-Result "PS7-006" "ExecutionPolicy scope report (Group Policy aware)" $PolicyStatus "ExecutionPolicy reported per scope; Group Policy status noted; policy not changed" ($PolicyReport + " | " + $GroupPolicyNote) "Get-ExecutionPolicy -List"
 Record-Result "PS7-007" "native argv limitation report" "EXPECTED-LIMITATION" "native argv limitation documented" "PowerShell native argv edge cases require live verification; no policy bypass used" "ps7-native-argv-limitation"
 Record-Result "PS7-004" "BOM/CRLF encoding summary" "EXPECTED-LIMITATION" "BOM/CRLF encoding documented for Windows PS7" "PowerShell 7 encoding and line-ending behavior requires live generated-file check" "ps7-encoding-summary"
 
