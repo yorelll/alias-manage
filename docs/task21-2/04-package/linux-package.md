@@ -2,9 +2,18 @@
 
 涵盖案例：PKG-001（Linux 部分）、PKG-002（Linux 部分）、PKG-003（Linux 部分）、PKG-004（Linux 部分）
 
-**只有在真实 Linux 安装包 artifact（AppImage / .deb / .rpm）存在时执行。**
+**只有在真实 Linux 安装包 artifact（AppImage / .deb）存在且来自 remote CI prerelease bundle 时执行。**
 
-如果没有安装包 artifact，在矩阵中标记 `NOT-APPLICABLE` 并写明具体缺失的 artifact 类型和原因。
+如果没有安装包 artifact，在矩阵中标记相应状态并写明具体缺失的 artifact 类型和原因。
+
+## Artifact 获取与状态确认
+
+执行本手册前，必须先检查 prerelease bundle 中的 `manifest.json`：
+
+- `gui_linux_build_status: success` — AppImage 和/或 deb 文件在 bundle 中存在，可继续本手册。
+- `gui_linux_build_status: environment-blocked` — Tauri 构建未能在 remote CI 上完成，artifact 不存在。在矩阵中标记 `BLOCKED`，说明"CI Tauri Linux 构建为 environment-blocked，安装包 artifact 不可用"。不要使用本地自行构建的 binary。
+
+不得从本地构建替代远程 CI artifact。remote CI 证明构建成功后方可执行安装包验收。
 
 ---
 

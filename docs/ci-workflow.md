@@ -65,13 +65,18 @@ See `docs/release-checklist.md` for the separation between CI evidence and manua
 
 | Artifact | Status |
 |---|---|
-| `aliasmgr-linux-x86_64-<version>` | CLI binary (unsigned) |
-| `aliasmgr-windows-x86_64-<version>.exe` | CLI binary (unsigned) |
-| `SHA256SUMS` | SHA256 checksums for CLI binaries |
-| `manifest.json` | Sanitized manifest (`signed:false`, `published:false`, `release_created:false`) |
+| `aliasmgr-linux-x86_64-<version>` | CLI binary (unsigned) — always present |
+| `aliasmgr-windows-x86_64-<version>.exe` | CLI binary (unsigned) — always present |
+| `SHA256SUMS` | SHA256 checksums for all successfully built artifacts |
+| `manifest.json` | Sanitized manifest (`signed:false`, `published:false`, `release_created:false`) — reports exact GUI build status |
 | `docs/task21-2/` | Chinese acceptance manuals bundle |
 | `scripts/verify-*.sh`, `scripts/verify-*.ps1` | Terminal verification scripts |
-| GUI/installer artifacts | **environment-blocked** (native build dependencies not provisioned) |
+| `aliasmgr-linux-x86_64-<version>.AppImage` | Linux GUI AppImage — present only when Tauri build succeeded |
+| `aliasmgr-linux-x86_64-<version>.deb` | Linux deb package — present only when Tauri build succeeded |
+| `aliasmgr-windows-x86_64-<version>.msi` | Windows MSI installer — present only when Tauri build succeeded |
+| `aliasmgr-windows-x86_64-<version>-setup.exe` | Windows NSIS setup — present only when Tauri build succeeded |
+
+GUI/installer artifacts are included only when their respective Tauri build succeeded. The manifest records `environment-blocked` for any artifact that could not be built; no fabricated GUI file names appear in the manifest or bundle.
 
 ### Automated gates
 
@@ -94,6 +99,40 @@ The workflow runs the following gates before building artifacts:
 
 MSI, AppImage, deb, and EXE installers are marked `environment-blocked` in the manifest because native Tauri GUI build dependencies (webkit2gtk on Linux, WebView2 on Windows) are not provisioned on standard GitHub Actions runners. The manifest records the exact blocked status and never fabricates an installer artifact.
 
+## GUI Tauri build jobs
+
+`prerelease.yml` includes actual Tauri build jobs for Linux (`ubuntu-24.04`) and Windows (`windows-latest`). These are distinct from the GUI frontend CI jobs that run in the fast CI gate.
+
+### Linux Tauri build (`build_linux_gui`)
+
+- Installs native dependencies: `libwebkit2gtk-4.1-dev`, `libayatana-appindicator3-dev`, `librsvg2-dev`, `patchelf`, `libssl-dev`, `pkg-config`, `libgtk-3-dev`, `libglib2.0-dev`.
+- Fixes Ubuntu 24.04 apt sources (DEB822/Azure mirror) before installing packages.
+- Uses bounded apt retries (up to 3 attempts, 30-second timeout per call).
+- Installs `tauri-cli` v2 via `cargo install tauri-cli --version "^2" --locked`.
+- Builds the frontend via `npm ci && npm run build` in `crates/aliasmgr-gui/ui`.
+- Runs `cargo tauri build --config '{"bundle":{"active":true}}' --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml`.
+- If the build succeeds, collects AppImage and deb artifacts from `target/release/bundle/`.
+- If the build fails, records `gui_build_status: environment-blocked` in the manifest; never fabricates a GUI binary.
+- Uploads a `aliasmgr-linux-gui-<version>` artifact containing the manifest and any produced files (or just the diagnostic manifest on failure).
+
+### Windows Tauri build (`build_windows_gui`)
+
+- Checks for WebView2 Runtime via registry.
+- Installs `tauri-cli` v2 via `cargo install tauri-cli --version "^2" --locked`.
+- Builds the frontend via `npm ci && npm run build`.
+- Runs `cargo tauri build --config '{"bundle":{"active":true}}' --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml`.
+- If the build succeeds, collects MSI and NSIS setup.exe from `target/release/bundle/`.
+- If the build fails, records `gui_build_status: environment-blocked` in the manifest; never fabricates a GUI binary.
+- Uploads a `aliasmgr-windows-gui-<version>` artifact.
+
+### Combined artifact bundle
+
+The `build_artifact_bundle` job depends on all four build jobs (both CLI and both GUI). It downloads all four artifacts, combines checksums (CLI checksums are always present; GUI checksums are appended only if available), and generates a combined `manifest.json` that reports the exact GUI build status and artifact names. GUI binary files are copied into the bundle only if they physically exist. The manifest explicitly states `environment-blocked` for any absent GUI artifact and never lists a nonexistent file as available.
+
+### Release creation and GUI assets
+
+The `create_release` job reads the combined manifest to determine which GUI artifacts are available. It validates that any artifact named in the manifest (i.e., not `environment-blocked`) actually exists in the bundle directory before uploading. GUI assets are included in the release only when present. CLI assets are always required; their absence aborts release creation.
+
 ## Deferred jobs
 
-GUI npm cache, Tauri build jobs, package builds, signing, and installer tests are intentionally deferred until the GUI/release phase. `release.yml` is a future release boundary and must not be treated as successful merely because the current fast/integration workflows pass.
+Package builds (MSI wix configuration, deb postinstall hooks), signing, and installer lifecycle tests remain deferred until the release phase. `release.yml` is a future release boundary and must not be treated as successful merely because the current fast/integration workflows pass.

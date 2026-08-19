@@ -28,13 +28,22 @@
 
 | 产物 | 状态 |
 |---|---|
-| `aliasmgr-linux-x86_64-<version>` | CLI 二进制（未签名） |
-| `aliasmgr-windows-x86_64-<version>.exe` | CLI 二进制（未签名） |
-| `SHA256SUMS` | CLI 二进制校验和 |
-| `manifest.json` | 清洁 manifest（`signed:false`、`published:false`、`release_created:false`） |
+| `aliasmgr-linux-x86_64-<version>` | CLI 二进制（未签名）— 始终存在 |
+| `aliasmgr-windows-x86_64-<version>.exe` | CLI 二进制（未签名）— 始终存在 |
+| `SHA256SUMS` | 所有成功构建 artifact 的 SHA256 校验和 |
+| `manifest.json` | 清洁 manifest（`signed:false`、`published:false`、`release_created:false`）— 包含 GUI 构建状态 |
 | `docs/task21-2/` | 中文验收手册 bundle |
 | `scripts/verify-*.sh` / `scripts/verify-*.ps1` | 终端验证脚本 |
-| GUI/installer（MSI/AppImage/deb/EXE） | `environment-blocked`（原生构建依赖未配置） |
+| `aliasmgr-linux-x86_64-<version>.AppImage` | Linux GUI AppImage — 仅在 Tauri 构建成功时存在 |
+| `aliasmgr-linux-x86_64-<version>.deb` | Linux deb 安装包 — 仅在 Tauri 构建成功时存在 |
+| `aliasmgr-windows-x86_64-<version>.msi` | Windows MSI 安装包 — 仅在 Tauri 构建成功时存在 |
+| `aliasmgr-windows-x86_64-<version>-setup.exe` | Windows NSIS 安装程序 — 仅在 Tauri 构建成功时存在 |
+
+**关于 GUI artifact 的说明：**
+- `prerelease.yml` 现在包含实际的 Tauri 构建 job：Linux 使用 `build_linux_gui`（ubuntu-24.04），Windows 使用 `build_windows_gui`（windows-latest）。
+- 每个 job 会安装原生依赖（Linux：webkit2gtk 4.1/appindicator；Windows：检测 WebView2），运行 `cargo tauri build`，并收集产生的 AppImage/deb/MSI/NSIS 文件。
+- 如果构建失败，job 在 manifest 中记录 `gui_build_status: environment-blocked`，并上传诊断 artifact，但不伪造 GUI 二进制。
+- 只有当 remote CI 证明 Tauri 构建成功后，才能声明 GUI artifact 可用。当前状态为待 CI 验证。
 
 **注意：** 不在实现阶段触发 prerelease 创建。prerelease URL 只在用户明确授权且创建工作流成功后更新。
 

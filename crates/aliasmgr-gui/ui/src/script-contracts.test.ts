@@ -1641,3 +1641,170 @@ test("prerelease.yml: Task 5 contract block closes cleanly", async () => {
     "Task 5 signing contract must remain present");
 });
 
+// ─── Task 6: GUI artifact build jobs ─────────────────────────────
+// These tests assert the structural and safety properties of the actual
+// Tauri build jobs added in the GUI artifact phase.
+
+test("prerelease.yml: has Linux Tauri GUI build job", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /build_linux_gui|Build Linux Tauri GUI/,
+    "prerelease.yml must include a Linux Tauri GUI build job");
+});
+
+test("prerelease.yml: has Windows Tauri GUI build job", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /build_windows_gui|Build Windows Tauri GUI/,
+    "prerelease.yml must include a Windows Tauri GUI build job");
+});
+
+test("prerelease.yml: Linux GUI job uses ubuntu-24.04 runner", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  const linuxGuiSection = src.slice(src.indexOf("build_linux_gui"));
+  assert.match(linuxGuiSection.slice(0, 300), /ubuntu-24\.04/,
+    "Linux Tauri GUI job must run on ubuntu-24.04");
+});
+
+test("prerelease.yml: Windows GUI job uses windows-latest runner", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  const winGuiSection = src.slice(src.indexOf("build_windows_gui"));
+  assert.match(winGuiSection.slice(0, 300), /windows-latest/,
+    "Windows Tauri GUI job must run on windows-latest");
+});
+
+test("prerelease.yml: Linux GUI job installs webkit2gtk/appindicator dependencies", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /libwebkit2gtk-4\.1-dev/,
+    "Linux GUI job must install libwebkit2gtk-4.1-dev");
+  assert.match(src, /libayatana-appindicator3-dev/,
+    "Linux GUI job must install libayatana-appindicator3-dev");
+});
+
+test("prerelease.yml: Linux GUI job has bounded apt retry/timeout", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /Acquire::Retries|apt.*retry|attempt.*failed.*retrying/i,
+    "Linux GUI job must use bounded apt retries or a retry loop");
+  assert.match(src, /Acquire::http::Timeout|Acquire::https::Timeout|apt.*timeout/i,
+    "Linux GUI job must set an apt timeout");
+});
+
+test("prerelease.yml: Linux GUI job fixes DEB822/Azure mirror sources", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /archive\.ubuntu\.com|DEB822|sources\.list/,
+    "Linux GUI job must fix Ubuntu apt sources (DEB822/Azure mirror)");
+});
+
+test("prerelease.yml: Linux and Windows GUI jobs invoke actual cargo tauri build", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /cargo tauri build/,
+    "prerelease.yml must invoke 'cargo tauri build' in GUI build job(s)");
+  assert.match(src, /--manifest-path.*aliasmgr-gui.*src-tauri|src-tauri.*Cargo\.toml/,
+    "cargo tauri build must target the src-tauri Cargo.toml");
+});
+
+test("prerelease.yml: Linux GUI job installs tauri-cli via cargo install", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /cargo install tauri-cli/,
+    "prerelease.yml must install tauri-cli via cargo install");
+});
+
+test("prerelease.yml: GUI build failure does not fail job silently — produces environment-blocked status", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /gui_linux_build_status=environment-blocked|gui_windows_build_status=environment-blocked/,
+    "prerelease.yml must record environment-blocked when Tauri build fails");
+});
+
+test("prerelease.yml: GUI manifest never fabricates a binary name when build is environment-blocked", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /environment-blocked.*no GUI binary was fabricated|no GUI binary was fabricated/,
+    "prerelease.yml notes must state that no GUI binary is fabricated when environment-blocked");
+});
+
+test("prerelease.yml: GUI artifacts upload diagnostic even when build fails", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /Upload Linux GUI artifact.*or diagnostic|Upload Windows GUI artifact.*or diagnostic/,
+    "prerelease.yml must upload GUI diagnostic artifact even on failed builds");
+});
+
+test("prerelease.yml: GUI artifact copy step checks file existence before copying", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /Copy GUI artifacts into bundle.*only if builds succeeded/,
+    "prerelease.yml must only copy GUI artifacts that exist");
+  assert.match(src, /\[ -f.*\].*&&.*cp|\[ -n.*\].*\n.*cp|if \[ -n|Test-Path.*Copy-Item/,
+    "prerelease.yml must guard GUI copy with file-existence or non-empty check");
+});
+
+test("prerelease.yml: combined bundle downloads both GUI artifacts", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /aliasmgr-linux-gui-\$\{\{ inputs\.version \}\}/,
+    "bundle job must download linux GUI artifact");
+  assert.match(src, /aliasmgr-windows-gui-\$\{\{ inputs\.version \}\}/,
+    "bundle job must download windows GUI artifact");
+});
+
+test("prerelease.yml: combined manifest reports gui_linux_build_status and gui_windows_build_status", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /gui_linux_build_status/,
+    "combined manifest must include gui_linux_build_status");
+  assert.match(src, /gui_windows_build_status/,
+    "combined manifest must include gui_windows_build_status");
+});
+
+test("prerelease.yml: combined manifest reports exact GUI artifact names or environment-blocked (never fabricated)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /gui_appimage.*gui_artifact|gui_artifact.*appimage/i,
+    "combined manifest must derive gui_appimage from actual artifact manifest");
+  assert.match(src, /gui_msi.*gui_artifact|gui_artifact.*msi/i,
+    "combined manifest must derive gui_msi from actual artifact manifest");
+});
+
+test("prerelease.yml: build_artifact_bundle depends on CLI and GUI jobs", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  const bundleSection = src.slice(src.indexOf("build_artifact_bundle"));
+  const needsLine = bundleSection.slice(0, 500);
+  assert.match(needsLine, /build_linux_cli/,
+    "bundle job must depend on build_linux_cli");
+  assert.match(needsLine, /build_windows_cli/,
+    "bundle job must depend on build_windows_cli");
+  assert.match(needsLine, /build_linux_gui/,
+    "bundle job must depend on build_linux_gui");
+  assert.match(needsLine, /build_windows_gui/,
+    "bundle job must depend on build_windows_gui");
+});
+
+test("prerelease.yml: create_release validates GUI assets only when manifest says available", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /manifest lists GUI artifact.*but file not found|no environment-blocked.*file not found/i,
+    "create_release must validate GUI files referenced in manifest actually exist");
+});
+
+test("prerelease.yml: create_release only uploads GUI files that exist (no empty-glob silence)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /\[ -f.*\].*&&.*FILES.*\$f|files=.*upload_list/,
+    "create_release must conditionally include GUI files in upload list");
+});
+
+test("prerelease.yml: Windows GUI job checks WebView2 availability", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /WebView2|webview2/,
+    "Windows GUI job must check WebView2 availability");
+});
+
+test("prerelease.yml: GUI build jobs use pinned action versions", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  const guiSection = src.slice(src.indexOf("build_linux_gui"));
+  const usesLines = guiSection.split("\n").filter((l) => /uses:\s+\S+/.test(l));
+  for (const line of usesLines) {
+    assert.doesNotMatch(
+      line,
+      /@latest\b|@main\b|@master\b/,
+      `GUI build jobs must not use @latest/@main/@master: "${line.trim()}"`
+    );
+  }
+});
+
+test("prerelease.yml: GUI build log is tailed (not fully dumped) on failure", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /tail.*\d+|Select-Object.*-Last/,
+    "GUI build jobs must tail the build log (not fully dump it) on failure");
+});
+
