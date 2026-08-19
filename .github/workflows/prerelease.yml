@@ -186,6 +186,12 @@ jobs:
       - name: Run Bash adapter test
         if: matrix.test == 'bash_shell'
         run: cargo test -p aliasmgr-tests --test bash
+      - name: Switch Ubuntu Azure mirrors to official archives
+        if: runner.os == 'Linux' && (matrix.test == 'zsh_shell' || matrix.test == 'linux_verify_scripts')
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo sed -i -E 's#https?://[a-zA-Z0-9.-]*\.archive\.ubuntu\.com/ubuntu/?#http://archive.ubuntu.com/ubuntu/#g; s#https?://security\.ubuntu\.com/ubuntu/?#http://security.ubuntu.com/ubuntu/#g' /etc/apt/sources.list /etc/apt/sources.list.d/*.list 2>/dev/null || true
       - name: Install Zsh
         if: matrix.test == 'zsh_shell'
         shell: bash
