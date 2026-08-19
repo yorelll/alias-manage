@@ -50,15 +50,22 @@
 
 ### 第六步：Windows GUI 测试
 
-在 Windows 机器上启动 GUI artifact，按点击路径手册逐项验收。
+在 Windows 机器上启动 GUI artifact，按点击路径手册逐项验收。每个 GUI 案例都必须截图并把脱敏后的截图路径填写到 `test-matrix.md` 的 Evidence 列。
 
-详见：[03-gui/windows-gui.md](03-gui/windows-gui.md)
+详见：
+
+- 总入口和证据规则：[03-gui/README.md](03-gui/README.md)
+- Windows GUI 点击路径：[03-gui/windows-gui.md](03-gui/windows-gui.md)
 
 ### 第七步：Linux GUI 测试
 
-在 Linux 机器（或带显示环境的 VM）上启动 GUI artifact，按手册逐项验收。
+在 Linux 机器（或带显示环境的 VM）上启动 GUI artifact，按点击路径手册逐项验收。每个 GUI 案例都必须截图并把脱敏后的截图路径填写到 `test-matrix.md` 的 Evidence 列。
 
-详见：[03-gui/linux-gui.md](03-gui/linux-gui.md)
+详见：
+
+- 总入口和证据规则：[03-gui/README.md](03-gui/README.md)
+- Linux GUI 点击路径：[03-gui/linux-gui.md](03-gui/linux-gui.md)
+GUI 前端 CI 只验证源码级组件、类型和构建，不产生真实窗口验收结果；不得用 CI 结果填写 GUI 的 Actual、Result 或 Evidence。当前 prerelease workflow 若 manifest 将 GUI 标记为 `environment-blocked`，必须在矩阵中将 GUI 案例标记为 `BLOCKED` 或 `NOT-APPLICABLE` 并记录原因，不能伪造截图或 `PASS`。
 
 ### 第八步：安装包生命周期测试
 
