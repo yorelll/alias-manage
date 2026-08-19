@@ -659,17 +659,21 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path dist-gui-windows | Out-Null
           $BuildLog = "dist-gui-windows\tauri-build.log"
+          $ErrorLog = "$BuildLog.err"
           $Proc = Start-Process -FilePath "cargo" `
             -ArgumentList "tauri","build","--config",'{\"bundle\":{\"active\":true}}',
                           "--manifest-path","crates/aliasmgr-gui/src-tauri/Cargo.toml" `
-            -Wait -PassThru -RedirectStandardOutput $BuildLog -RedirectStandardError "$BuildLog.err"
+            -Wait -PassThru -RedirectStandardOutput $BuildLog -RedirectStandardError $ErrorLog
           if ($Proc.ExitCode -eq 0) {
             "gui_windows_build_status=success" >> $env:GITHUB_OUTPUT
             Write-Host "Tauri Windows build succeeded."
           } else {
             "gui_windows_build_status=environment-blocked" >> $env:GITHUB_OUTPUT
             Write-Host "Tauri Windows build failed; recording environment-blocked status."
+            Write-Host "--- Last 30 lines of stdout ---"
             Get-Content $BuildLog -ErrorAction SilentlyContinue | Select-Object -Last 30
+            Write-Host "--- Last 30 lines of stderr ---"
+            Get-Content $ErrorLog -ErrorAction SilentlyContinue | Select-Object -Last 30
           }
       - name: Collect Windows GUI artifacts or record environment-blocked
         shell: pwsh
