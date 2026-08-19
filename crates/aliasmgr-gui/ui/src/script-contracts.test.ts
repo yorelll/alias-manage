@@ -1429,6 +1429,7 @@ test("prerelease.yml: uploads unsigned artifacts (no signing/publish/formal-rele
   const src = await readWorkflow("prerelease.yml");
   const executableSource = src
     .split("\n")
+    .map((line) => line.replace(/\s+#.*$/, ""))
     .filter((line) => !line.trimStart().startsWith("#"))
     .filter((line) => !line.trimStart().startsWith("-") || !line.includes("uses:"))
     .join("\n");
@@ -1445,6 +1446,7 @@ test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate com
   const src = await readWorkflow("prerelease.yml");
   const executableSource = src
     .split("\n")
+    .map((line) => line.replace(/\s+#.*$/, ""))
     .filter((line) => !line.trimStart().startsWith("#"))
     .filter((line) => !line.trimStart().startsWith("-") || !line.includes("uses:"))
     .join("\n");
