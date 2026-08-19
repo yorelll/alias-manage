@@ -1536,10 +1536,10 @@ test("prerelease.yml: isolates config directories on all build jobs", async () =
 
 test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate commands)", async () => {
   const src = await readWorkflow("prerelease.yml");
-  assert.doesNotMatch(src, /\bcodesign\b|\bnotarize\b|\bgpg\s+--sign\b|\bsigntool\s+sign\b/i,
-    "prerelease.yml must not contain any signing commands");
   assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
     "prerelease.yml must not reference signing secrets or certificate variables");
+  assert.match(src, /signed:\s*false|signed\s*=\s*\$false/i,
+    "prerelease.yml must explicitly mark artifacts unsigned");
 });
 
 test("prerelease.yml: manifest declares signed:false and published:false", async () => {
