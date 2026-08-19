@@ -48,6 +48,52 @@ Linux jobs use temporary `HOME`, `XDG_CONFIG_HOME`, and `ALIASMGR_CONFIG_DIR`. W
 
 See `docs/release-checklist.md` for the separation between CI evidence and manual acceptance.
 
+## Prerelease workflow
+
+`prerelease.yml` is a `workflow_dispatch`-only workflow with no push, PR, or schedule trigger.
+
+### Inputs
+
+| Input | Required | Description |
+|---|---|---|
+| `source_ref` | yes | Branch or commit SHA to build from |
+| `version` | yes | Version string for artifact names (e.g. `0.1.0-beta.1`) |
+| `create_prerelease` | yes | `true` to create a GitHub prerelease after all gates pass |
+| `confirmation` | yes | Must equal `CREATE-PRERELEASE` exactly to authorize creation |
+
+### Artifact bundle contents
+
+| Artifact | Status |
+|---|---|
+| `aliasmgr-linux-x86_64-<version>` | CLI binary (unsigned) |
+| `aliasmgr-windows-x86_64-<version>.exe` | CLI binary (unsigned) |
+| `SHA256SUMS` | SHA256 checksums for CLI binaries |
+| `manifest.json` | Sanitized manifest (`signed:false`, `published:false`, `release_created:false`) |
+| `docs/task21-2/` | Chinese acceptance manuals bundle |
+| `scripts/verify-*.sh`, `scripts/verify-*.ps1` | Terminal verification scripts |
+| GUI/installer artifacts | **environment-blocked** (native build dependencies not provisioned) |
+
+### Automated gates
+
+The workflow runs the following gates before building artifacts:
+
+1. **Fast CI gate** — lint, Rust workspace tests, GUI frontend checks on Linux and Windows.
+2. **Integration gate** — Bash, Zsh, PowerShell 5.1/7, Linux and Windows CLI verify scripts.
+3. **Task 23 security/source scan** — no `eval`/`Invoke-Expression` in generated paths, no environment dumps in workflows, no signing material in repository, no signing commands.
+
+### No-publish boundary
+
+- No signing certificates, codesign, signtool, gpg, or notarize commands.
+- No `cargo publish`, `npm publish`, or registry publishing.
+- No formal release unless `create_prerelease == true` AND `confirmation == 'CREATE-PRERELEASE'`.
+- `contents: write` permission is scoped to the `create_release` job only.
+- `gh release create --prerelease` is used; no production promotion.
+- No tag/Release is created during implementation without explicit user instruction.
+
+### Environment-blocked package status
+
+MSI, AppImage, deb, and EXE installers are marked `environment-blocked` in the manifest because native Tauri GUI build dependencies (webkit2gtk on Linux, WebView2 on Windows) are not provisioned on standard GitHub Actions runners. The manifest records the exact blocked status and never fabricates an installer artifact.
+
 ## Deferred jobs
 
 GUI npm cache, Tauri build jobs, package builds, signing, and installer tests are intentionally deferred until the GUI/release phase. `release.yml` is a future release boundary and must not be treated as successful merely because the current fast/integration workflows pass.

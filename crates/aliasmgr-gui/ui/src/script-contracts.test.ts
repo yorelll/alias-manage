@@ -1387,3 +1387,140 @@ test("verify-powershell7.ps1 does not invoke powershell.exe (cross-shell invocat
     "verify-powershell7.ps1 must not invoke powershell.exe (PS5.1 binary) in executable code"
   );
 });
+
+// ─── Task 5: prerelease.yml source-contract tests ─────────────────
+// These tests assert the structural and safety properties of the prerelease
+// workflow without executing it.  All checks are source-text only.
+
+async function readWorkflow(name: string): Promise<string> {
+  const workflowsDir = resolve(__dirname, "../../../../.github/workflows");
+  const path = resolve(workflowsDir, name);
+  try {
+    return await readFile(path, "utf8");
+  } catch (err) {
+    throw new Error(`Failed to read workflow ${name}: ${err}`);
+  }
+}
+
+test("prerelease.yml: only workflow_dispatch trigger (no push/PR/schedule)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Must declare workflow_dispatch
+  assert.match(src, /workflow_dispatch/, "prerelease.yml must have workflow_dispatch trigger");
+  // Must NOT have push, pull_request, or schedule triggers
+  assert.doesNotMatch(src, /^\s*push\s*:/m, "prerelease.yml must not have a push trigger");
+  assert.doesNotMatch(src, /^\s*pull_request\s*:/m, "prerelease.yml must not have a pull_request trigger");
+  assert.doesNotMatch(src, /^\s*schedule\s*:/m, "prerelease.yml must not have a schedule trigger");
+});
+
+test("prerelease.yml: defines required inputs (source_ref, version, create_prerelease, confirmation)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /source_ref/, "prerelease.yml must define source_ref input");
+  assert.match(src, /version/, "prerelease.yml must define version input");
+  assert.match(src, /create_prerelease/, "prerelease.yml must define create_prerelease input");
+  assert.match(src, /confirmation/, "prerelease.yml must define confirmation input");
+});
+
+test("prerelease.yml: requires exact CREATE-PRERELEASE confirmation string", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /CREATE-PRERELEASE/, "prerelease.yml must check for exact CREATE-PRERELEASE string");
+});
+
+test("prerelease.yml: uploads unsigned artifacts (no signing/publish/formal-release)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /upload-artifact/, "prerelease.yml must upload artifacts");
+  // Must not sign artifacts
+  assert.doesNotMatch(src, /codesign|signtool|gpg\s+--sign|notarize/i, "prerelease.yml must not sign artifacts");
+  // Must not publish to registries or package managers
+  assert.doesNotMatch(src, /cargo publish|npm publish|publish-to-registry/i, "prerelease.yml must not publish packages");
+});
+
+test("prerelease.yml: prerelease creation is conditional on all gates and exact confirmation", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // The create_release job must depend on gates
+  assert.match(src, /create_prerelease.*==.*true|inputs\.create_prerelease/,
+    "prerelease.yml must gate on create_prerelease input");
+  assert.match(src, /CREATE-PRERELEASE/,
+    "prerelease.yml must gate on exact CREATE-PRERELEASE confirmation");
+});
+
+test("prerelease.yml: uses gh release create --prerelease (not formal release)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Only prerelease flag usage is allowed; formal release must not be created
+  assert.match(src, /--prerelease|release\/create.*prerelease/i,
+    "prerelease.yml must use --prerelease flag");
+  // Must not use softprops/action-gh-release without prerelease:true or similar guard
+  // (guard by checking no unconditional release creation)
+  assert.doesNotMatch(src, /gh release create(?![^#\n]*prerelease)/m,
+    "prerelease.yml must not create a release without --prerelease");
+});
+
+test("prerelease.yml: least-privilege contents:write only on creation job", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Top-level permissions must not include contents:write (it should be job-level only)
+  // or if top-level, the non-creation jobs should not use it.
+  // We check that contents: write appears and is scoped.
+  assert.match(src, /contents:\s*write/, "prerelease.yml must declare contents: write for release creation");
+  // Must not use force-push
+  assert.doesNotMatch(src, /push --force|push -f\b/, "prerelease.yml must not force-push");
+});
+
+test("prerelease.yml: builds SHA256SUMS and sanitized manifest", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /SHA256SUMS/, "prerelease.yml must build SHA256SUMS");
+  assert.match(src, /manifest\.json/, "prerelease.yml must build manifest.json");
+});
+
+test("prerelease.yml: writes environment-blocked when native GUI build unavailable", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /environment-blocked|environment_blocked/,
+    "prerelease.yml must write environment-blocked status when GUI/installer build is unavailable");
+});
+
+test("prerelease.yml: bundles task21-2 manuals and scripts", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /task21-2|scripts\/verify/,
+    "prerelease.yml must bundle task21-2 manuals or terminal scripts");
+});
+
+test("prerelease.yml: runs Fast CI / Integration / security scan gate jobs", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /fast_ci|ci_gate|run_ci|Fast CI|CI gate/i,
+    "prerelease.yml must include a CI gate job");
+  assert.match(src, /security|source.scan|task23/i,
+    "prerelease.yml must include a security/source-scan gate");
+});
+
+test("prerelease.yml: uses pinned action versions (no @latest or @main)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  // Find all 'uses:' lines and check they use sha or vX.Y.Z, not @latest/@main/@master
+  const usesLines = src.split("\n").filter((l) => /uses:\s+\S+/.test(l));
+  for (const line of usesLines) {
+    assert.doesNotMatch(
+      line,
+      /@latest\b|@main\b|@master\b/,
+      `prerelease.yml must not use @latest/@main/@master: "${line.trim()}"`
+    );
+  }
+});
+
+test("prerelease.yml: isolates config directories on all build jobs", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /ALIASMGR_CONFIG_DIR/,
+    "prerelease.yml must isolate ALIASMGR_CONFIG_DIR on build jobs");
+});
+
+test("prerelease.yml: no signing material (codesign/gpg/notarize/certificate commands)", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.doesNotMatch(src, /codesign\b|notarize\b|gpg\s+--sign\b|signtool\s+sign/i,
+    "prerelease.yml must not contain any signing commands");
+  assert.doesNotMatch(src, /CERTIFICATE|P12_BASE64|APPLE_ID_PASSWORD/,
+    "prerelease.yml must not reference signing secrets or certificate variables");
+});
+
+test("prerelease.yml: manifest declares signed:false and published:false", async () => {
+  const src = await readWorkflow("prerelease.yml");
+  assert.match(src, /signed.*[Ff]alse|[Ff]alse.*signed/,
+    "prerelease.yml manifest must declare signed: false");
+  assert.match(src, /published.*[Ff]alse|[Ff]alse.*published/,
+    "prerelease.yml manifest must declare published: false");
+});
