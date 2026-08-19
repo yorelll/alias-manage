@@ -8,8 +8,10 @@
 
 | 工作流 | Run ID | 结果 | 范围 |
 |---|---:|---|---|
-| Fast CI | 32093176327 | PASS | Linux/Windows workspace、lint、GUI npm ci/cache、前端 test/typecheck/build |
-| Integration | 32093828288 | PASS | Bash、Zsh、oh-my-zsh contract、PowerShell 5.1/7、lock、CLI、benchmark、隔离 |
+| Fast CI | 32245518564 | PASS | Linux/Windows workspace、lint、GUI npm ci/cache、前端 test/typecheck/build（commit ed28bac） |
+| Integration | 32245524584 | PASS | Bash、Zsh、oh-my-zsh contract、PowerShell 5.1/7、lock、CLI、benchmark、隔离（commit ed28bac） |
+| Fast CI (prior) | 32093176327 | PASS | 上一基线 |
+| Integration (prior) | 32093828288 | PASS | 上一基线 |
 | Release dry-run | 32093979406 | PASS | packaging dry-run、unsigned source archive、SHA256SUMS、sanitized manifest、security scan |
 | Prerelease workflow | — | 待执行 | `workflow_dispatch` only；门禁：Fast CI + Integration + Task 23；需 `create_prerelease=true` + `confirmation=CREATE-PRERELEASE` 才创建 prerelease |
 
