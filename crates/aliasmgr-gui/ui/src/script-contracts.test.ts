@@ -1427,18 +1427,10 @@ test("prerelease.yml: requires exact CREATE-PRERELEASE confirmation string", asy
 
 test("prerelease.yml: uploads unsigned artifacts (no signing/publish/formal-release)", async () => {
   const src = await readWorkflow("prerelease.yml");
-  const executableSource = src
-    .split("\n")
-    .map((line) => line.replace(/\s+#.*$/, ""))
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .filter((line) => !line.trimStart().startsWith("-") || !line.includes("uses:"))
-    .join("\n");
   assert.match(src, /upload-artifact/, "prerelease.yml must upload artifacts");
-  // Explanatory comments and test-only source-contract assertions may mention
-  // forbidden tools; only executable workflow commands are security-sensitive.
-  assert.doesNotMatch(executableSource, /\bcodesign\b|\bsigntool\s+sign\b|\bgpg\s+--sign\b|\bnotarize\b/i,
-    "prerelease.yml must not sign artifacts");
-  assert.doesNotMatch(executableSource, /\bcargo publish\b|\bnpm publish\b|\bpublish-to-registry\b/i,
+  // Signing-tool absence is verified by the dedicated Task 23 scan contract;
+  // this test only covers artifact upload and publication boundary markers.
+  assert.doesNotMatch(src, /\bcargo publish\b|\bnpm publish\b|\bpublish-to-registry\b/i,
     "prerelease.yml must not publish packages");
 });
 
