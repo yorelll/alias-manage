@@ -1874,7 +1874,7 @@ test("prerelease.yml: Linux GUI apt-source fix verifies no azure.archive.ubuntu.
   // Must have a grep/verification step that fails the job if azure endpoint is still present
   assert.match(
     src,
-    /azure\.archive\.ubuntu\.com.*still present|ERROR.*azure\.archive\.ubuntu\.com/,
+    /azure\.archive\.ubuntu\.com.*still present|ERROR.*azure\.archive\.ubuntu\.com|azure\.archive\.ubuntu\.com remaining|no azure\.archive\.ubuntu\.com remaining/,
     "Linux GUI apt-source fix must verify no azure.archive.ubuntu.com remains after rewrite"
   );
   assert.match(
