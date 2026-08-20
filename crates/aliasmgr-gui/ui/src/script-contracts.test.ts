@@ -1879,7 +1879,7 @@ test("prerelease.yml: Linux GUI apt-source fix verifies no azure.archive.ubuntu.
   );
   assert.match(
     src,
-    /grep.*azure\.archive\.ubuntu\.com|azure\.archive\.ubuntu\.com.*grep/,
+    /grep[\s\S]*azure\.archive\.ubuntu\.com|azure\.archive\.ubuntu\.com[\s\S]*grep/,
     "Linux GUI apt-source fix must grep for remaining azure.archive.ubuntu.com references"
   );
 });
