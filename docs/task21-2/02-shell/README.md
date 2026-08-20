@@ -4,6 +4,12 @@
 
 ---
 
+## 任务清单
+
+开始执行前先打开：[task-list.md](task-list.md)。
+
+Bash、Zsh、PowerShell 5.1 和 PowerShell 7 必须分别执行。脚本通过不代表真实 login chain、Profile/OneDrive、symlink、当前会话或插件顺序已经人工通过。结果提交请使用 [`../test-matrix.md`](../test-matrix.md) 和 [`../feedback-template.md`](../feedback-template.md)。
+
 ## 支持的 Shell 和手册
 
 | 手册文件 | 平台 | Shell | 支持状态 |
