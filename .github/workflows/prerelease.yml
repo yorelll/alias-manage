@@ -941,28 +941,28 @@ jobs:
           set -euo pipefail
           GUI_COPIED=0
           # AppImage — only copy if the file actually exists (not a placeholder)
-          APPIMAGE=$(ls dist-linux-gui/aliasmgr-linux-x86_64-*.AppImage 2>/dev/null | head -1)
+          APPIMAGE=$(find dist-linux-gui -maxdepth 1 -type f -name 'aliasmgr-linux-x86_64-*.AppImage' -print -quit 2>/dev/null || true)
           if [ -n "$APPIMAGE" ]; then
             cp "$APPIMAGE" dist-bundle/
             echo "Copied Linux AppImage: $APPIMAGE"
             GUI_COPIED=$((GUI_COPIED+1))
           fi
           # deb — only copy if present
-          DEB=$(ls dist-linux-gui/aliasmgr-linux-x86_64-*.deb 2>/dev/null | head -1)
+          DEB=$(find dist-linux-gui -maxdepth 1 -type f -name 'aliasmgr-linux-x86_64-*.deb' -print -quit 2>/dev/null || true)
           if [ -n "$DEB" ]; then
             cp "$DEB" dist-bundle/
             echo "Copied Linux deb: $DEB"
             GUI_COPIED=$((GUI_COPIED+1))
           fi
           # MSI — only copy if present
-          MSI=$(ls dist-windows-gui/aliasmgr-windows-x86_64-*.msi 2>/dev/null | head -1)
+          MSI=$(find dist-windows-gui -maxdepth 1 -type f -name 'aliasmgr-windows-x86_64-*.msi' -print -quit 2>/dev/null || true)
           if [ -n "$MSI" ]; then
             cp "$MSI" dist-bundle/
             echo "Copied Windows MSI: $MSI"
             GUI_COPIED=$((GUI_COPIED+1))
           fi
           # NSIS setup.exe — only copy if present
-          SETUP=$(ls dist-windows-gui/aliasmgr-windows-x86_64-*-setup.exe 2>/dev/null | head -1)
+          SETUP=$(find dist-windows-gui -maxdepth 1 -type f -name 'aliasmgr-windows-x86_64-*-setup.exe' -print -quit 2>/dev/null || true)
           if [ -n "$SETUP" ]; then
             cp "$SETUP" dist-bundle/
             echo "Copied Windows NSIS setup: $SETUP"
@@ -1008,8 +1008,8 @@ jobs:
           set -euo pipefail
           # Fail explicitly if required release assets are missing.
           # An absent CLI binary would produce a silent empty-glob upload; validate now.
-          LINUX_BIN=$(ls dist-bundle/aliasmgr-linux-x86_64-* 2>/dev/null | grep -v '\.AppImage$' | grep -v '\.deb$' | head -1)
-          WINDOWS_BIN=$(ls dist-bundle/aliasmgr-windows-x86_64-*.exe 2>/dev/null | grep -v '\-setup\.exe$' | head -1)
+          LINUX_BIN=$(find dist-bundle -maxdepth 1 -type f -name 'aliasmgr-linux-x86_64-*' ! -name '*.AppImage' ! -name '*.deb' -print -quit 2>/dev/null || true)
+          WINDOWS_BIN=$(find dist-bundle -maxdepth 1 -type f -name 'aliasmgr-windows-x86_64-*.exe' ! -name '*-setup.exe' -print -quit 2>/dev/null || true)
           if [ -z "$LINUX_BIN" ]; then
             echo "ERROR: Linux CLI binary not found in dist-bundle/ — aborting release creation." >&2
             exit 1
@@ -1061,8 +1061,8 @@ jobs:
           set -euo pipefail
           # Collect all files to upload: required CLI assets + optional GUI assets.
           FILES="dist-bundle/manifest.json dist-bundle/SHA256SUMS"
-          FILES="$FILES $(ls dist-bundle/aliasmgr-linux-x86_64-* 2>/dev/null | grep -v '\.AppImage$' | grep -v '\.deb$')"
-          FILES="$FILES $(ls dist-bundle/aliasmgr-windows-x86_64-*.exe 2>/dev/null | grep -v '\-setup\.exe$')"
+          FILES="$FILES $(find dist-bundle -maxdepth 1 -type f -name 'aliasmgr-linux-x86_64-*' ! -name '*.AppImage' ! -name '*.deb' -print)"
+          FILES="$FILES $(find dist-bundle -maxdepth 1 -type f -name 'aliasmgr-windows-x86_64-*.exe' ! -name '*-setup.exe' -print)"
           # GUI artifacts — only include files that exist
           for f in \
             dist-bundle/aliasmgr-linux-x86_64-*.AppImage \
