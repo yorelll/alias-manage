@@ -388,4 +388,27 @@ mod tests {
         assert!(target_type_from_str("nope").is_err());
         assert!(shell_from_str("nope").is_err());
     }
+
+    #[test]
+    fn config_save_then_config_get_round_trips_runtime_settings() {
+        let temp = std::env::temp_dir().join(format!(
+            "aliasmgr-gui-config-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let previous = std::env::var_os("ALIASMGR_CONFIG_DIR");
+        std::env::set_var("ALIASMGR_CONFIG_DIR", &temp);
+        let saved = config_save(SettingsDto { config_directory: temp.to_string_lossy().into_owned(), default_shell: "zsh".into(), backup_keep: 3, log_keep: 4, allow_relative_paths: true });
+        let loaded = config_get();
+        match previous { Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value), None => std::env::remove_var("ALIASMGR_CONFIG_DIR") }
+        let _ = std::fs::remove_dir_all(&temp);
+        let saved = saved.unwrap();
+        let loaded = loaded.unwrap();
+        assert_eq!(saved.default_shell, "zsh");
+        assert_eq!(loaded.default_shell, "zsh");
+        assert!(loaded.allow_relative_paths);
+        assert_eq!(loaded.backup_keep, 3);
+        assert_eq!(loaded.log_keep, 4);
+    }
 }
