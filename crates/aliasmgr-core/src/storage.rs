@@ -315,18 +315,17 @@ impl Database {
     }
 
     pub fn update_alias(&self, alias: &AliasRecord) -> Result<bool, AliasError> {
-        if self
+        let stored_created_at = self
             .conn
             .query_row(
-                "SELECT name FROM aliases WHERE id = ?1",
+                "SELECT created_at FROM aliases WHERE id = ?1",
                 params![alias.id.to_string()],
                 |row| row.get::<_, String>(0),
             )
-            .optional()?
-            .is_none()
-        {
+            .optional()?;
+        let Some(stored_created_at) = stored_created_at else {
             return Ok(false);
-        }
+        };
         if self
             .conn
             .query_row(
@@ -344,29 +343,36 @@ impl Database {
         {
             return Err(AliasError::CaseFoldConflict(alias.name.clone()));
         }
-        let checksum = checked_checksum(alias)?;
+        checked_checksum(alias)?;
+        // created_at is DB-owned and immutable: callers only supply a checksum over the
+        // record they built, so restore the stored timestamp before recomputing it.
+        let mut record = alias.clone();
+        record.created_at = DateTime::parse_from_rfc3339(&stored_created_at)
+            .map(|value| value.with_timezone(&Utc))
+            .map_err(|error| AliasError::Config(error.to_string()))?;
+        let checksum = record_checksum(&record)?;
         let changed = self.conn.execute(
             "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19 WHERE id=?1",
             params![
-                alias.id.to_string(),
-                alias.name,
-                alias.name.to_lowercase(),
-                alias.description,
-                serde_json::to_string(&alias.target_type)?,
-                alias.executable,
-                serde_json::to_string(&alias.fixed_args)?,
-                alias.pass_args,
-                alias.working_directory,
-                serde_json::to_string(&alias.environment)?,
-                serde_json::to_string(&alias.shells)?,
-                alias.enabled,
-                alias.advanced_shell_mode,
-                serde_json::to_string(&alias.tags)?,
-                serde_json::to_string(&alias.path_mode)?,
-                serde_json::to_string(&alias.path_origin)?,
-                alias.updated_at.to_rfc3339(),
+                record.id.to_string(),
+                record.name,
+                record.name.to_lowercase(),
+                record.description,
+                serde_json::to_string(&record.target_type)?,
+                record.executable,
+                serde_json::to_string(&record.fixed_args)?,
+                record.pass_args,
+                record.working_directory,
+                serde_json::to_string(&record.environment)?,
+                serde_json::to_string(&record.shells)?,
+                record.enabled,
+                record.advanced_shell_mode,
+                serde_json::to_string(&record.tags)?,
+                serde_json::to_string(&record.path_mode)?,
+                serde_json::to_string(&record.path_origin)?,
+                record.updated_at.to_rfc3339(),
                 checksum,
-                alias.revision,
+                record.revision,
             ],
         )
         .map_err(map_constraint)?;

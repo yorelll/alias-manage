@@ -47,7 +47,7 @@ impl<'a> AliasService<'a> {
         if !self.database.update_alias(&alias)? {
             return Err(AliasError::Config("alias not found".into()));
         }
-        Ok(alias)
+        self.database.get_alias(alias.id)?.ok_or_else(|| AliasError::Config("alias not found".into()))
     }
 }
 
@@ -107,5 +107,36 @@ mod tests {
         alias.description = "updated".into();
         let saved = service.update(alias).unwrap();
         assert_eq!(saved.record_checksum, record_checksum(&saved).unwrap());
+    }
+
+    #[test]
+    fn update_keeps_created_at_when_caller_supplies_now() {
+        let database = Database::open_in_memory().unwrap();
+        let service = AliasService::new(&database);
+        let original = AliasRecord {
+            name: "gui".into(),
+            executable: "tool".into(),
+            ..Default::default()
+        };
+        database.insert_alias(&original).unwrap();
+        let stored = database.get_alias(original.id).unwrap().unwrap();
+        // Simulates the GUI DTO path: same id, created_at from AliasRecord::default()
+        // ("now"), an empty checksum, and a changed description.
+        let replacement = AliasRecord {
+            id: original.id,
+            name: original.name.clone(),
+            executable: original.executable.clone(),
+            description: "changed by gui".into(),
+            created_at: AliasRecord::default().created_at,
+            record_checksum: String::new(),
+            ..Default::default()
+        };
+        let saved = service.update(replacement).unwrap();
+        assert_eq!(saved.created_at, stored.created_at);
+        assert_eq!(saved.record_checksum, record_checksum(&saved).unwrap());
+        let listed = service.list().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].created_at, stored.created_at);
+        assert_eq!(listed[0].description, "changed by gui");
     }
 }
