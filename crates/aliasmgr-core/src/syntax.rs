@@ -5,10 +5,11 @@ use std::{
     io::{ErrorKind, Write},
     path::PathBuf,
     process::{Command, Stdio},
+    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const POWERSHELL_PARSE_PROBE: &str = "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){[Console]::Error.WriteLine($e[0].Message);exit 1}";
+const POWERSHELL_PARSE_PROBE: &str = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){[Console]::Error.WriteLine($e[0].Message);exit 1}";
 
 /// Validates generated shell content before it replaces the live file.
 ///
@@ -70,8 +71,11 @@ fn check_powershell(program: &str, content: &str) -> Result<(), AliasError> {
 }
 
 fn syntax_temp_path() -> PathBuf {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
     let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or_default();
-    env::temp_dir().join(format!("aliasmgr-syntax-{}-{}.ps1", std::process::id(), nanos))
+    // The sequence keeps concurrent checks in one process from sharing a temp path.
+    let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    env::temp_dir().join(format!("aliasmgr-syntax-{}-{}-{}.ps1", std::process::id(), nanos, sequence))
 }
 
 fn syntax_error(stderr: &[u8]) -> AliasError {
@@ -123,6 +127,27 @@ mod tests {
         if command_available("zsh") {
             assert!(check(&ShellKind::Zsh, script).is_ok());
         }
+    }
+
+    fn powershell_available() -> bool {
+        Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn powershell_syntax_error_message_is_utf8_readable() {
+        if !powershell_available() {
+            return;
+        }
+        let error = check(&ShellKind::PowerShell5, "if (").unwrap_err();
+        let message = error.to_string();
+        assert!(!message.contains(char::REPLACEMENT_CHARACTER), "mojibake: {message}");
+        assert!(message.contains("if"), "unexpected message: {message}");
     }
 
     #[test]
