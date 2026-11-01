@@ -279,11 +279,12 @@ export function App() {
       </nav>
       <div className="main-content">
         <div className="page-area">
-          {page === "aliases" && <AliasesPage />}
-          {page === "doctor" && <DoctorPanel />}
-          {page === "settings" && <><SettingsPanel /><UninstallPanel /></>}
-          {page === "sync" && <><ImportPanel /><GeneratedFilePanel /></>}
-          {page !== "aliases" && page !== "doctor" && page !== "settings" && page !== "sync" && <PlaceholderPage name={NAV_ITEMS.find((item) => item.id === page)?.label ?? page} />}
+          {/* Pages stay mounted so drafts survive navigation; inactive pages
+              are hidden from layout, the accessibility tree, and tab order. */}
+          <div hidden={page !== "aliases"}><AliasesPage /></div>
+          <div hidden={page !== "sync"}><ImportPanel /><GeneratedFilePanel /></div>
+          <div hidden={page !== "doctor"}><DoctorPanel /></div>
+          <div hidden={page !== "settings"}><SettingsPanel /><UninstallPanel /></div>
         </div>
         <StatusDrawer status={status} error={statusError} />
       </div>
