@@ -53,6 +53,18 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// Opens an existing database without backups, migrations, journal-mode
+    /// changes or any other write. Only `busy_timeout` is configured. Used by
+    /// read-only paths such as import preview so they cannot mutate storage.
+    pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, AliasError> {
+        let conn = Connection::open_with_flags(
+            path.as_ref(),
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
+        Ok(Self { conn })
+    }
+
     fn configure(conn: &Connection) -> Result<(), AliasError> {
         conn.execute_batch(
             "PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = FULL;",
@@ -134,6 +146,17 @@ impl Database {
 
     pub fn get_alias(&self, id: Uuid) -> Result<Option<AliasRecord>, AliasError> {
         self.fetch("id", &id.to_string())
+    }
+
+    /// Inserts all records in one transaction; any failure rolls back every
+    /// record inserted by this call.
+    pub fn insert_aliases_atomic(&self, aliases: &[AliasRecord]) -> Result<(), AliasError> {
+        let transaction = self.conn.unchecked_transaction()?;
+        for alias in aliases {
+            self.insert_alias(alias)?;
+        }
+        transaction.commit()?;
+        Ok(())
     }
 
     pub fn get_alias_by_name(&self, name: &str) -> Result<Option<AliasRecord>, AliasError> {
@@ -805,5 +828,36 @@ mod tests {
         });
         assert!(result.is_err());
         assert!(database.get_alias_by_name("rollback").unwrap().is_none());
+    }
+
+    #[test]
+    fn insert_aliases_atomic_rolls_back_every_record_on_failure() {
+        let database = Database::open_in_memory().unwrap();
+        database
+            .insert_alias(&AliasRecord { name: "taken".into(), executable: "git".into(), ..Default::default() })
+            .unwrap();
+        let first = AliasRecord { name: "first".into(), executable: "git".into(), ..Default::default() };
+        let duplicate = AliasRecord { name: "taken".into(), executable: "git".into(), ..Default::default() };
+        assert!(database.insert_aliases_atomic(&[first, duplicate]).is_err());
+        assert_eq!(
+            database.list_aliases().unwrap().iter().map(|alias| alias.name.as_str()).collect::<Vec<_>>(),
+            vec!["taken"]
+        );
+    }
+
+    #[test]
+    fn open_read_only_reads_without_backups_or_writes() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-readonly-{}", std::process::id()));
+        let path = root.join("aliases.db");
+        {
+            let database = Database::open(&path).unwrap();
+            database
+                .insert_alias(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() })
+                .unwrap();
+        }
+        let database = Database::open_read_only(&path).unwrap();
+        assert_eq!(database.list_aliases().unwrap().len(), 1);
+        assert!(!root.join("backups/db").exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 }

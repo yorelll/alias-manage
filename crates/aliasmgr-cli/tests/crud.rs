@@ -116,6 +116,33 @@ fn cli_json_rows_include_complete_alias_fields() {
 }
 
 #[test]
+fn update_shell_retires_removed_shell_and_sync_cleans_it() {
+    let root = std::env::temp_dir().join(format!("aliasmgr-cli-update-shell-{}", std::process::id())); let cfg = root.to_string_lossy().to_string();
+    commands::add(Some(&cfg), &args("gs")).unwrap();
+    commands::sync(Some(&cfg), false).unwrap();
+    let bash = root.join("generated").join("bash.sh");
+    let content = std::fs::read_to_string(&bash).unwrap();
+    assert!(content.contains("gs() {"));
+
+    let mut change = update_args("gs");
+    change.shell = Some(vec!["zsh".into()]);
+    commands::update(Some(&cfg), &change).unwrap();
+    commands::sync(Some(&cfg), false).unwrap();
+    let content = std::fs::read_to_string(&bash).unwrap();
+    assert!(!content.contains("gs() {"));
+    assert!(content.contains("# retired: gs"));
+    let zsh = root.join("generated").join("zsh.sh");
+    assert!(std::fs::read_to_string(&zsh).unwrap().contains("gs() {"));
+
+    assert!(commands::remove(Some(&cfg), "gs").unwrap());
+    commands::sync(Some(&cfg), false).unwrap();
+    let zsh = std::fs::read_to_string(&zsh).unwrap();
+    assert!(!zsh.contains("gs() {"));
+    assert!(zsh.contains("# retired: gs"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn missing_aliases_report_not_found_for_lifecycle_commands() {
     let root = std::env::temp_dir().join(format!("aliasmgr-cli-missing-{}", std::process::id())); let cfg = root.to_string_lossy().to_string();
     assert!(matches!(commands::get(Some(&cfg), "missing"), Err(AliasError::NotFound(name)) if name == "missing"));

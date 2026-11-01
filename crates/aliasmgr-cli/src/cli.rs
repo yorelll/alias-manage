@@ -22,13 +22,16 @@ pub enum Command {
     Enable { name: String }, Disable { name: String }, Sync { #[arg(long)] dry_run: bool },
     Reload { #[arg(long)] print: bool, #[arg(long)] shell: Option<String> }, Doctor,
     Shell { #[command(subcommand)] command: ShellCommand },
-    Import { file: String, #[arg(long)] yes: bool }, Export { file: String }, Uninstall { #[arg(long)] purge_aliases: bool },
+    Import { file: String, #[arg(long)] yes: bool }, Export { file: String }, Uninstall { #[arg(long)] purge_aliases: bool, #[arg(long)] yes: bool },
 }
 
 #[derive(Debug, Args)]
 pub struct AddArgs {
     pub name: String,
     #[arg(long)] pub exec: String,
+    // `allow_hyphen_values` lets real-world arguments such as `--oneline` through,
+    // but it also means `--arg --no-pass-args` consumes the flag as a value.
+    // Use `--arg=<value>` or place other flags before `--arg` when ambiguous.
     #[arg(long = "arg", allow_hyphen_values = true)] pub args: Vec<String>,
     #[arg(long)] pub shell: Vec<String>,
     #[arg(long)] pub cwd: Option<String>,
@@ -41,6 +44,7 @@ pub struct AddArgs {
 pub struct UpdateArgs {
     pub name: String,
     #[arg(long)] pub exec: Option<String>,
+    // See the `AddArgs::args` note: `--arg --pass-args` would be consumed as a value.
     #[arg(long = "arg", allow_hyphen_values = true)] pub args: Option<Vec<String>>,
     #[arg(long)] pub shell: Option<Vec<String>>,
     #[arg(long)] pub cwd: Option<String>,

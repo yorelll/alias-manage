@@ -52,6 +52,14 @@ fn parses_reload_shell_and_import_confirmation() {
 
     let cli = Cli::try_parse_from(["aliasmgr", "import", "file.json", "--yes"]).unwrap();
     match cli.command { Command::Import { file, yes } => { assert_eq!(file, "file.json"); assert!(yes); }, _ => panic!("expected import") }
+
+    let cli = Cli::try_parse_from(["aliasmgr", "reload", "--print", "--shell", "ZSH"]).unwrap();
+    match cli.command { Command::Reload { shell, .. } => assert_eq!(shell.as_deref(), Some("ZSH")), _ => panic!("expected reload") }
+
+    let cli = Cli::try_parse_from(["aliasmgr", "uninstall", "--purge-aliases", "--yes"]).unwrap();
+    match cli.command { Command::Uninstall { purge_aliases, yes } => { assert!(purge_aliases); assert!(yes); }, _ => panic!("expected uninstall") }
+    let cli = Cli::try_parse_from(["aliasmgr", "uninstall", "--purge-aliases"]).unwrap();
+    match cli.command { Command::Uninstall { yes, .. } => assert!(!yes), _ => panic!("expected uninstall") }
 }
 
 #[test]
