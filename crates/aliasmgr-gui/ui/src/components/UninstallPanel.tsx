@@ -1,17 +1,15 @@
 import { useRef, useState } from "react";
 import {
-  toStringList,
   tauriInvoke,
+  uninstallOutcomeText,
   uninstallRiskSummary,
 } from "../lib";
 
 type Stage = "idle" | "reviewed" | "done";
 
-export function UninstallPanel() {
+export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }) {
   const [purge, setPurge] = useState(false);
   const [stage, setStage] = useState<Stage>("idle");
-  const [previewItems, setPreviewItems] = useState<string[]>([]);
-  const [resultItems, setResultItems] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const requestToken = useRef(0);
@@ -20,8 +18,6 @@ export function UninstallPanel() {
   const reset = () => {
     requestToken.current += 1;
     setStage("idle");
-    setPreviewItems([]);
-    setResultItems([]);
     setError(null);
     setBusy(false);
   };
@@ -37,9 +33,8 @@ export function UninstallPanel() {
     setBusy(true);
     setError(null);
     try {
-      const items = toStringList(await tauriInvoke("uninstall_preview", { purge }));
+      await tauriInvoke("uninstall_preview", { purge });
       if (requestToken.current !== token) return;
-      setPreviewItems(items);
       setStage("reviewed");
     } catch (reason) {
       if (requestToken.current === token) setError(String(reason));
@@ -55,10 +50,10 @@ export function UninstallPanel() {
     setBusy(true);
     setError(null);
     try {
-      const items = toStringList(await tauriInvoke("uninstall_confirm", { purge }));
+      await tauriInvoke("uninstall_confirm", { purge });
       if (requestToken.current !== token) return;
-      setResultItems(items);
       setStage("done");
+      onUninstalled?.();
     } catch (reason) {
       if (requestToken.current === token) setError(String(reason));
     } finally {
@@ -97,10 +92,11 @@ export function UninstallPanel() {
       </div>
       <p className="boundary-note">{risk.protected.join(" ")}</p>
 
-      {stage === "reviewed" && previewItems.length > 0 && (
+      {stage === "reviewed" && (
         <div className="review-block">
-          <h3>Review: items affected</h3>
-          <ul>{previewItems.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
+          <h3>Review: what will happen</h3>
+          <ul>{risk.removed.map((item) => <li key={item}>{item}</li>)}</ul>
+          <p className="hint">Kept: {risk.kept.join("; ")}.</p>
           <p className="form-error" role="alert">
             {purge ? "Confirm purge to continue." : "Confirm uninstall to continue."}
           </p>
@@ -110,9 +106,8 @@ export function UninstallPanel() {
       {stage === "done" && (
         <div className="review-block" role="status">
           <h3>Uninstall cleanup complete</h3>
-          {resultItems.length > 0
-            ? <ul>{resultItems.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
-            : <p>No further details were returned.</p>}
+          <p>{uninstallOutcomeText(purge)}</p>
+          <p className="hint">{risk.protected.join(" ")}</p>
         </div>
       )}
 

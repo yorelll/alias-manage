@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { DoctorFinding, OverriddenDefinition } from "../lib";
 import {
   MANUAL_ONLY_BOUNDARY,
+  doctorFindingText,
   normalizeDoctorFindings,
   normalizeOverriddenDefinitions,
   orderedSeverities,
@@ -90,28 +91,32 @@ export function DoctorPanel() {
       {!loading && findings.length === 0 && !error && <p>No diagnostic findings.</p>}
 
       <div className="finding-list">
-        {findings.map((finding, index) => (
-          <details className="finding" key={`${finding.shell ?? "global"}-${finding.code}-${index}`}>
-            <summary>
-              <span className={severityClass(finding.severity)}>{finding.severity}</span>
-              <span className="finding-scope">{finding.shell ? shellLabel(finding.shell) : "Global"}</span>
-              <span className="finding-code">{finding.code}</span>
-            </summary>
-            <div className="finding-body">
-              <p>{finding.message}</p>
-              {finding.action && (
-                <div className="finding-action">
-                  <p><strong>Suggested manual action:</strong> {finding.action}</p>
-                  <button type="button" onClick={() => void copy(finding.action ?? "", "suggestion")}>
-                    Copy suggestion
-                  </button>
-                </div>
-              )}
-              {finding.detail && <pre className="code-block">{finding.detail}</pre>}
-              <p className="hint">Actions listed here are manual. The GUI never runs them for you.</p>
-            </div>
-          </details>
-        ))}
+        {findings.map((finding, index) => {
+          const text = doctorFindingText(finding);
+          return (
+            <details className="finding" key={`${finding.shell ?? "global"}-${finding.code}-${index}`}>
+              <summary>
+                <span className={severityClass(finding.severity)}>{finding.severity}</span>
+                <span className="finding-scope">{finding.shell ? shellLabel(finding.shell) : "Global"}</span>
+                <span className="finding-title">{text.title}</span>
+                <span className="finding-code">{finding.code}</span>
+              </summary>
+              <div className="finding-body">
+                <p>{text.message}</p>
+                {text.action && (
+                  <div className="finding-action">
+                    <p><strong>Suggested manual action:</strong> {text.action}</p>
+                    <button type="button" onClick={() => void copy(text.action ?? "", "suggestion")}>
+                      Copy suggestion
+                    </button>
+                  </div>
+                )}
+                {finding.detail && <pre className="code-block">{finding.detail}</pre>}
+                <p className="hint">Actions listed here are manual. The GUI never runs them for you.</p>
+              </div>
+            </details>
+          );
+        })}
       </div>
 
       <section className="overridden-section" aria-labelledby="overridden-title">

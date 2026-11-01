@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AliasDto, EnvRow, PreviewSnippet } from "../lib";
 import {
   FIXED_ARGS_PLACEHOLDER_HINT,
@@ -7,6 +7,7 @@ import {
   emptyAliasDraft,
   environmentToRows,
   finalizeAliasDraft,
+  latestPreviewResponse,
   normalizePreviewSnippets,
   previewAliasArgs,
   rowsToEnvironment,
@@ -35,10 +36,34 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   const [previews, setPreviews] = useState<PreviewSnippet[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const previewToken = useRef(0);
+  const nameRef = useRef<HTMLInputElement | null>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    nameRef.current?.focus();
+    return () => {
+      const opener = returnFocusRef.current;
+      if (opener?.isConnected && opener !== document.body) {
+        opener.focus();
+      } else {
+        document.querySelector<HTMLElement>('[data-testid="aliases-page"]')?.focus();
+      }
+    };
+  }, []);
+
+  const invalidatePreview = () => {
+    previewToken.current += 1;
+    setPreviews(null);
+    setPreviewError(null);
+    setPreviewing(false);
+  };
 
   const update = (patch: Partial<AliasDto>) => {
     setDraft((value) => ({ ...value, ...patch }));
     setError(null);
+    invalidatePreview();
   };
 
   const updateEnvRows = (rows: EnvRow[]) => {
@@ -63,9 +88,11 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   };
 
   const runPreview = async () => {
+    const token = ++previewToken.current;
     const finalized = finalizeAliasDraft(currentDraft());
     const errors = validateAliasDraft(finalized);
     if (errors.length > 0) {
+      setPreviewing(false);
       setPreviewError(errors.join(" "));
       setPreviews(null);
       return;
@@ -75,11 +102,13 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
     setPreviews(null);
     try {
       const result = await tauriInvoke("preview_alias", previewAliasArgs(finalized));
-      setPreviews(normalizePreviewSnippets(result));
+      const snippets = normalizePreviewSnippets(result);
+      const latest = latestPreviewResponse(previewToken.current, token, snippets);
+      if (latest) setPreviews(latest);
     } catch (reason) {
-      setPreviewError(String(reason));
+      if (previewToken.current === token) setPreviewError(String(reason));
     } finally {
-      setPreviewing(false);
+      if (previewToken.current === token) setPreviewing(false);
     }
   };
 
@@ -95,6 +124,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
         <label className="field">
           <span>Name</span>
           <input
+            ref={nameRef}
             value={draft.name}
             onChange={(event) => update({ name: event.target.value })}
             placeholder="my-alias"
@@ -156,8 +186,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
         </label>
 
         <div className="field field-full">
-          <span>Tags</span>
-          <TagInput tags={draft.tags} suggestions={tags} onChange={(next) => update({ tags: next })} />
+          <TagInput label="Tags" tags={draft.tags} suggestions={tags} onChange={(next) => update({ tags: next })} />
         </div>
       </div>
 
@@ -257,7 +286,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
                   </button>
                 </div>
               ))}
-              <button type="button" onClick={() => setEnvRows([...envRows, { key: "", value: "" }])}>
+              <button type="button" onClick={() => updateEnvRows([...envRows, { key: "", value: "" }])}>
                 Add variable
               </button>
             </div>
@@ -286,8 +315,10 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
       </div>
 
       <div className="wizard-actions">
-        <button type="button" onClick={onCancel}>Cancel</button>
-        <button type="button" className="btn-primary" onClick={save} disabled={saving}>
+        <button type="button" onClick={onCancel} disabled={saving}>
+          {saving ? "Saving…" : "Cancel"}
+        </button>
+        <button type="button" className="btn-primary" onClick={save} disabled={saving} aria-busy={saving}>
           {saving ? "Saving…" : "Save"}
         </button>
       </div>

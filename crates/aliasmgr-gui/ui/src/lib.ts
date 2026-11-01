@@ -3,6 +3,8 @@ export interface StartupStatus {
   detected_shell: string | null;
   detection_source: string;
   config_directory: string;
+  /** Optional backend extension: every shell detected on this machine. */
+  installed_shells?: string[] | null;
 }
 
 export type Page = "aliases" | "sync" | "doctor" | "settings";
@@ -41,6 +43,36 @@ export function statusSummaryText(status: StartupStatus | null, error: boolean):
   if (status) return `v${status.version} · ${status.detected_shell ?? "no shell detected"}`;
   if (error) return "status unavailable";
   return "loading…";
+}
+
+/** Shell list for the status drawer, preferring backend `installed_shells`. */
+export function statusShellText(status: StartupStatus | null): string {
+  if (!status) return "—";
+  const installed = Array.isArray(status.installed_shells)
+    ? [...new Set(status.installed_shells.filter((shell): shell is string => typeof shell === "string" && shell.length > 0))]
+    : [];
+  if (installed.length > 0) return installed.map(shellLabel).join(", ");
+  if (status.detected_shell) return `${shellLabel(status.detected_shell)} (${status.detection_source})`;
+  return "none detected";
+}
+
+/** Invalidate data-consuming pages after an import or uninstall. */
+export function nextDataVersion(current: number): number {
+  return current + 1;
+}
+
+export interface AliasFilterState {
+  query: string;
+  fuzzy: boolean;
+  tags: string[];
+}
+
+export function clearAliasFilters(): AliasFilterState {
+  return { query: "", fuzzy: false, tags: [] };
+}
+
+export function aliasFiltersActive(query: string, fuzzy: boolean, tags: string[]): boolean {
+  return query.trim().length > 0 || fuzzy || tags.length > 0;
 }
 
 export function toggleTag(selected: string[], tag: string): string[] {
@@ -141,7 +173,7 @@ export const FIXED_ARGS_PLACEHOLDER_HINT =
   "Use {{args}} to insert user arguments at that position. Use {{{{args}}}} to pass the literal text {{args}}.";
 
 export const MANUAL_ONLY_BOUNDARY =
-  "Manual-only boundary: this panel only reports findings. Alias Manager never edits your shell profile, bypasses ExecutionPolicy, or restarts your shell. Copy a suggestion and apply it yourself.";
+  "Manual-only boundary: findings and suggestions are never executed automatically. Alias Manager never bypasses ExecutionPolicy or restarts your shell. Loader installation or removal edits only the marked Alias Manager block in your shell profile and leaves the rest of the profile untouched. Copy a suggestion and apply it yourself.";
 
 const DEFAULT_BACKUP_KEEP = 10;
 const DEFAULT_LOG_KEEP = 10;
@@ -256,6 +288,11 @@ export function normalizePreviewSnippets(value: unknown): PreviewSnippet[] {
   }));
 }
 
+/** Render only the response that belongs to the newest preview request. */
+export function latestPreviewResponse(currentToken: number, responseToken: number, snippets: PreviewSnippet[]): PreviewSnippet[] | null {
+  return currentToken === responseToken ? snippets : null;
+}
+
 export interface ImportReport {
   imported: string[];
   skipped: string[];
@@ -285,6 +322,39 @@ export function importReportCounts(report: ImportReport): { imported: number; sk
     warnings: report.warnings.length,
     unsupported: report.unsupported.length,
   };
+}
+
+export interface ImportSkipEntry {
+  name: string;
+  reason: string | null;
+}
+
+/**
+ * Pair skipped names with their reason. Backends sometimes fold the reason
+ * into the skipped item ("name: reason") and sometimes emit it separately in
+ * `warnings`; support both without inventing a reason when none exists.
+ */
+export function importSkipEntries(report: ImportReport): ImportSkipEntry[] {
+  const warnings = report.warnings.map((warning) => warning.trim()).filter(Boolean);
+  const used = new Set<number>();
+  return report.skipped.map((value) => {
+    const trimmed = value.trim();
+    let name = trimmed;
+    let inlineReason: string | null = null;
+    const separator = trimmed.indexOf(": ");
+    if (separator > 0) {
+      name = trimmed.slice(0, separator).trim();
+      inlineReason = trimmed.slice(separator + 2).trim() || null;
+    }
+    if (inlineReason) return { name, reason: inlineReason };
+    const lowered = name.toLowerCase();
+    const index = warnings.findIndex((warning, position) => !used.has(position) && warning.toLowerCase().includes(lowered));
+    if (index >= 0) {
+      used.add(index);
+      return { name, reason: warnings[index] };
+    }
+    return { name, reason: null };
+  });
 }
 
 export function isImportableFilename(filename: string): boolean {
@@ -334,6 +404,66 @@ function severityRank(severity: string): number {
 
 export function orderedSeverities(counts: Record<string, number>): string[] {
   return Object.keys(counts).sort((left, right) => severityRank(left) - severityRank(right) || left.localeCompare(right));
+}
+
+export interface DoctorFindingText {
+  title: string;
+  message: string;
+  action: string | null;
+}
+
+const DOCTOR_CODE_TEXT: Record<string, DoctorFindingText> = {
+  database_missing: {
+    title: "Database missing",
+    message: "The alias database file is missing from the configured directory.",
+    action: "Create the config directory or run any alias command to initialize the database.",
+  },
+  generated_missing: {
+    title: "Generated file missing",
+    message: "The generated definition file for this shell is missing.",
+    action: "Run a sync for this shell to regenerate its definition file.",
+  },
+  generated_unreadable: {
+    title: "Generated file unreadable",
+    message: "The generated definition file for this shell cannot be read as UTF-8.",
+    action: "Run a sync to rebuild the generated file.",
+  },
+  generated_modified: {
+    title: "Generated file modified",
+    message: "The generated definition file was changed outside Alias Manager or is missing its checksum marker.",
+    action: "Run a sync to overwrite the manual change.",
+  },
+  sync_failed: {
+    title: "Sync failed",
+    message: "The last sync for this shell failed.",
+    action: "Review the error detail, then run a sync again.",
+  },
+  loader_missing: {
+    title: "Loader not installed",
+    message: "The Alias Manager loader is not installed in this shell profile.",
+    action: "Reinstall shell integration.",
+  },
+  stale: {
+    title: "Generated file out of date",
+    message: "The generated definition file is behind the alias database.",
+    action: "Run a sync for this shell.",
+  },
+  unreliable_filesystem: {
+    title: "Unreliable filesystem",
+    message: "The config directory is on a filesystem that may not persist changes reliably.",
+    action: "Move the config directory to a local disk.",
+  },
+};
+
+/** Prefer local English copy for known diagnostic codes; fall back to backend text. */
+export function doctorFindingText(finding: DoctorFinding): DoctorFindingText {
+  const known = DOCTOR_CODE_TEXT[finding.code];
+  if (known) return { ...known };
+  return {
+    title: finding.code || "Finding",
+    message: finding.message || "No message provided.",
+    action: finding.action,
+  };
 }
 
 export interface OverriddenDefinition {
@@ -400,6 +530,15 @@ export function parseKeepCount(value: string, fallback = 0): number {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
 }
 
+/** Preserve the previous value when a keep-count field is blank or invalid. */
+export function parseKeepCountInput(value: string, previous: number): number {
+  const trimmed = value.trim();
+  if (!trimmed) return previous;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed) || parsed < 0) return previous;
+  return Math.floor(parsed);
+}
+
 export function settingsValidation(settings: Settings): string[] {
   const errors: string[] = [];
   if (!settings.config_directory.trim()) errors.push("Config directory is required.");
@@ -448,6 +587,13 @@ export function uninstallRiskSummary(purge: boolean): UninstallRiskSummary {
     ],
     protected: ["Referenced target files are never deleted."],
   };
+}
+
+/** Local English outcome copy; backend result strings are not rendered. */
+export function uninstallOutcomeText(purge: boolean): string {
+  return purge
+    ? "Alias Manager removed its database, generated definition files, loader block, shims, and owned backup/journal files. Referenced target files were not touched."
+    : "Alias Manager removed its loader block and shims while keeping the alias database, generated definition files, and referenced target files.";
 }
 
 export async function copyToClipboard(text: string): Promise<void> {

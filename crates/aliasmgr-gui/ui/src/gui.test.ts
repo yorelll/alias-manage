@@ -6,12 +6,18 @@ import {
   MANUAL_ONLY_BOUNDARY,
   SHELLS,
   TARGET_TYPES,
+  aliasFiltersActive,
+  clearAliasFilters,
+  doctorFindingText,
   emptyAliasDraft,
   environmentToRows,
   finalizeAliasDraft,
   importContentArgs,
   importReportCounts,
+  importSkipEntries,
   isImportableFilename,
+  latestPreviewResponse,
+  nextDataVersion,
   normalizeDoctorFindings,
   normalizeFixedArgs,
   normalizeImportReport,
@@ -23,6 +29,7 @@ import {
   overrideRecoveryText,
   overrideSummary,
   parseKeepCount,
+  parseKeepCountInput,
   pathModeLabel,
   previewAliasArgs,
   rowsToEnvironment,
@@ -30,9 +37,11 @@ import {
   settingsValidation,
   severityCounts,
   shellLabel,
+  statusShellText,
   targetTypeLabel,
   toggleShell,
   toStringList,
+  uninstallOutcomeText,
   uninstallRiskSummary,
   validateAliasDraft,
 } from "./lib.ts";
@@ -68,6 +77,35 @@ test("target type options exclude raw shell commands", () => {
   assert.ok(TARGET_TYPES.some((option) => option.value === "native_executable"));
   assert.ok(TARGET_TYPES.some((option) => option.value === "change_directory"));
   assert.equal(TARGET_TYPES.some((option) => option.value === "raw_shell_command"), false);
+});
+
+test("clear filters resets query, fuzzy, and tags together", () => {
+  assert.deepEqual(clearAliasFilters(), { query: "", fuzzy: false, tags: [] });
+  assert.equal(aliasFiltersActive("git", false, []), true);
+  assert.equal(aliasFiltersActive("", true, []), true);
+  assert.equal(aliasFiltersActive("", false, ["work"]), true);
+  assert.equal(aliasFiltersActive("   ", false, []), false);
+});
+
+test("data invalidation always advances the shared refresh token", () => {
+  assert.equal(nextDataVersion(0), 1);
+  assert.equal(nextDataVersion(1), 2);
+  assert.equal(nextDataVersion(41), 42);
+});
+
+test("status shell text prefers installed_shells and falls back to the detected shell", () => {
+  assert.equal(statusShellText(null), "—");
+  assert.equal(statusShellText({
+    version: "0.1.0", detected_shell: "bash", detection_source: "shell_env", config_directory: "/tmp",
+    installed_shells: ["powershell5", "powershell7", "powershell7"],
+  }), "PowerShell 5.1, PowerShell 7");
+  assert.equal(statusShellText({
+    version: "0.1.0", detected_shell: "bash", detection_source: "shell_env", config_directory: "/tmp",
+    installed_shells: null,
+  }), "Bash (shell_env)");
+  assert.equal(statusShellText({
+    version: "0.1.0", detected_shell: null, detection_source: "installed", config_directory: "/tmp",
+  }), "none detected");
 });
 
 test("shell toggle adds and removes without mutating the input", () => {
@@ -154,6 +192,13 @@ test("preview response normalization is defensive about malformed payloads", () 
   );
 });
 
+test("only the latest preview response is rendered", () => {
+  const stale = [{ shell: "bash", content: "old", error: null }];
+  const latest = [{ shell: "bash", content: "new", error: null }];
+  assert.equal(latestPreviewResponse(3, 2, stale), null);
+  assert.deepEqual(latestPreviewResponse(3, 3, latest), latest);
+});
+
 // ── import helpers ────────────────────────────────────────────────
 
 test("import accepts only json and toml filenames and sends content plus filename", () => {
@@ -182,6 +227,20 @@ test("import report normalization and counts handle missing fields and reasons",
   assert.deepEqual(toStringList(["a", 1, "", "b"]), ["a", "b"]);
 });
 
+test("skipped import names are paired with inline or warning reasons", () => {
+  const report = normalizeImportReport({
+    skipped: ["INVALID NAME WITH SPACES: invalid name", "duplicate"],
+    warnings: ["duplicate: name already exists", "unrelated warning"],
+  });
+  assert.deepEqual(importSkipEntries(report), [
+    { name: "INVALID NAME WITH SPACES", reason: "invalid name" },
+    { name: "duplicate", reason: "duplicate: name already exists" },
+  ]);
+  assert.deepEqual(importSkipEntries(normalizeImportReport({ skipped: ["mystery"] })), [
+    { name: "mystery", reason: null },
+  ]);
+});
+
 // ── doctor helpers ────────────────────────────────────────────────
 
 test("doctor findings normalize severity, shell, action, and detail defensively", () => {
@@ -197,6 +256,23 @@ test("doctor findings normalize severity, shell, action, and detail defensively"
   assert.deepEqual(findings[1], { shell: null, severity: "info", code: "global", message: "", action: null, detail: null });
   assert.deepEqual(severityCounts(findings), { warning: 1, info: 1 });
   assert.deepEqual(orderedSeverities({ info: 1, warning: 2, error: 1 }), ["error", "warning", "info"]);
+});
+
+test("known doctor codes use local English copy and unknown codes fall back to backend text", () => {
+  const known = doctorFindingText(normalizeDoctorFindings([
+    { code: "generated_missing", severity: "warning", message: "生成文件缺失", action: "执行同步" },
+  ])[0]);
+  assert.equal(known.title, "Generated file missing");
+  assert.doesNotMatch(known.message, /[一-鿿]/);
+  assert.doesNotMatch(known.action ?? "", /[一-鿿]/);
+  const unknown = doctorFindingText(normalizeDoctorFindings([
+    { code: "custom_code", severity: "info", message: "backend text", action: "backend action" },
+  ])[0]);
+  assert.deepEqual(unknown, { title: "custom_code", message: "backend text", action: "backend action" });
+  for (const code of ["database_missing", "generated_missing", "generated_unreadable", "generated_modified", "sync_failed", "loader_missing", "stale", "unreliable_filesystem"]) {
+    const mapped = doctorFindingText(normalizeDoctorFindings([{ code, severity: "warning", message: "中文", action: "中文" }])[0]);
+    assert.doesNotMatch(`${mapped.title} ${mapped.message} ${mapped.action ?? ""}`, /[一-鿿]/, `unmapped Chinese copy for ${code}`);
+  }
 });
 
 test("overridden definitions render defensively and expose recovery text without executing it", () => {
@@ -218,8 +294,9 @@ test("overridden definitions render defensively and expose recovery text without
 
 test("manual-only boundary is explicit about profile, policy, and shell restart limits", () => {
   assert.match(MANUAL_ONLY_BOUNDARY, /Manual-only boundary/);
-  assert.match(MANUAL_ONLY_BOUNDARY, /ExecutionPolicy/);
-  assert.match(MANUAL_ONLY_BOUNDARY, /never edits your shell profile/);
+  assert.match(MANUAL_ONLY_BOUNDARY, /never bypasses ExecutionPolicy or restarts your shell/);
+  assert.match(MANUAL_ONLY_BOUNDARY, /edits only the marked Alias Manager block/);
+  assert.match(MANUAL_ONLY_BOUNDARY, /leaves the rest of the profile untouched/);
 });
 
 // ── settings helpers ──────────────────────────────────────────────
@@ -258,6 +335,14 @@ test("parseKeepCount floors valid values and falls back for blanks and negatives
   assert.equal(parseKeepCount("abc", 4), 4);
 });
 
+test("keep-count inputs preserve the previous value when blank or invalid", () => {
+  assert.equal(parseKeepCountInput("", 4), 4);
+  assert.equal(parseKeepCountInput("  ", 4), 4);
+  assert.equal(parseKeepCountInput("-1", 4), 4);
+  assert.equal(parseKeepCountInput("0", 4), 0);
+  assert.equal(parseKeepCountInput("6.9", 4), 6);
+});
+
 test("settingsDirty detects changes field by field", () => {
   const loaded = normalizeSettings({ config_directory: "/tmp", default_shell: "bash", backup_keep: 3, log_keep: 4 });
   assert.equal(settingsDirty(loaded, { ...loaded }), false);
@@ -279,6 +364,15 @@ test("uninstall risk summaries distinguish retain and purge while protecting tar
   assert.notDeepEqual(retain, purge);
 });
 
+test("uninstall outcome copy is local English for both modes", () => {
+  assert.match(uninstallOutcomeText(false), /loader block and shims/);
+  assert.match(uninstallOutcomeText(false), /keeping the alias database/);
+  assert.match(uninstallOutcomeText(true), /removed its database/);
+  assert.match(uninstallOutcomeText(true), /Referenced target files were not touched/);
+  assert.doesNotMatch(uninstallOutcomeText(false), /[一-鿿]/);
+  assert.doesNotMatch(uninstallOutcomeText(true), /[一-鿿]/);
+});
+
 // ── component source contracts ────────────────────────────────────
 
 async function source(name: string): Promise<string> {
@@ -291,12 +385,15 @@ test("AliasWizard exposes complete create/edit fields, preview, and draft-preser
     'value={draft.name}', "target_type", "TARGET_TYPES", "SHELLS", "pass_args",
     "Fixed argument", "Add argument", "Environment key", "Add variable",
     "working_directory", "TagInput", "Show advanced", "preview_alias", "previewAliasArgs",
-    "normalizePreviewSnippets", "Cancel", "Save", "Unable to save", "role=\"alert\"",
+    "normalizePreviewSnippets", "latestPreviewResponse", "previewToken", "invalidatePreview",
+    "nameRef", "isConnected", "Cancel", "Save", "Unable to save", "role=\"alert\"",
+    "disabled={saving}",
   ]) {
     assert.ok(wizard.includes(fragment), `wizard is missing ${fragment}`);
   }
   assert.equal(wizard.includes("raw_shell_command"), false);
-  assert.equal(/\.focus\(/.test(wizard), false);
+  assert.match(wizard, /nameRef\.current\?\.focus\(\)/);
+  assert.match(wizard, /opener\?\.isConnected/);
   assert.equal(/dangerouslySetInnerHTML|eval\(|new Function/.test(wizard), false);
 });
 
@@ -315,7 +412,7 @@ test("DoctorPanel counts severities, expands findings, and copies recovery text 
   for (const fragment of [
     "doctor_status", "overridden_definitions", "severityCounts", "orderedSeverities",
     "navigator.clipboard.writeText", "Copy recovery text", "Copy suggestion",
-    "MANUAL_ONLY_BOUNDARY", "finding.action", "finding.detail", "recoverable",
+    "MANUAL_ONLY_BOUNDARY", "doctorFindingText", "text.message", "text.action", "finding.detail", "recoverable",
   ]) {
     assert.ok(doctor.includes(fragment), `doctor is missing ${fragment}`);
   }
@@ -326,8 +423,9 @@ test("ImportPanel uses a real file picker and content commands without persisten
   const importer = await source("ImportPanel");
   for (const fragment of [
     'type="file"', 'accept=".json,.toml"', "selected.text()", "import_preview_content",
-    "import_confirm_content", "importContentArgs", "Confirm import", "Preview only", "Cancel",
-    "Imported", "Skipped", "Warnings", "Unsupported",
+    "import_confirm_content", "importContentArgs", "importSkipEntries", "onImported",
+    "Confirm import", "Preview only", "Cancel", "Imported", "Skipped", "Warnings", "Unsupported",
+    'disabled={busy === "confirm"}', 'busy === "confirm" ? "Importing…"',
   ]) {
     assert.ok(importer.includes(fragment), `import panel is missing ${fragment}`);
   }
@@ -339,6 +437,7 @@ test("SettingsPanel keeps a draft, resets on cancel, and calls config_save with 
   for (const fragment of [
     "config_get", "config_save", "{ settings: draft }", "Cancel", "Reload persisted values",
     "setDraft({ ...loaded })", "setDraft({ ...stored })", "allow_relative_paths", "backup_keep", "log_keep",
+    "readOnly", "parseKeepCountInput", "Fixed at startup", "disabled={busy}",
   ]) {
     assert.ok(settings.includes(fragment), `settings panel is missing ${fragment}`);
   }
@@ -348,10 +447,12 @@ test("UninstallPanel requires review then confirmation for both modes", async ()
   const uninstall = await source("UninstallPanel");
   for (const fragment of [
     "uninstall_preview", "uninstall_confirm", 'stage !== "reviewed"', "Confirm purge",
-    "Confirm uninstall", "Review purge", "Review uninstall", "uninstallRiskSummary", "Kept", "Removed",
+    "Confirm uninstall", "Review purge", "Review uninstall", "uninstallRiskSummary", "uninstallOutcomeText",
+    "onUninstalled", "Kept", "Removed",
   ]) {
     assert.ok(uninstall.includes(fragment), `uninstall panel is missing ${fragment}`);
   }
+  assert.equal(/resultItems|previewItems/.test(uninstall), false);
 });
 
 test("GeneratedFilePanel offers shell selection, preview, reload command, and copy buttons", async () => {
@@ -363,9 +464,22 @@ test("GeneratedFilePanel offers shell selection, preview, reload command, and co
 
 test("Sync page hosts ImportPanel and GeneratedFilePanel; navigation order is unchanged", async () => {
   const app = await readFile(new URL("./App.tsx", import.meta.url), "utf8");
-  assert.match(app, /page !== "sync"[^]*<ImportPanel \/><GeneratedFilePanel \/>/);
+  assert.match(app, /page !== "sync"[^]*<ImportPanel onImported=\{invalidateAliasData\} \/><GeneratedFilePanel \/>/);
   assert.match(app, /NAV_ITEMS\.map/);
   assert.match(app, /hidden=\{page !== "aliases"\}/);
+  assert.match(app, /refreshToken=\{dataVersion\}/);
+  assert.match(app, /onUninstalled=\{invalidateAliasData\}/);
+  assert.match(app, /statusShellText\(status\)/);
+  assert.match(app, /Clear filters/);
+  assert.match(app, /onOpenImport/);
+  assert.match(app, /nextDataVersion/);
+});
+
+test("TagInput has a real label, id, and accessible remove controls", async () => {
+  const tagInput = await source("TagInput");
+  for (const fragment of ['htmlFor={inputId}', 'id={inputId}', 'aria-label={label}', "useId", "Remove tag", "datalist"]) {
+    assert.ok(tagInput.includes(fragment), `tag input is missing ${fragment}`);
+  }
 });
 
 test("accessibility styles provide focus-visible, horizontal table scroll, and responsive layout", async () => {

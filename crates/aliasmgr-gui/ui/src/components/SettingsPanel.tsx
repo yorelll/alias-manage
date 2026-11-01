@@ -3,7 +3,7 @@ import type { Settings } from "../lib";
 import {
   SHELLS,
   normalizeSettings,
-  parseKeepCount,
+  parseKeepCountInput,
   settingsDirty,
   settingsValidation,
   shellLabel,
@@ -88,13 +88,14 @@ export function SettingsPanel() {
           <span>Config directory</span>
           <input
             value={draft.config_directory}
-            onChange={(event) => edit({ config_directory: event.target.value })}
-            autoComplete="off"
+            readOnly
+            aria-readonly="true"
             spellCheck={false}
             aria-describedby="config-directory-hint"
           />
           <span id="config-directory-hint" className="hint">
-            The directory must exist and be writable. Invalid or read-only paths are rejected on save.
+            Fixed at startup. Changing the directory here is not supported; restart the application with
+            {" "}<code>ALIASMGR_CONFIG_DIR</code> to use a different directory.
           </span>
         </label>
 
@@ -112,7 +113,7 @@ export function SettingsPanel() {
             min={0}
             step={1}
             value={draft.backup_keep}
-            onChange={(event) => edit({ backup_keep: parseKeepCount(event.target.value) })}
+            onChange={(event) => edit({ backup_keep: parseKeepCountInput(event.target.value, draft.backup_keep) })}
           />
         </label>
 
@@ -123,7 +124,7 @@ export function SettingsPanel() {
             min={0}
             step={1}
             value={draft.log_keep}
-            onChange={(event) => edit({ log_keep: parseKeepCount(event.target.value) })}
+            onChange={(event) => edit({ log_keep: parseKeepCountInput(event.target.value, draft.log_keep) })}
           />
         </label>
 
@@ -142,7 +143,7 @@ export function SettingsPanel() {
       {error && <p className="form-error" role="alert">{error}</p>}
 
       <div className="form-actions">
-        <button type="button" onClick={cancel}>Cancel</button>
+        <button type="button" onClick={cancel} disabled={busy}>Cancel</button>
         <button type="button" onClick={() => void load()} disabled={busy}>Reload persisted values</button>
         <button type="button" className="btn-primary" onClick={save} disabled={busy}>
           {busy ? "Saving…" : "Save settings"}

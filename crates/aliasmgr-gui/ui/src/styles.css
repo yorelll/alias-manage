@@ -119,6 +119,15 @@ input[type="checkbox"], input[type="radio"] { width: auto; padding: 0; }
 .check-group { display: flex; flex-wrap: wrap; gap: 6px 18px; }
 .check-row { display: inline-flex; align-items: center; gap: 7px; }
 label.check-row { flex-direction: row; }
+.page-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.alias-toolbar .btn-secondary { align-self: center; }
+.tag-input { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.tag-input > label { flex: 0 0 100%; font-size: 13px; font-weight: 600; color: #3c4a63; }
+.tag-input input { flex: 1 1 180px; min-width: 0; }
+.tag-chip-list { display: flex; flex-wrap: wrap; gap: 6px; }
+input[readonly] { color: #3c4a63; background: #eef2f8; cursor: not-allowed; }
+[data-testid="aliases-page"]:focus-visible { outline: 3px solid #1f5fd0; outline-offset: 2px; }
+.finding-title { font-weight: 600; }
 .advanced-toggle { margin: 16px 0 0; }
 .advanced-section { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; padding-top: 14px; border-top: 1px solid #edf0f5; }
 .row-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }

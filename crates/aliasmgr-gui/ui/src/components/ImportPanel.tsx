@@ -1,9 +1,10 @@
 import { useRef, useState } from "react";
 import type { ChangeEvent } from "react";
-import type { ImportReport } from "../lib";
+import type { ImportReport, ImportSkipEntry } from "../lib";
 import {
   importContentArgs,
   importReportCounts,
+  importSkipEntries,
   isImportableFilename,
   normalizeImportReport,
   tauriInvoke,
@@ -25,12 +26,32 @@ function ReportList({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-export function ImportPanel() {
+function SkipList({ entries }: { entries: ImportSkipEntry[] }) {
+  return (
+    <div className="report-card">
+      <h3>Skipped ({entries.length})</h3>
+      {entries.length > 0
+        ? (
+          <ul>
+            {entries.map((entry, index) => (
+              <li key={`${entry.name}-${index}`}>
+                <strong>{entry.name}</strong>
+                {entry.reason && <span> — {entry.reason}</span>}
+              </li>
+            ))}
+          </ul>
+        )
+        : <p className="hint">None</p>}
+    </div>
+  );
+}
+
+export function ImportPanel({ onImported }: { onImported?: () => void }) {
   const [file, setFile] = useState<SelectedFile | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [confirmed, setConfirmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<"preview" | "confirm" | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const requestToken = useRef(0);
 
@@ -40,7 +61,7 @@ export function ImportPanel() {
     setReport(null);
     setConfirmed(false);
     setError(null);
-    setBusy(false);
+    setBusy(null);
     if (inputRef.current) inputRef.current.value = "";
   };
 
@@ -53,12 +74,12 @@ export function ImportPanel() {
     setError(null);
     if (!isImportableFilename(selected.name)) {
       setFile(null);
-      setBusy(false);
+      setBusy(null);
       setError("Choose a .json or .toml file.");
       event.target.value = "";
       return;
     }
-    setBusy(true);
+    setBusy("preview");
     try {
       const content = await selected.text();
       if (requestToken.current !== token) return;
@@ -72,24 +93,25 @@ export function ImportPanel() {
         setError(String(reason));
       }
     } finally {
-      if (requestToken.current === token) setBusy(false);
+      if (requestToken.current === token) setBusy(null);
     }
   };
 
   const confirm = async () => {
     if (!file || !report || busy) return;
     const token = ++requestToken.current;
-    setBusy(true);
+    setBusy("confirm");
     setError(null);
     try {
       const result = await tauriInvoke("import_confirm_content", importContentArgs(file.content, file.name));
       if (requestToken.current !== token) return;
       setReport(normalizeImportReport(result));
       setConfirmed(true);
+      onImported?.();
     } catch (reason) {
       if (requestToken.current === token) setError(String(reason));
     } finally {
-      if (requestToken.current === token) setBusy(false);
+      if (requestToken.current === token) setBusy(null);
     }
   };
 
@@ -109,7 +131,7 @@ export function ImportPanel() {
           type="file"
           accept=".json,.toml"
           onChange={(event) => void selectFile(event)}
-          disabled={busy}
+          disabled={busy !== null}
         />
       </label>
 
@@ -119,7 +141,11 @@ export function ImportPanel() {
         </p>
       )}
 
-      {busy && <p role="status">Reading and validating file…</p>}
+      {busy && (
+        <p role="status">
+          {busy === "confirm" ? "Importing aliases…" : "Reading and validating file…"}
+        </p>
+      )}
       {error && <p className="form-error" role="alert">{error}</p>}
 
       {report && counts && (
@@ -130,7 +156,7 @@ export function ImportPanel() {
           </p>
           <div className="report-grid">
             <ReportList title="Imported" items={report.imported} />
-            <ReportList title="Skipped" items={report.skipped} />
+            <SkipList entries={importSkipEntries(report)} />
             <ReportList title="Warnings" items={report.warnings} />
             <ReportList title="Unsupported" items={report.unsupported} />
           </div>
@@ -138,12 +164,14 @@ export function ImportPanel() {
       )}
 
       <div className="form-actions">
-        <button type="button" onClick={reset}>Cancel</button>
+        <button type="button" onClick={reset} disabled={busy === "confirm"}>
+          {busy === "confirm" ? "Importing…" : "Cancel"}
+        </button>
         <button
           type="button"
           className="btn-primary"
           onClick={confirm}
-          disabled={!report || confirmed || busy}
+          disabled={!report || confirmed || busy !== null}
         >
           Confirm import
         </button>
