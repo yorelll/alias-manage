@@ -586,6 +586,8 @@ jobs:
           set -uo pipefail
           mkdir -p dist-gui-linux
           BUILD_LOG="$GITHUB_WORKSPACE/dist-gui-linux/tauri-build.log"
+          CONFIG_PATH="$GITHUB_WORKSPACE/tauri-prerelease.json"
+          printf '%s\n' '{"bundle":{"active":true}}' > "$CONFIG_PATH"
           # Short-circuit: if native deps were unavailable, skip the build immediately.
           if [ "${{ steps.apt_install_tauri_deps.outputs.tauri_deps_status }}" != "success" ]; then
             echo "gui_linux_build_status=environment-blocked" >> "$GITHUB_OUTPUT"
@@ -597,7 +599,7 @@ jobs:
           # (target/release/bundle/...) keep working.
           cd crates/aliasmgr-gui/src-tauri
           if CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo tauri build \
-              --config '{"bundle":{"active":true}}' \
+              --config "$CONFIG_PATH" \
               2>&1 | tee "$BUILD_LOG"; then
             echo "gui_linux_build_status=success" >> "$GITHUB_OUTPUT"
             echo "Tauri Linux build succeeded."
@@ -735,9 +737,14 @@ jobs:
           # cargo tauri build has no --manifest-path: run from the crate directory
           # and keep Cargo output in the workspace target dir so the artifact
           # collection below (target\release\bundle\...) keeps working.
+          # Start-Process joins -ArgumentList with spaces without adding quotes,
+          # so inline JSON would be stripped to {bundle:{active:true}}. Pass the
+          # bundle config as a real file instead.
+          $ConfigPath = Join-Path $PWD 'tauri-prerelease.json'
+          Set-Content -Path $ConfigPath -Value '{"bundle":{"active":true}}' -Encoding utf8NoBOM
           $env:CARGO_TARGET_DIR = (Join-Path $PWD 'target')
           $Proc = Start-Process -FilePath "cargo" `
-            -ArgumentList "tauri","build","--config",'{"bundle":{"active":true}}' `
+            -ArgumentList "tauri","build","--config",$ConfigPath `
             -WorkingDirectory "crates/aliasmgr-gui/src-tauri" `
             -Wait -PassThru -RedirectStandardOutput $BuildLog -RedirectStandardError $ErrorLog
           if ($Proc.ExitCode -eq 0) {

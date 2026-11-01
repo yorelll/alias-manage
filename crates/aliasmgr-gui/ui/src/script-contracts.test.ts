@@ -1705,9 +1705,17 @@ test("prerelease.yml: Linux and Windows GUI jobs invoke actual cargo tauri build
     "Windows cargo tauri build must run from the src-tauri crate directory");
   assert.match(src, /CARGO_TARGET_DIR/,
     "cargo tauri build must keep output under the workspace target dir");
+  // Start-Process joins -ArgumentList with spaces without quoting, so inline
+  // JSON would lose its quotes; the bundle config must be a real file.
+  assert.ok(src.includes('--config "$CONFIG_PATH"'),
+    "Linux cargo tauri build must pass the config file path");
+  assert.ok(src.includes('"--config",$ConfigPath'),
+    "Windows cargo tauri build must pass the config file path");
   const executableLines = src.split("\n").filter((line) => !line.trim().startsWith("#")).join("\n");
   assert.doesNotMatch(executableLines, /--manifest-path/,
     "cargo tauri build does not accept --manifest-path");
+  assert.doesNotMatch(executableLines, /--config\s+'?\{/,
+    "cargo tauri build must not receive inline JSON via --config");
 });
 
 test("prerelease.yml: Linux GUI job installs tauri-cli via cargo install", async () => {
