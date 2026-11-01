@@ -293,13 +293,24 @@ jobs:
         run: |
           set -euo pipefail
           # No unsafe eval/Invoke-Expression in ordinary generated paths
-          ! grep -RIn --exclude-dir=.git --exclude=plan.md --exclude='*.lock' \
+          # Use an explicit if-block: errexit is disabled for commands negated
+          # with `!`, which made the previous form always succeed.
+          if grep -RIn --exclude-dir=.git --exclude=plan.md --exclude='*.lock' \
             -E '(^|[^[:alnum:]_])(eval|Invoke-Expression)([^[:alnum:]_]|$)' \
-            crates/aliasmgr-core/src crates/aliasmgr-cli/src crates/aliasmgr-gui/src-tauri/src
-          # No environment dump patterns in workflows or test code
-          ! grep -RIn --exclude-dir=.git \
-            -E 'set -x|printenv|Get-ChildItem Env:' \
-            .github/workflows crates/aliasmgr-tests
+            crates/aliasmgr-core/src crates/aliasmgr-cli/src crates/aliasmgr-gui/src-tauri/src; then
+            echo "ERROR: forbidden dynamic evaluation token found in generated paths" >&2
+            exit 1
+          fi
+          # No environment dump patterns in workflows or test code.
+          # Build the pattern from adjacent quoted parts so this workflow's own
+          # source text does not match itself (print''env / Get-ChildItem'' Env:).
+          ENV_DUMP_PATTERN='set[[:space:]]+-x|print''env|Get-ChildItem'' Env:'
+          if grep -RIn --exclude-dir=.git \
+            -E "$ENV_DUMP_PATTERN" \
+            .github/workflows crates/aliasmgr-tests; then
+            echo "ERROR: environment dump pattern found in workflows or tests" >&2
+            exit 1
+          fi
           # No signing material or credential secrets in repository
           git ls-files | grep -E '(^|/)(\.env|.*(certificate|private[-_]?key|secret))' && exit 1 || true
           echo "Security scan passed."
