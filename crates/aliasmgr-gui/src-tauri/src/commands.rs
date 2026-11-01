@@ -96,16 +96,53 @@ pub struct SearchRequest {
     pub tag_filter: Vec<String>,
 }
 
-fn enum_name<T: Serialize>(value: &T) -> String {
-    serde_json::to_value(value).ok().and_then(|value| value.as_str().map(str::to_owned)).unwrap_or_default()
+fn target_type_to_str(target: &TargetType) -> &'static str {
+    match target {
+        TargetType::NativeExecutable => "native_executable",
+        TargetType::PythonScript => "python_script",
+        TargetType::PowerShellScript => "powershell_script",
+        TargetType::Batch => "batch",
+        TargetType::ShellScript => "shell_script",
+        TargetType::JavaJar => "java_jar",
+        TargetType::Cmdlet => "cmdlet",
+        TargetType::ChangeDirectory => "change_directory",
+        TargetType::RawShellCommand => "raw_shell_command",
+    }
+}
+
+fn target_type_from_str(value: &str) -> Result<TargetType, String> {
+    match value {
+        "native_executable" => Ok(TargetType::NativeExecutable),
+        "python_script" => Ok(TargetType::PythonScript),
+        "powershell_script" | "power_shell_script" => Ok(TargetType::PowerShellScript),
+        "batch" => Ok(TargetType::Batch),
+        "shell_script" => Ok(TargetType::ShellScript),
+        "java_jar" => Ok(TargetType::JavaJar),
+        "cmdlet" => Ok(TargetType::Cmdlet),
+        "change_directory" => Ok(TargetType::ChangeDirectory),
+        "raw_shell_command" => Ok(TargetType::RawShellCommand),
+        other => Err(format!("unknown target type: {other}")),
+    }
+}
+
+fn shell_from_str(value: &str) -> Result<ShellKind, String> {
+    match value {
+        "bash" => Ok(ShellKind::Bash),
+        "zsh" => Ok(ShellKind::Zsh),
+        "powershell5" | "power_shell5" => Ok(ShellKind::PowerShell5),
+        "powershell7" | "power_shell7" => Ok(ShellKind::PowerShell7),
+        "fish" => Ok(ShellKind::Fish),
+        "posix_sh" => Ok(ShellKind::PosixSh),
+        other => Err(format!("unknown shell: {other}")),
+    }
 }
 
 fn alias_to_dto(alias: &AliasRecord) -> AliasDto {
     AliasDto {
         id: alias.id.to_string(), name: alias.name.clone(), description: alias.description.clone(),
-        executable: alias.executable.clone(), target_type: enum_name(&alias.target_type),
+        executable: alias.executable.clone(), target_type: target_type_to_str(&alias.target_type).to_owned(),
         fixed_args: alias.fixed_args.clone(), pass_args: alias.pass_args, working_directory: alias.working_directory.clone(),
-        environment: alias.environment.clone(), shells: alias.shells.iter().map(enum_name).collect(),
+        environment: alias.environment.clone(), shells: alias.shells.iter().map(shell_kind_to_str).map(str::to_owned).collect(),
         enabled: alias.enabled, tags: alias.tags.clone(), revision: alias.revision,
     }
 }
@@ -147,8 +184,8 @@ fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
     alias.enabled = dto.enabled;
     alias.tags = dto.tags;
     alias.revision = dto.revision;
-    alias.target_type = serde_json::from_value(serde_json::Value::String(dto.target_type)).map_err(|error| error.to_string())?;
-    alias.shells = dto.shells.into_iter().map(|shell| serde_json::from_value(serde_json::Value::String(shell)).map_err(|error| error.to_string())).collect::<Result<_, _>>()?;
+    alias.target_type = target_type_from_str(&dto.target_type)?;
+    alias.shells = dto.shells.iter().map(|shell| shell_from_str(shell)).collect::<Result<_, _>>()?;
     alias.path_mode = PathMode::Absolute;
     alias.path_origin = PathOrigin::GuiFilePicker;
     validate_alias(&alias).map_err(|error| error.to_string())?;
@@ -228,7 +265,7 @@ pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
 pub fn config_get() -> Result<SettingsDto, String> {
     let paths = AppPaths::discover(None);
     let config = paths.load_config().map_err(|error| error.to_string())?;
-    Ok(SettingsDto { config_directory: paths.root.to_string_lossy().into_owned(), default_shell: "bash".into(), backup_keep: config.backups.rc_keep, log_keep: config.logs.keep_files, allow_relative_paths: false })
+    Ok(SettingsDto { config_directory: paths.root.to_string_lossy().into_owned(), default_shell: config.runtime.default_shell.clone().unwrap_or_else(|| "bash".into()), backup_keep: config.backups.rc_keep, log_keep: config.logs.keep_files, allow_relative_paths: config.runtime.allow_relative_paths })
 }
 
 #[tauri::command]
@@ -302,5 +339,53 @@ mod tests {
     fn version_is_non_empty() {
         let v = aliasmgr_core::version();
         assert!(!v.is_empty(), "core version must not be empty");
+    }
+
+    #[test]
+    fn target_type_names_round_trip_for_all_variants() {
+        for target in [TargetType::NativeExecutable, TargetType::PythonScript, TargetType::PowerShellScript, TargetType::Batch, TargetType::ShellScript, TargetType::JavaJar, TargetType::Cmdlet, TargetType::ChangeDirectory, TargetType::RawShellCommand] {
+            assert_eq!(target_type_from_str(target_type_to_str(&target)).unwrap(), target);
+        }
+        assert_eq!(target_type_to_str(&TargetType::PowerShellScript), "powershell_script");
+    }
+
+    #[test]
+    fn shell_names_round_trip_for_all_variants() {
+        for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7, ShellKind::Fish, ShellKind::PosixSh] {
+            assert_eq!(shell_from_str(shell_kind_to_str(&shell)).unwrap(), shell);
+        }
+        assert_eq!(shell_kind_to_str(&ShellKind::PowerShell5), "powershell5");
+        assert_eq!(shell_kind_to_str(&ShellKind::PowerShell7), "powershell7");
+    }
+
+    #[test]
+    fn alias_dto_round_trip_preserves_target_type_and_shells() {
+        let alias = AliasRecord {
+            name: "gs".into(), executable: "git".into(), target_type: TargetType::PowerShellScript,
+            shells: vec![ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7, ShellKind::Fish, ShellKind::PosixSh],
+            ..Default::default()
+        };
+        let dto = alias_to_dto(&alias);
+        assert_eq!(dto.target_type, "powershell_script");
+        assert_eq!(dto.shells, vec!["bash", "zsh", "powershell5", "powershell7", "fish", "posix_sh"]);
+        let restored = dto_to_alias(dto).unwrap();
+        assert_eq!(restored.target_type, alias.target_type);
+        assert_eq!(restored.shells, alias.shells);
+    }
+
+    #[test]
+    fn legacy_serde_spellings_are_accepted() {
+        let mut dto = alias_to_dto(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() });
+        dto.target_type = "power_shell_script".into();
+        dto.shells = vec!["power_shell5".into(), "power_shell7".into()];
+        let alias = dto_to_alias(dto).unwrap();
+        assert_eq!(alias.target_type, TargetType::PowerShellScript);
+        assert_eq!(alias.shells, vec![ShellKind::PowerShell5, ShellKind::PowerShell7]);
+    }
+
+    #[test]
+    fn unknown_enum_names_are_rejected() {
+        assert!(target_type_from_str("nope").is_err());
+        assert!(shell_from_str("nope").is_err());
     }
 }
