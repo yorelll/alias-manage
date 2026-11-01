@@ -47,17 +47,29 @@ pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retir
 #[derive(Debug, Clone)]
 pub struct AppPaths { pub root: PathBuf }
 
+fn non_empty_env(key: &str) -> Option<String> {
+    env::var(key).ok().filter(|value| !value.is_empty())
+}
+
+fn platform_default_root() -> PathBuf {
+    if cfg!(windows) {
+        for key in ["LOCALAPPDATA", "APPDATA"] {
+            if let Some(path) = non_empty_env(key) { return PathBuf::from(path).join("alias-manager"); }
+        }
+        PathBuf::from(".alias-manager")
+    } else {
+        if let Some(path) = non_empty_env("XDG_CONFIG_HOME") { return PathBuf::from(path).join("alias-manager"); }
+        if let Some(home) = non_empty_env("HOME") { return PathBuf::from(home).join(".config").join("alias-manager"); }
+        PathBuf::from(".alias-manager")
+    }
+}
+
 impl AppPaths {
     pub fn discover(cli: Option<&Path>) -> Self {
+        // Precedence: explicit flag, then ALIASMGR_CONFIG_DIR, then the platform default.
         if let Some(path) = cli { return Self { root: path.to_path_buf() }; }
-        if let Ok(path) = env::var("ALIASMGR_CONFIG_DIR") { return Self { root: path.into() }; }
-        let root = if cfg!(windows) {
-            env::var("LOCALAPPDATA").unwrap_or_else(|_| ".".into()).into()
-        } else {
-            env::var("XDG_CONFIG_HOME").map(|path| PathBuf::from(path).join("alias-manager"))
-                .unwrap_or_else(|_| PathBuf::from("~/.config/alias-manager"))
-        };
-        Self { root }
+        if let Some(path) = non_empty_env("ALIASMGR_CONFIG_DIR") { return Self { root: path.into() }; }
+        Self { root: platform_default_root() }
     }
 
     pub fn ensure_directories(&self) -> std::io::Result<()> {
@@ -148,6 +160,49 @@ mod tests {
         env::set_var("ALIASMGR_CONFIG_DIR", "env-config");
         assert_eq!(AppPaths::discover(None).root, PathBuf::from("env-config"));
         env::remove_var("ALIASMGR_CONFIG_DIR");
+    }
+
+    fn restore_env(saved: &[(&'static str, Option<std::ffi::OsString>)]) {
+        for (key, value) in saved {
+            match value {
+                Some(value) => env::set_var(key, value),
+                None => env::remove_var(key),
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_default_root_is_localappdata_then_appdata_then_relative() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["ALIASMGR_CONFIG_DIR", "LOCALAPPDATA", "APPDATA"];
+        let saved = keys.map(|key| (key, env::var_os(key)));
+        env::remove_var("ALIASMGR_CONFIG_DIR");
+        env::set_var("LOCALAPPDATA", "C:/local");
+        env::set_var("APPDATA", "C:/roaming");
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from("C:/local").join("alias-manager"));
+        env::remove_var("LOCALAPPDATA");
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from("C:/roaming").join("alias-manager"));
+        env::remove_var("APPDATA");
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from(".alias-manager"));
+        restore_env(&saved);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_default_root_is_xdg_then_home_config_then_relative() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["ALIASMGR_CONFIG_DIR", "XDG_CONFIG_HOME", "HOME"];
+        let saved = keys.map(|key| (key, env::var_os(key)));
+        env::remove_var("ALIASMGR_CONFIG_DIR");
+        env::set_var("XDG_CONFIG_HOME", "/tmp/xdg");
+        env::set_var("HOME", "/tmp/home");
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from("/tmp/xdg").join("alias-manager"));
+        env::remove_var("XDG_CONFIG_HOME");
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from("/tmp/home").join(".config").join("alias-manager"));
+        env::remove_var("HOME");
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from(".alias-manager"));
+        restore_env(&saved);
     }
 
     #[test]
