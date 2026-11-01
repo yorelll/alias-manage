@@ -1,7 +1,8 @@
-use crate::{error::AliasError, model::{AliasRecord, TargetType}};
+use crate::{error::AliasError, model::{record_checksum, AliasRecord, TargetType}};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fs, path::Path};
+use std::{collections::{BTreeMap, BTreeSet}, fs, path::Path};
+use uuid::Uuid;
 
 pub const FORMAT_VERSION: u32 = 1;
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,11 +27,15 @@ pub fn import_json(path: &Path, existing: &BTreeMap<String, AliasRecord>, strate
 
 pub fn import_records(mut aliases: Vec<AliasRecord>, existing: &BTreeMap<String, AliasRecord>, strategy: ConflictStrategy) -> Result<ImportReport, AliasError> {
     let mut report = empty_report();
+    let mut accepted_names = BTreeSet::new();
     for mut alias in aliases.drain(..) {
         if alias.advanced_shell_mode || alias.target_type == TargetType::RawShellCommand { report.unsupported.push(alias.name); continue; }
         filter_sensitive_environment(&mut alias.environment, &mut report.warnings);
         if alias.path_mode == crate::model::PathMode::RelativeToWorkingDirectory { report.warnings.push(format!("relative path requires a selected base directory: {}", alias.name)); report.skipped.push(alias.name); continue; }
         if existing.contains_key(&alias.name) { match strategy { ConflictStrategy::Skip | ConflictStrategy::Ask => { report.skipped.push(alias.name); continue; }, ConflictStrategy::Rename => { alias.name = format!("{}_imported", alias.name); }, ConflictStrategy::Overwrite => {} } }
+        if !accepted_names.insert(alias.name.clone()) { report.skipped.push(alias.name); continue; }
+        alias.id = Uuid::new_v4();
+        alias.record_checksum = record_checksum(&alias)?;
         report.imported.push(alias.name.clone()); report.accepted_records.push(alias);
     }
     Ok(report)
