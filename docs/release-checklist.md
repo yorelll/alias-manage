@@ -63,7 +63,7 @@ Evidence is local source inspection, focused tests, and CLI spot checks against 
 - [x] Syntax-check boundary is documented as best effort: an interpreter absent from `PATH` makes the check a no-op (`syntax.rs`, limitation documented).
 - [ ] Recovery path in `sync.rs::recover_pending_operations` re-renders a committed journal entry without `syntax::check`. It is currently unreachable from `apply_internal`; this remains open for future recovery work.
 - [x] CLI contract spot checks: `update` preserves omitted fields and advances the revision; missing alias returns exit 4; invalid shell/env returns exit 1; `import` preview persists nothing and `--yes` persists atomically; `uninstall` retain keeps generated/db, purge removes them, and both preserve referenced target files; missing `--yes` returns exit 14.
-- [ ] Full-workspace `cargo fmt --check` and `cargo clippy -- -D warnings` gate — owned by the CI workstream and still pending.
+- [x] Full-workspace `cargo fmt --all -- --check`, GUI crate `cargo fmt -- --check`, and `cargo clippy --workspace --all-targets -- -D warnings` pass locally (2026-11-01, merged main `52e0635`). CI still has to run the same gates before they count as release evidence.
 
 ## Documentation boundary
 

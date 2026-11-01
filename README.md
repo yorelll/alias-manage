@@ -6,7 +6,7 @@
 
 当前 pre-GUI CLI MVP 已完成可由 CI 验证的核心范围：Rust workspace、领域模型与校验、SQLite 迁移/CRUD、结构化执行器、Bash/Zsh/PowerShell 适配器、同步与 prepared-journal 恢复、CLI 生命周期、搜索/tag facet、导入导出安全报告和卸载保护。SQLite 是配置事实来源，Shell 生成文件是可重建的派生文件；普通模式使用结构化参数，不执行整行字符串求值。
 
-本地最新基线（2026-11-01）：workspace 172 个测试通过，GUI Tauri crate 14 个测试通过，GUI 前端 215 个测试及 typecheck/build 通过。当前分支尚未推送触发 CI；跨平台 Shell、打包与发布结论仍以 GitHub Actions 为准。最新状态见 `docs/final-release-status.md`。
+本地最新基线（2026-11-01）：workspace 172 个测试通过，GUI Tauri crate 14 个测试通过，GUI 前端 223 个测试（含 `task20.test.ts`）及 typecheck/build 通过；`cargo fmt --check` 与 `cargo clippy -D warnings` 也已本地通过。当前分支尚未推送触发 CI；跨平台 Shell、打包与发布结论仍以 GitHub Actions 为准。最新状态见 `docs/final-release-status.md`。
 
 这不是完整 GUI MVP 或安装器发布声明。GUI 视觉/交互、真实用户 Profile/ExecutionPolicy、oh-my-zsh 顺序、Windows symlink、package hook/MSI 和干净机器安装验收仍需单独人工或后续 CI 阶段。完整边界见 `docs/release-checklist.md`，Task 1–17 证据对账见 `docs/phase4-reconciliation.md`。先前的设计草稿仍保留在 `plan.md`，阶段执行清单在 `docs/superpowers/plans/`。
 

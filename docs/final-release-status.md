@@ -4,8 +4,8 @@
 
 文档与脚本收尾分支 `agent/ws7-docs` 已完成本地验证，但尚未推送，也没有触发任何 CI run。因此：
 
-- 本地验证通过：Rust workspace 172 个测试、GUI Tauri crate 14 个测试、GUI 前端 215 个测试及 typecheck/build。
-- `cargo fmt --check` 与 `cargo clippy -D warnings` 由 CI 工作流负责，在本分支尚未作为门禁复跑。
+- 本地验证通过：Rust workspace 172 个测试、GUI Tauri crate 14 个测试、GUI 前端 223 个测试（含 `task20.test.ts`）及 typecheck/build。
+- `cargo fmt --all -- --check`、GUI crate fmt check、`cargo clippy -D warnings` 均已在本地通过。
 - 当前分支没有任何 CI 证据；不得声称 CI 成功。
 - Task 21-2 人工验收仍待执行，不得把人工案例标记为 `PASS`。
 - 未创建 tag、Release、签名或发布。
@@ -17,10 +17,10 @@
 | Rust workspace | `cargo test --workspace --no-fail-fast`（隔离 `ALIASMGR_CONFIG_DIR`） | 172 passed / 0 failed |
 | CLI 构建 | `cargo build -p aliasmgr-cli` | PASS |
 | GUI Tauri crate | `cargo test --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml`（先构建 `ui/dist`） | 14 passed / 0 failed |
-| GUI 前端测试 | `npm test` | 215 passed / 0 failed |
+| GUI 前端测试 | `npm test` | 223 passed / 0 failed |
 | GUI 前端类型检查 | `npm run typecheck` | PASS |
 | GUI 前端构建 | `npm run build` | PASS |
-| 格式与 lint | `cargo fmt --check` / `cargo clippy -D warnings` | 待 CI 工作流（本分支未复跑） |
+| 格式与 lint | `cargo fmt --all -- --check` / GUI crate `cargo fmt -- --check` / `cargo clippy --workspace --all-targets -- -D warnings` | PASS（本地） |
 
 本机运行前需设置 `PATH="/d/mingw64/bin:/d/Program Files/nodejs:$PATH"` 和隔离的 `ALIASMGR_CONFIG_DIR`；详细命令见 `docs/testing.md`。
 
@@ -36,7 +36,7 @@
 | Release dry-run（更早） | 32093979406 | PASS | packaging dry-run、unsigned source archive、SHA256SUMS、sanitized manifest、security scan |
 | Prerelease workflow | — | 待执行 | `workflow_dispatch` only；需 `create_prerelease=true` + `confirmation=CREATE-PRERELEASE` |
 
-历史 run 只对其对应 commit 生效，不代表当前分支。`prerelease.yml` 的 GUI Tauri 构建 job 在更早的 run 中曾因 `--manifest-path` 参数错误或原生依赖问题记录为 `environment-blocked`；当前代码已改为在 crate 目录内执行，但尚未在任何 run 中验证成功。
+历史 run 只对其对应 commit 生效，不代表当前分支。当前分支已合并 main（`52e0635`），但尚未推送，也没有任何 CI run；因此 CI 门禁、`gui-rust-windows` job 和 prerelease 打包都还没有在本分支上执行过。
 
 ## 测试与产物
 
@@ -64,7 +64,7 @@
 | `aliasmgr-windows-x86_64-<version>.msi` | Windows MSI 安装包 — 仅在 Tauri 构建成功时存在 |
 | `aliasmgr-windows-x86_64-<version>-setup.exe` | Windows NSIS 安装程序 — 仅在 Tauri 构建成功时存在 |
 
-GUI artifact 是否可用必须由一次成功的 remote CI run 证明。当前没有这样的运行证据，不能声明 GUI 安装包可用。
+GUI artifact 是否可用必须由一次成功的 remote CI run 证明。合并后的 `prerelease.yml` 现在 (a) 在 `crates/aliasmgr-gui/src-tauri` 目录内运行 `cargo tauri build`，(b) 通过生成在 workspace 根目录的 `tauri-prerelease.json` 文件传入 `{"bundle":{"active":true}}`（不再使用内联 JSON），(c) 仍然没有被本分支的任何 CI run 验证过。当前没有这样的运行证据，不能声明 GUI 安装包可用。
 
 ## 人工验收状态
 

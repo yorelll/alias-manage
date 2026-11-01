@@ -16,7 +16,7 @@ This inventory maps stable behavior IDs to the focused test target and workflow 
 | Y-001–Y-009 | sync, rollback, journal, shell state, forward recovery | `aliasmgr-core` sync tests | CI and Integration |
 | C-001–C-012 | CLI lifecycle, output, diagnostics, transfer, uninstall | `aliasmgr-cli` integration tests | CI and Integration CLI jobs |
 | G-001–G-012 | GUI frontend contracts, panels, commands, invoke args | GUI Node tests | CI GUI Linux/Windows jobs |
-| G-RUST (14 tests) | Tauri commands, DTO/checksum behavior, state scoping | `aliasmgr-gui` crate unit tests | Intended CI GUI Linux/Windows jobs; not yet run for this branch |
+| G-RUST (14 tests) | Tauri commands, DTO/checksum behavior, state scoping | `aliasmgr-gui` crate unit tests | `ci.yml` `gui-rust-windows`: frontend build, crate `cargo fmt -- --check`, `cargo check --locked`, `cargo test --locked`; not yet run for this branch |
 | F-001–F-010 | failure paths and redaction | validation/storage/transfer/diagnostics tests | CI and Integration |
 | N-001–N-003 | isolation, no environment dumps, no secret fixture output | `cli_layers`, workflow isolation assertions | Integration jobs |
 | PERF-001 | 500/1000 alias generation benchmark | `aliasmgr-tests --test benchmark` | Integration/benchmark job |
@@ -31,7 +31,7 @@ Failure-path coverage includes invalid names, missing targets, exact/case-fold c
 
 ## Coverage additions (2026-11-01, local evidence only)
 
-These map the newer behaviors to the tests that exercise them. No CI run has been triggered for the documentation branch; local results are preflight, not CI evidence.
+These map the newer behaviors to the tests that exercise them. The branch has merged main (`52e0635`) and `ci.yml` now contains the `gui-rust-windows` job (frontend build, Tauri crate rustfmt check, `cargo check --locked`, `cargo test --locked`), but no CI run has been triggered for this branch. Local results are preflight, not CI evidence.
 
 | Behavior | Local test target | Result |
 |---|---|---|
@@ -43,4 +43,4 @@ These map the newer behaviors to the tests that exercise them. No CI run has bee
 | Syntax check boundary and previous-file preservation | `crates/aliasmgr-core/src/syntax.rs` tests; `sync.rs::syntax_failure_preserves_previous_generated_file_and_leaves_no_temp` | passed |
 | PowerShell 5.1 BOM default, PS7 BOM opt-in, checksum BOM stripping | `crates/aliasmgr-core/src/sync.rs` BOM tests; `config.rs` BOM defaults | passed |
 | GUI Rust commands/DTO/checksum | `aliasmgr-gui` crate unit tests | 14 passed |
-| GUI frontend wiring, search/tags, wizard, uninstall panel, script contracts | `crates/aliasmgr-gui/ui/src/{app,wiring,script-contracts}.test.ts` | 215 passed; typecheck/build passed |
+| GUI frontend wiring, search/tags, wizard, uninstall panel, script contracts, task20 regressions | `crates/aliasmgr-gui/ui/src/{app,wiring,script-contracts,task20}.test.ts` | 223 passed; typecheck/build passed |

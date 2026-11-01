@@ -42,13 +42,14 @@ The Tauri Rust crate is excluded from the workspace. It needs `crates/aliasmgr-g
 cargo test --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml
 ```
 
-Local baseline observed on 2026-11-01 (this branch, before the CI workstream's fmt/clippy pass):
+Local baseline observed on 2026-11-01 (this branch after merging main `52e0635`):
 
 - Workspace: 172 tests passed, 0 failed.
 - GUI Tauri crate: 14 tests passed.
-- GUI frontend: 215 tests passed; `npm run typecheck` and `npm run build` passed.
+- GUI frontend: 223 tests passed (including `task20.test.ts`); `npm run typecheck` and `npm run build` passed.
+- `cargo fmt --all -- --check`, the GUI crate fmt check, and `cargo clippy --workspace --all-targets -- -D warnings` passed locally.
 
-Formatting and clippy are owned by the CI workstream and were not re-run as a gate here.
+These are local preflight results. The same gates still have to run in GitHub Actions before they count as CI evidence.
 
 ## CI boundary
 
