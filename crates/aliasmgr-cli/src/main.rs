@@ -90,12 +90,10 @@ fn main() {
         }),
         cli::Command::Import { file, yes } => {
             commands::import_file(cli.config_dir.as_deref(), file, *yes).map(|report| {
-                format!(
-                    "imported={} skipped={} unsupported={}",
-                    report.imported.len(),
-                    report.skipped.len(),
-                    report.unsupported.len()
-                )
+                for warning in &report.warnings {
+                    eprintln!("warning: {warning}");
+                }
+                commands::import_summary(&report)
             })
         }
         cli::Command::Export { file } => commands::export_file(cli.config_dir.as_deref(), file)

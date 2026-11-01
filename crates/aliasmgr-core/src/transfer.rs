@@ -1,6 +1,7 @@
 use crate::{
     error::AliasError,
     model::{record_checksum, AliasRecord, PathMode, ShellKind, TargetType},
+    validation::validate_alias,
 };
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -240,6 +241,17 @@ pub fn import_records(
             }
         }
         if conflicts_within_file(&alias.name, powershell, &accepted) {
+            report.skipped.push(alias.name);
+            continue;
+        }
+        // Imports must satisfy the same rules as `add`/`create`; otherwise a
+        // file could persist names the CLI itself rejects (invalid characters
+        // or PowerShell-reserved names). The warning carries only the error
+        // text, never environment values.
+        if let Err(error) = validate_alias(&alias) {
+            report
+                .warnings
+                .push(format!("invalid alias rejected: {} ({error})", alias.name));
             report.skipped.push(alias.name);
             continue;
         }
@@ -495,5 +507,71 @@ mod tests {
             import_records(vec![first, second], &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
         assert_eq!(report.imported, vec!["CM", "cm"]);
         assert!(report.skipped.is_empty());
+    }
+
+    #[test]
+    fn invalid_names_are_skipped_with_a_warning_and_never_accepted() {
+        let invalid = AliasRecord {
+            name: "1badname".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        let valid = AliasRecord {
+            name: "good".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        let report = import_records(
+            vec![invalid, valid],
+            &BTreeMap::new(),
+            ConflictStrategy::Ask,
+        )
+        .unwrap();
+        assert_eq!(report.imported, vec!["good"]);
+        assert_eq!(report.skipped, vec!["1badname"]);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("1badname"));
+        assert!(report.warnings[0].contains("invalid alias name"));
+        assert_eq!(report.accepted_records.len(), 1);
+        assert_eq!(report.accepted_records[0].name, "good");
+
+        let database = crate::storage::Database::open_in_memory().unwrap();
+        database
+            .insert_aliases_atomic(&report.accepted_records)
+            .unwrap();
+        let names: Vec<_> = database
+            .list_aliases()
+            .unwrap()
+            .into_iter()
+            .map(|alias| alias.name)
+            .collect();
+        assert_eq!(names, vec!["good"]);
+    }
+
+    #[test]
+    fn powershell_reserved_names_are_skipped_on_import() {
+        let reserved = AliasRecord {
+            name: "ls".into(),
+            executable: "Get-ChildItem".into(),
+            shells: vec![ShellKind::PowerShell5],
+            ..Default::default()
+        };
+        let report = import_records(
+            vec![reserved.clone()],
+            &BTreeMap::new(),
+            ConflictStrategy::Ask,
+        )
+        .unwrap();
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["ls"]);
+        assert_eq!(report.warnings.len(), 1);
+        assert!(report.warnings[0].contains("name is reserved"));
+        assert!(report.accepted_records.is_empty());
+
+        // Preview and confirm run the same evaluation and agree.
+        let confirmed =
+            import_records(vec![reserved], &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
+        assert_eq!(confirmed.skipped, vec!["ls"]);
+        assert!(confirmed.accepted_records.is_empty());
     }
 }

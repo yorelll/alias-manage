@@ -70,9 +70,9 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
 
 - `export <FILE>`: writes JSON by default, or TOML when the path ends in `.toml`. Environment keys whose names contain `PASSWORD`, `TOKEN`, `SECRET`, `API_KEY`, or `APIKEY` (case-insensitive) are omitted from the export.
 - `import <FILE> [--yes]`
-  - The import file is parsed and validated. Sensitive environment keys are filtered on import as well.
-  - Without `--yes`, the command previews only: it opens the existing database read-only, evaluates conflicts through `ConflictStrategy::Ask`, and reports `imported`, `skipped`, and `unsupported` counts without persisting anything. The read-only SQLite handle may leave `-wal` / `-shm` side files next to the database.
-  - With `--yes`, accepted records are persisted atomically in one transaction. Existing-name conflicts are reported as skipped. Unsupported records are counted and are never persisted.
+  - The import file is parsed and every candidate record is validated with the same rules as `add` (alias-name syntax, PowerShell-reserved names, argument templates). Records that fail validation are skipped with a warning and are never persisted. Sensitive environment keys are filtered on import as well.
+  - Without `--yes`, the command previews only: it opens the existing database read-only, evaluates conflicts through `ConflictStrategy::Ask`, and reports `imported`, `skipped`, `unsupported`, and `warnings` counts without persisting anything. Each warning is printed to stderr (for example an omitted sensitive-key name or a rejected invalid record); warning text never includes environment values. The read-only SQLite handle may leave `-wal` / `-shm` side files next to the database.
+  - With `--yes`, accepted records are persisted atomically in one transaction. Existing-name conflicts and records rejected by validation are reported as skipped (with a warning) and are not persisted. Unsupported records are counted and are never persisted.
   - Preview cannot model every insert-time conflict. For example, PowerShell case-fold persistence can reject or rename a record when it is actually written.
 
 ## Uninstall

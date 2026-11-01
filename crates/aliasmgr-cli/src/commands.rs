@@ -528,6 +528,18 @@ pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<ImportRepo
     database(config_dir)?.insert_aliases_atomic(&report.accepted_records)?;
     Ok(report.into_public())
 }
+
+/// Renders the CLI summary for an import preview or confirmation. Warnings are
+/// counted here and printed line by line on stderr by the binary.
+pub fn import_summary(report: &ImportReport) -> String {
+    format!(
+        "imported={} skipped={} unsupported={} warnings={}",
+        report.imported.len(),
+        report.skipped.len(),
+        report.unsupported.len(),
+        report.warnings.len()
+    )
+}
 pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> {
     let paths = AppPaths::discover(config_dir.map(Path::new));
     // A broken config must not prevent purge and loader cleanup.

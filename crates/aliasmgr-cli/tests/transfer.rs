@@ -1,6 +1,6 @@
 use aliasmgr_cli::commands;
 use aliasmgr_core::{
-    model::AliasRecord,
+    model::{AliasRecord, ShellKind},
     transfer::{export_json, import_json, ConflictStrategy},
 };
 use std::collections::BTreeMap;
@@ -179,4 +179,56 @@ fn transfer_round_trip_uses_explicit_format_and_report() {
     let report = import_json(&root, &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
     assert_eq!(report.imported, vec!["gs"]);
     let _ = std::fs::remove_file(root);
+}
+
+#[test]
+fn cli_import_rejects_invalid_records_and_summary_counts_warnings() {
+    let root = std::env::temp_dir().join(format!(
+        "aliasmgr-cli-import-invalid-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default()
+    ));
+    let config = root.join("config");
+    let file = root.join("aliases.json");
+    let invalid = AliasRecord {
+        name: "1badname".into(),
+        executable: "git".into(),
+        ..Default::default()
+    };
+    let reserved = AliasRecord {
+        name: "ls".into(),
+        executable: "Get-ChildItem".into(),
+        shells: vec![ShellKind::PowerShell5],
+        ..Default::default()
+    };
+    std::fs::create_dir_all(&root).unwrap();
+    export_json(&file, &[invalid, reserved]).unwrap();
+
+    let preview = commands::import_file(
+        Some(config.to_str().unwrap()),
+        file.to_str().unwrap(),
+        false,
+    )
+    .unwrap();
+    assert!(preview.imported.is_empty());
+    assert_eq!(preview.skipped, vec!["1badname", "ls"]);
+    assert_eq!(preview.warnings.len(), 2);
+    assert_eq!(
+        commands::import_summary(&preview),
+        "imported=0 skipped=2 unsupported=0 warnings=2"
+    );
+    assert!(!config.join("aliases.db").exists());
+
+    let confirmed =
+        commands::import_file(Some(config.to_str().unwrap()), file.to_str().unwrap(), true)
+            .unwrap();
+    assert_eq!(confirmed.skipped, vec!["1badname", "ls"]);
+    assert_eq!(confirmed.warnings.len(), 2);
+    assert!(commands::list(Some(config.to_str().unwrap()))
+        .unwrap()
+        .is_empty());
+    let _ = std::fs::remove_dir_all(root);
 }
