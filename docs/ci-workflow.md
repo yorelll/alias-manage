@@ -1,6 +1,6 @@
 # CI workflow
 
-CI is the cross-platform verification path because the development environment intentionally has no Rust toolchain. `ci.yml` runs formatting, clippy and workspace tests on Ubuntu 24.04 and Windows. Windows prints PowerShell 5.1 and 7 versions separately. Rust dependencies are cached with `Swatinem/rust-cache`; GUI jobs use a committed lockfile, `npm ci`, and npm cache. Tests use temporary HOME/configuration paths and must not modify runner user profiles. `integration.yml` runs the slow process-lock, Shell, CLI, benchmark, and oh-my-zsh contract matrix separately from fast CI.
+CI is the cross-platform verification path because the development environment intentionally has no Rust toolchain. `ci.yml` runs `cargo fmt --all -- --check` (check-only; no source is rewritten), clippy and workspace tests on Ubuntu 24.04 and Windows. A separate `gui-rust-windows` job builds the GUI frontend and runs `cargo check --locked` / `cargo test --locked` against the Tauri crate, which stays outside the root workspace via the `exclude` entry in the root `Cargo.toml`. Windows prints PowerShell 5.1 and 7 versions separately. Rust dependencies are cached with `Swatinem/rust-cache`; GUI jobs use a committed lockfile, `npm ci`, and npm cache. Tests use temporary HOME/configuration paths and must not modify runner user profiles. `integration.yml` runs the slow process-lock, Shell, CLI, benchmark, and oh-my-zsh contract matrix separately from fast CI.
 
 ## Task 21-1 automated matrix
 
@@ -82,7 +82,7 @@ GUI/installer artifacts are included only when their respective Tauri build succ
 
 The workflow runs the following gates before building artifacts:
 
-1. **Fast CI gate** — lint, Rust workspace tests, GUI frontend checks on Linux and Windows.
+1. **Fast CI gate** — check-only formatting, clippy, Rust workspace tests, GUI frontend checks on Linux and Windows, and GUI Rust check/test on Windows.
 2. **Integration gate** — Bash, Zsh, PowerShell 5.1/7, Linux and Windows CLI verify scripts.
 3. **Task 23 security/source scan** — no `eval`/`Invoke-Expression` in generated paths, no environment dumps in workflows, no signing material in repository, no signing commands.
 
@@ -101,7 +101,7 @@ MSI, AppImage, deb, and EXE installers are marked `environment-blocked` in the m
 
 ## GUI Tauri build jobs
 
-`prerelease.yml` includes actual Tauri build jobs for Linux (`ubuntu-24.04`) and Windows (`windows-latest`). These are distinct from the GUI frontend CI jobs that run in the fast CI gate.
+`prerelease.yml` includes actual Tauri build jobs for Linux (`ubuntu-24.04`) and Windows (`windows-latest`). These are distinct from the GUI frontend CI jobs and the `gui-rust-windows` check/test job that run in the fast CI gate.
 
 ### Linux Tauri build (`build_linux_gui`)
 
@@ -110,7 +110,7 @@ MSI, AppImage, deb, and EXE installers are marked `environment-blocked` in the m
 - Uses bounded apt retries (up to 3 attempts, 30-second timeout per call).
 - Installs `tauri-cli` v2 via `cargo install tauri-cli --version "^2" --locked`.
 - Builds the frontend via `npm ci && npm run build` in `crates/aliasmgr-gui/ui`.
-- Runs `cargo tauri build --config '{"bundle":{"active":true}}' --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml`.
+- Runs `cargo tauri build --config '{"bundle":{"active":true}}'` from `crates/aliasmgr-gui/src-tauri` with `CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target"`; `cargo tauri build` has no `--manifest-path`, and the shared target dir keeps the collected artifacts under `target/release/bundle/`.
 - If the build succeeds, collects AppImage and deb artifacts from `target/release/bundle/`.
 - If the build fails, records `gui_build_status: environment-blocked` in the manifest; never fabricates a GUI binary.
 - Uploads a `aliasmgr-linux-gui-<version>` artifact containing the manifest and any produced files (or just the diagnostic manifest on failure).
@@ -120,7 +120,7 @@ MSI, AppImage, deb, and EXE installers are marked `environment-blocked` in the m
 - Checks for WebView2 Runtime via registry.
 - Installs `tauri-cli` v2 via `cargo install tauri-cli --version "^2" --locked`.
 - Builds the frontend via `npm ci && npm run build`.
-- Runs `cargo tauri build --config '{"bundle":{"active":true}}' --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml`.
+- Runs `cargo tauri build --config '{"bundle":{"active":true}}'` with `-WorkingDirectory "crates/aliasmgr-gui/src-tauri"` and `CARGO_TARGET_DIR` set to the workspace `target`; `cargo tauri build` has no `--manifest-path`, and the shared target dir keeps the collected artifacts under `target\release\bundle\`.
 - If the build succeeds, collects MSI and NSIS setup.exe from `target/release/bundle/`.
 - If the build fails, records `gui_build_status: environment-blocked` in the manifest; never fabricates a GUI binary.
 - Uploads a `aliasmgr-windows-gui-<version>` artifact.

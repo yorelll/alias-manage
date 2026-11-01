@@ -103,11 +103,7 @@ jobs:
         if: matrix.job == 'lint_test_linux'
         shell: bash
         run: |
-          # Apply rustfmt ephemerally in the CI workspace so the check below
-          # succeeds even when the checked-out branch carries unformatted source.
-          # Generated changes are never committed; this mirrors the ci.yml pattern.
-          cargo fmt --all
-          cargo fmt --check
+          cargo fmt --all -- --check
           cargo clippy --workspace --all-targets -- -D warnings
           cargo test --workspace
       - name: Test (Windows)
@@ -589,16 +585,19 @@ jobs:
         run: |
           set -uo pipefail
           mkdir -p dist-gui-linux
-          BUILD_LOG="dist-gui-linux/tauri-build.log"
+          BUILD_LOG="$GITHUB_WORKSPACE/dist-gui-linux/tauri-build.log"
           # Short-circuit: if native deps were unavailable, skip the build immediately.
           if [ "${{ steps.apt_install_tauri_deps.outputs.tauri_deps_status }}" != "success" ]; then
             echo "gui_linux_build_status=environment-blocked" >> "$GITHUB_OUTPUT"
             echo "Native dependencies not available; skipping Tauri build (environment-blocked)."
             exit 0
           fi
-          if cargo tauri build \
+          # cargo tauri build has no --manifest-path: run from the crate directory.
+          # Keep the workspace target dir so the artifact-collection globs below
+          # (target/release/bundle/...) keep working.
+          cd crates/aliasmgr-gui/src-tauri
+          if CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target" cargo tauri build \
               --config '{"bundle":{"active":true}}' \
-              --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml \
               2>&1 | tee "$BUILD_LOG"; then
             echo "gui_linux_build_status=success" >> "$GITHUB_OUTPUT"
             echo "Tauri Linux build succeeded."
@@ -731,11 +730,15 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path dist-gui-windows | Out-Null
-          $BuildLog = "dist-gui-windows\tauri-build.log"
+          $BuildLog = Join-Path $PWD 'dist-gui-windows\tauri-build.log'
           $ErrorLog = "$BuildLog.err"
+          # cargo tauri build has no --manifest-path: run from the crate directory
+          # and keep Cargo output in the workspace target dir so the artifact
+          # collection below (target\release\bundle\...) keeps working.
+          $env:CARGO_TARGET_DIR = (Join-Path $PWD 'target')
           $Proc = Start-Process -FilePath "cargo" `
-            -ArgumentList "tauri","build","--config",'{\"bundle\":{\"active\":true}}',
-                          "--manifest-path","crates/aliasmgr-gui/src-tauri/Cargo.toml" `
+            -ArgumentList "tauri","build","--config",'{"bundle":{"active":true}}' `
+            -WorkingDirectory "crates/aliasmgr-gui/src-tauri" `
             -Wait -PassThru -RedirectStandardOutput $BuildLog -RedirectStandardError $ErrorLog
           if ($Proc.ExitCode -eq 0) {
             "gui_windows_build_status=success" >> $env:GITHUB_OUTPUT

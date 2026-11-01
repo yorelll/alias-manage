@@ -23,8 +23,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.7.8
         with:
           cache-on-failure: true
-      - run: cargo fmt --all
-      - run: cargo fmt --check
+      - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
   test-linux:
     runs-on: ubuntu-24.04
@@ -70,11 +69,12 @@ jobs:
         run: $PSVersionTable.PSVersion.ToString()
       - run: cargo test --workspace
 
-  # GUI frontend jobs (crates/aliasmgr-gui/src-tauri is intentionally outside the
-  # root Cargo workspace; it requires platform-specific Tauri system libraries
-  # (webkit2gtk on Linux, WebView2 on Windows) that are non-trivial to provision
-  # reliably across runners.  We therefore verify only the frontend layer here and
-  # document the Tauri Rust compile step as a manual / future-CI concern.
+  # GUI jobs. crates/aliasmgr-gui/src-tauri is intentionally excluded from the
+  # root Cargo workspace (see the `exclude` entry in the root Cargo.toml) and
+  # keeps its own Cargo.lock. The frontend layer is verified on Linux and
+  # Windows, and the Tauri Rust crate itself is compiled and tested on Windows
+  # below (WebView2 ships with windows-latest, so no extra system libraries are
+  # needed; the Linux webkit2gtk packages are only required for packaging).
   gui-frontend-linux:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -110,3 +110,27 @@ jobs:
       - run: npm test
       - run: npm run typecheck
       - run: npm run build
+
+  gui-rust-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4.2.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2.7.8
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v4.4.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/aliasmgr-gui/ui/package-lock.json
+      - name: Build GUI frontend (required by frontendDist)
+        working-directory: crates/aliasmgr-gui/ui
+        run: |
+          npm ci
+          npm run build
+      - name: Check Tauri Rust crate
+        run: cargo check --locked --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml
+      - name: Test Tauri Rust crate
+        run: cargo test --locked --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml
