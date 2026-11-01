@@ -1314,12 +1314,27 @@ mod tests {
                 .unwrap();
         }
         drop(database);
+        let rc_before = std::fs::read_to_string(&rc).unwrap();
 
         let overrides = scan_overrides().unwrap();
+        // Repeated scans replace the (name, shell) row instead of appending.
+        let repeated = scan_overrides().unwrap();
+        assert_eq!(
+            repeated.len(),
+            overrides.len(),
+            "repeated scans must not duplicate override rows"
+        );
+        assert!(repeated
+            .iter()
+            .all(|entry| entry["shell"] == "bash" && entry["name"].is_string()));
+        // Scanning only reads the rc file: content and encoding stay untouched.
+        assert_eq!(std::fs::read_to_string(&rc).unwrap(), rc_before);
+
         let gs = overrides
             .iter()
             .find(|entry| entry["name"] == "gs")
             .expect("alias definition must be captured");
+        assert_eq!(gs["shell"], "bash");
         assert_eq!(gs["recoverable"], true);
         assert_eq!(gs["original_definition"], "alias gs='git status'");
 
