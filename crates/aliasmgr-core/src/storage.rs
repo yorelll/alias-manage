@@ -574,6 +574,24 @@ mod tests {
         alias
     }
 
+    /// Unique, self-cleaning temp directory so a leftover database from an
+    /// interrupted previous run cannot poison this one.
+    fn temp_root(label: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-storage-{label}-{}-{}-{sequence}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        root
+    }
+
     fn database_alias(name: &str) -> AliasRecord {
         checked(AliasRecord {
             name: name.into(),
@@ -684,8 +702,7 @@ mod tests {
 
     #[test]
     fn checksum_is_stored_and_tampering_is_detected() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-checksum-{}", std::process::id()));
+        let root = temp_root("checksum");
         let database = Database::open(root.join("aliases.db")).unwrap();
         let alias = database_alias("checked");
         database.insert_alias(&alias).unwrap();
@@ -793,8 +810,7 @@ mod tests {
 
     #[test]
     fn file_database_uses_wal_when_supported() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-pragmas-{}", std::process::id()));
+        let root = temp_root("pragmas");
         let database = Database::open(root.join("aliases.db")).unwrap();
         assert!(matches!(
             database
@@ -810,8 +826,7 @@ mod tests {
 
     #[test]
     fn migration_backup_is_created_before_reopening_existing_database() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-backup-{}", std::process::id()));
+        let root = temp_root("backup");
         let path = root.join("aliases.db");
         drop(Database::open(&path).unwrap());
         drop(Database::open(&path).unwrap());
@@ -825,8 +840,7 @@ mod tests {
 
     #[test]
     fn failed_migration_restores_the_existing_database_file() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-restore-{}", std::process::id()));
+        let root = temp_root("restore");
         let path = root.join("aliases.db");
         let database = Database::open(&path).unwrap();
         database
@@ -851,8 +865,7 @@ mod tests {
 
     #[test]
     fn open_creates_parent_directory_for_a_new_database() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-parent-{}", std::process::id()));
+        let root = temp_root("parent");
         let path = root.join("nested").join("aliases.db");
         drop(Database::open(&path).unwrap());
         assert!(path.exists());
@@ -952,7 +965,7 @@ mod tests {
 
     #[test]
     fn open_read_only_reads_without_backups_or_writes() {
-        let root = std::env::temp_dir().join(format!("aliasmgr-readonly-{}", std::process::id()));
+        let root = temp_root("readonly");
         let path = root.join("aliases.db");
         {
             let database = Database::open(&path).unwrap();
@@ -979,10 +992,7 @@ mod tests {
 
     #[test]
     fn file_database_reliability_error_matches_the_filesystem_mapping() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-reliability-{}",
-            std::process::id()
-        ));
+        let root = temp_root("reliability");
         let database = Database::open(root.join("aliases.db")).unwrap();
         let filesystem = database.root().expect("file databases know their root");
         let expected =
@@ -1014,8 +1024,7 @@ mod tests {
 
     #[test]
     fn reopening_a_database_rotates_old_backups_to_the_configured_limit() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-rotate-{}", std::process::id()));
+        let root = temp_root("rotate");
         let path = root.join("aliases.db");
         {
             let database = Database::open(&path).unwrap();
@@ -1063,8 +1072,7 @@ mod tests {
 
     #[test]
     fn failed_migration_does_not_prune_existing_backups() {
-        let root =
-            std::env::temp_dir().join(format!("aliasmgr-storage-corrupt-{}", std::process::id()));
+        let root = temp_root("corrupt");
         let path = root.join("aliases.db");
         let database = Database::open(&path).unwrap();
         database
