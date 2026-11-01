@@ -8,12 +8,15 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg(test)]
+pub(crate) static INTERPRETER_PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 const POWERSHELL_PARSE_PROBE: &str = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){[Console]::Error.WriteLine($e[0].Message);exit 1}";
 
 /// Validates generated shell content before it replaces the live file.
 ///
-/// The check is best effort: when the interpreter for a shell is not on
-/// `PATH` the content is accepted unchanged. This is a documented limitation
+/// The check is best effort: when the interpreter for a shell is missing or
+/// unusable the content is accepted unchanged. This is a documented limitation
 /// of the boundary, not a silent success claim.
 pub fn check(shell: &ShellKind, content: &str) -> Result<(), AliasError> {
     match shell {
@@ -25,9 +28,25 @@ pub fn check(shell: &ShellKind, content: &str) -> Result<(), AliasError> {
     }
 }
 
+fn interpreter_is_usable(program: &str, args: &[&str]) -> bool {
+    Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 fn check_shell_script(program: &str, content: &str) -> Result<(), AliasError> {
-    // Interpreter discovery is a bare PATH lookup on purpose: when the shell is not
-    // on PATH this boundary is a documented best-effort no-op, not a failed check.
+    // Interpreter discovery is a bare PATH lookup, and some PATH entries are launchers
+    // rather than interpreters (for example C:\Windows\System32\bash.exe is the WSL
+    // launcher). Probe first and treat an interpreter that cannot run `exit 0` like a
+    // missing one: this boundary is a documented best-effort no-op, not a failure.
+    if !interpreter_is_usable(program, &["-c", "exit 0"]) {
+        return Ok(());
+    }
     let mut child = match Command::new(program)
         .arg("-n")
         .stdin(Stdio::piped())
@@ -51,6 +70,12 @@ fn check_shell_script(program: &str, content: &str) -> Result<(), AliasError> {
 }
 
 fn check_powershell(program: &str, content: &str) -> Result<(), AliasError> {
+    if !interpreter_is_usable(
+        program,
+        &["-NoProfile", "-NonInteractive", "-Command", "exit 0"],
+    ) {
+        return Ok(());
+    }
     let path = syntax_temp_path();
     fs::write(&path, content)?;
     let result = Command::new(program)
@@ -115,6 +140,9 @@ mod tests {
 
     #[test]
     fn rejects_broken_bash_script_when_bash_is_available() {
+        let _lock = INTERPRETER_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if !command_available("bash") {
             return;
         }
@@ -145,13 +173,10 @@ mod tests {
     }
 
     fn powershell_available() -> bool {
-        Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", "exit 0"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false)
+        interpreter_is_usable(
+            "powershell",
+            &["-NoProfile", "-NonInteractive", "-Command", "exit 0"],
+        )
     }
 
     #[test]
@@ -166,6 +191,91 @@ mod tests {
             "mojibake: {message}"
         );
         assert!(message.contains("if"), "unexpected message: {message}");
+    }
+
+    #[cfg(unix)]
+    struct PathGuard(Option<std::ffi::OsString>);
+
+    #[cfg(unix)]
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            match self.0.take() {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    fn prepend_path(dir: &std::path::Path) -> PathGuard {
+        let original = env::var_os("PATH");
+        let mut entries = vec![dir.to_path_buf()];
+        if let Some(existing) = &original {
+            entries.extend(env::split_paths(existing));
+        }
+        env::set_var("PATH", env::join_paths(entries).unwrap());
+        PathGuard(original)
+    }
+
+    #[cfg(unix)]
+    fn install_fake_bash(dir: &std::path::Path) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("bash");
+        let script = "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then exit 0; fi\nexit 1\n";
+        fs::write(&path, script).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    #[cfg(windows)]
+    fn install_fake_bash(dir: &std::path::Path) -> std::path::PathBuf {
+        let path = dir.join("bash.cmd");
+        let script = "@if \"%~1\"==\"--version\" exit /b 0\r\n@exit /b 1\r\n";
+        fs::write(&path, script).unwrap();
+        path
+    }
+
+    /// The CI failure this guards against: `bash` on Windows resolves to a launcher that
+    /// cannot run `-c "exit 0"`. A PATH-based shadow cannot be simulated with a `.cmd`
+    /// because Windows program lookup only finds real executables, so the direct-path
+    /// variant below covers Windows while this one covers POSIX PATH resolution.
+    #[cfg(unix)]
+    #[test]
+    fn unusable_bash_interpreter_on_path_is_skipped() {
+        let _lock = INTERPRETER_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let root = env::temp_dir().join(format!("aliasmgr-fake-bash-path-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        install_fake_bash(&root);
+        let _path = prepend_path(&root);
+        assert!(
+            command_available("bash"),
+            "fake bash should shadow the real interpreter"
+        );
+        let result = check(&ShellKind::Bash, "if then\n");
+        assert!(
+            result.is_ok(),
+            "unusable interpreter must be skipped: {result:?}"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn unusable_interpreter_path_is_skipped() {
+        let root =
+            env::temp_dir().join(format!("aliasmgr-fake-bash-direct-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let fake = install_fake_bash(&root);
+        let index = check_shell_script(fake.to_str().unwrap(), "if then\n");
+        assert!(
+            index.is_ok(),
+            "unusable interpreter must be skipped: {index:?}"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

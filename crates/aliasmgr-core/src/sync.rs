@@ -546,6 +546,9 @@ mod tests {
     }
     #[test]
     fn syntax_failure_preserves_previous_generated_file_and_leaves_no_temp() {
+        let _lock = crate::syntax::INTERPRETER_PATH_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
         if !bash_available() {
             return;
         }
