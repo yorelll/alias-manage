@@ -2,7 +2,7 @@
 
 本计划以 `docs/HANDOFF-2026-11-01.md` §8 为输入，按“先止血、再修契约、再补核心、最后补验证与文档”排序。执行方式：主 agent 规划与验收，子 agent A 实现，子 agent B 独立 review，A 修复直至 B 无异议；并行任务使用 git worktree，最后由主 agent 合并并复核。
 
-## 基线（本次接手实测）
+## 基线（本次接手实测，历史记录）
 
 - HEAD `684a752`（在交接文档 `961d70e` 之后补交了 `Cargo.lock` 与 `.gitignore`）。
 - `cargo check --workspace --all-targets`：PASS。
@@ -32,6 +32,13 @@
 
 - WS4b 已合并：文件系统可靠性接线、数据库备份轮转、导出脱敏、PowerShell 大小写折叠预览、PowerShell 测试隔离与 PS7 环境跳过。合并后工作区测试 147 pass / 0 fail。
 - WS3/WS4a/WS5 已通过复审并进入最终修正/合并队列。
+- WS6 已合并到 main（`52e0635`）：fmt 门禁改为 check-only，`ci.yml` 新增 `gui-rust-windows`（前端构建 + Tauri crate rustfmt/check/test），prerelease Tauri 构建改为在 crate 目录内执行并传入 `tauri-prerelease.json` 配置文件。
+- WS7 已完成本地收尾（分支 `agent/ws7-docs`，未推送、未触发 CI）：
+  - 已更新 `plan.md`、`README.md`、`docs/testing.md`，把“本地无 Rust 工具链”改为本地预检 + CI 门禁，并保留 CI 边界。
+  - 已按实现重写 `docs/cli-commands.md`，更新 `docs/exit-codes.md`、`docs/limitations.md`、`docs/release-checklist.md`、`docs/final-release-status.md`、`docs/ci-test-inventory.md` 与 `docs/task21-2/01-cli/task-list.md` 的过时陈述。
+  - `scripts/verify-cli-windows.ps1` 的 W-008 已改为隔离配置目录下的 retain/purge 检查，W-006 注释说明 `--arg --oneline` 已支持。
+  - 本地复验（已合并 main `52e0635`）：workspace 172 tests pass；GUI Tauri crate fmt check 与 14 tests pass；GUI 前端 223 tests + typecheck/build pass；`cargo fmt --all -- --check` 与 `cargo clippy --workspace --all-targets -- -D warnings` pass；Windows CLI 脚本 11 PASS + 2 EXPECTED-LIMITATION，W-008 PASS，W-006 PASS。
+  - 剩余项：本分支尚未推送，因此没有任何 CI run；Task 21-2 人工验收、安装包/签名/发布仍待执行。不得声称当前分支 CI 通过。
 
 ## 合并顺序
 

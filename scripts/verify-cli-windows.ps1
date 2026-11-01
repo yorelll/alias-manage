@@ -135,6 +135,32 @@ function Invoke-Cli {
     }
 }
 
+# Invoke the CLI against an explicit configuration root and report the exit code.
+# Used by checks that need more than one isolated configuration directory.
+function Invoke-CliWithConfig {
+    param([string]$ConfigDir, [string[]]$Arguments)
+    $savedEnv = @{}
+    $overrides = @{
+        ALIASMGR_CONFIG_DIR = $ConfigDir
+        LOCALAPPDATA        = $TempLocalApp
+        APPDATA             = $TempAppData
+    }
+    foreach ($key in $overrides.Keys) {
+        $savedEnv[$key] = [System.Environment]::GetEnvironmentVariable($key)
+        [System.Environment]::SetEnvironmentVariable($key, $overrides[$key])
+    }
+    try {
+        $global:LASTEXITCODE = 0
+        $text = & $ArtifactPath @Arguments 2>&1 | Out-String
+        $code = $LASTEXITCODE
+    } finally {
+        foreach ($key in $savedEnv.Keys) {
+            [System.Environment]::SetEnvironmentVariable($key, $savedEnv[$key])
+        }
+    }
+    return [pscustomobject]@{ Output = $text; ExitCode = $code }
+}
+
 # ─── PowerShell environment metadata ─────────────────────────────
 Write-Log "=== verify-cli-windows.ps1 starting ==="
 Write-Log ("PS version: " + $PSVersionTable.PSVersion.ToString())
@@ -233,7 +259,9 @@ try {
 }
 
 # W-006: tag facet single/multi/clear
-# Tags are set during add via --tag flag
+# Tags are set during add via --tag flag. `--arg --oneline` is accepted because
+# `--arg` uses clap allow_hyphen_values; use `--arg=<value>` when the next token
+# would otherwise be parsed as a flag.
 try {
     $TagAddOut = Invoke-Cli @("add", "tag-test", "--exec", "git", "--arg", "log", "--arg", "--oneline", "--tag", "git-tools")
     $TagListOut = Invoke-Cli @("list", "--tag", "git-tools")
@@ -242,12 +270,12 @@ try {
             "tag AND filter verified: alias appears in tagged list" `
             "alias 'tag-test' with tag 'git-tools' visible via --tag filter" "stdout"
     } else {
-        Record-Result "W-006" "tag facet single/multi/clear" "EXPECTED-LIMITATION" `
+        Record-Result "W-006" "tag facet single/multi/clear" "FAIL" `
             "tag AND filter returns tagged entry" `
             "tag add output: $($TagAddOut.Trim()); list --tag: $($TagListOut.Trim())" "stdout"
     }
 } catch {
-    Record-Result "W-006" "tag facet single/multi/clear" "EXPECTED-LIMITATION" `
+    Record-Result "W-006" "tag facet single/multi/clear" "FAIL" `
         "tag AND filter and clear verified" `
         ("tag or list --tag unavailable or error: " + $_.Exception.Message) "stdout"
 }
@@ -289,15 +317,63 @@ try {
         ("export/import unavailable or error: " + $_.Exception.Message) "stdout"
 }
 
-# W-008: retain/purge uninstall
+# W-008: retain/purge uninstall in isolated config directories
+# Retain must remove the marked loader block while keeping generated files and
+# the database. Purge must remove managed generated/database files without ever
+# deleting a referenced target file.
 try {
-    $UninstallOut = Invoke-Cli @("shell", "uninstall", "--dry-run")
-    Record-Result "W-008" "retain/purge uninstall" "PASS" `
-        "uninstall --dry-run succeeds without modifying config" $UninstallOut "stdout"
+    $RetainConfig = Join-Path $TempRoot "uninstall-retain"
+    New-Item -ItemType Directory -Path $RetainConfig -Force | Out-Null
+    $RetainTarget = Join-Path $TempTargets "uninstall-retain-target.sh"
+    Set-Content -Path $RetainTarget -Value "#!/bin/sh`necho retain`n" -Encoding ASCII
+    $RetainRc = Join-Path $RetainConfig ".bashrc"
+    $RetainRcBody = "user line`n# >>> Alias Manager >>>`n# managed block`n# <<< Alias Manager <<<`n"
+    Set-Content -Path $RetainRc -Value $RetainRcBody -Encoding UTF8
+
+    $RetainAdd = Invoke-CliWithConfig -ConfigDir $RetainConfig -Arguments @("add", "retain-test", "--exec", $RetainTarget, "--shell", "bash")
+    $RetainSync = Invoke-CliWithConfig -ConfigDir $RetainConfig -Arguments @("sync")
+    $RetainUninstall = Invoke-CliWithConfig -ConfigDir $RetainConfig -Arguments @("uninstall")
+
+    $RetainDbKept = Test-Path (Join-Path $RetainConfig "aliases.db")
+    $RetainGeneratedKept = Test-Path (Join-Path $RetainConfig "generated/bash.sh")
+    $RetainTargetKept = Test-Path $RetainTarget
+    $RetainRcAfter = if (Test-Path $RetainRc) { Get-Content -Path $RetainRc -Raw } else { "" }
+    $RetainLoaderRemoved = ($RetainRcAfter -notmatch ([regex]::Escape("# >>> Alias Manager >>>")))
+    $RetainUserContentKept = ($RetainRcAfter -match "user line")
+    $RetainOk = ($RetainAdd.ExitCode -eq 0) -and ($RetainSync.ExitCode -eq 0) -and
+        ($RetainUninstall.ExitCode -eq 0) -and $RetainDbKept -and $RetainGeneratedKept -and
+        $RetainTargetKept -and $RetainLoaderRemoved -and $RetainUserContentKept
+
+    $PurgeConfig = Join-Path $TempRoot "uninstall-purge"
+    New-Item -ItemType Directory -Path $PurgeConfig -Force | Out-Null
+    $PurgeTarget = Join-Path $TempTargets "uninstall-purge-target.sh"
+    Set-Content -Path $PurgeTarget -Value "#!/bin/sh`necho purge`n" -Encoding ASCII
+
+    $PurgeAdd = Invoke-CliWithConfig -ConfigDir $PurgeConfig -Arguments @("add", "purge-test", "--exec", $PurgeTarget, "--shell", "bash")
+    $PurgeSync = Invoke-CliWithConfig -ConfigDir $PurgeConfig -Arguments @("sync")
+    $PurgeUninstall = Invoke-CliWithConfig -ConfigDir $PurgeConfig -Arguments @("uninstall", "--purge-aliases", "--yes")
+
+    $PurgeDbRemoved = -not (Test-Path (Join-Path $PurgeConfig "aliases.db"))
+    $PurgeGeneratedRemoved = -not (Test-Path (Join-Path $PurgeConfig "generated/bash.sh"))
+    $PurgeTargetKept = Test-Path $PurgeTarget
+    $PurgeOk = ($PurgeAdd.ExitCode -eq 0) -and ($PurgeSync.ExitCode -eq 0) -and
+        ($PurgeUninstall.ExitCode -eq 0) -and $PurgeDbRemoved -and $PurgeGeneratedRemoved -and
+        $PurgeTargetKept
+
+    $UninstallActual = "retain: add=$($RetainAdd.ExitCode) sync=$($RetainSync.ExitCode) uninstall=$($RetainUninstall.ExitCode) db_kept=$RetainDbKept generated_kept=$RetainGeneratedKept loader_removed=$RetainLoaderRemoved user_content_kept=$RetainUserContentKept target_kept=$RetainTargetKept; purge: add=$($PurgeAdd.ExitCode) sync=$($PurgeSync.ExitCode) uninstall=$($PurgeUninstall.ExitCode) db_removed=$PurgeDbRemoved generated_removed=$PurgeGeneratedRemoved target_kept=$PurgeTargetKept"
+    if ($RetainOk -and $PurgeOk) {
+        Record-Result "W-008" "retain/purge uninstall" "PASS" `
+            "retain keeps generated files and database; purge removes managed files; loader block removed; referenced targets preserved" `
+            $UninstallActual "stdout; isolated config dirs"
+    } else {
+        Record-Result "W-008" "retain/purge uninstall" "FAIL" `
+            "retain keeps generated files and database; purge removes managed files; loader block removed; referenced targets preserved" `
+            $UninstallActual "stdout; isolated config dirs"
+    }
 } catch {
-    Record-Result "W-008" "retain/purge uninstall" "EXPECTED-LIMITATION" `
-        "selected cleanup executed; targets preserved" `
-        ("uninstall --dry-run unavailable or error: " + $_.Exception.Message) "stdout"
+    Record-Result "W-008" "retain/purge uninstall" "FAIL" `
+        "retain keeps generated files and database; purge removes managed files; loader block removed; referenced targets preserved" `
+        ("exception: " + $_.Exception.Message) "stdout; isolated config dirs"
 }
 
 # W-MANUAL-001: Profile/OneDrive (manual-only)
