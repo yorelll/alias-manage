@@ -552,14 +552,31 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
         let Some(names) = managed_names.get(name) else {
             continue;
         };
-        if let Ok(body) = coordinator.render_shell(&aliases, &kind, current_revision, names) {
-            let expected_checksum = content_checksum(&body);
-            if expected_checksum != actual {
-                stale_details.insert(
-                    name.to_owned(),
-                    format!("expected checksum {expected_checksum}, actual {actual}"),
-                );
+        // Sync renders one shell at a time: aliases that do not target this
+        // shell must be excluded, or a healthy multi-shell install looks stale.
+        let shell_aliases: Vec<AliasRecord> = aliases
+            .iter()
+            .filter(|alias| alias.shells.contains(&kind))
+            .cloned()
+            .collect();
+        match coordinator.render_shell(&shell_aliases, &kind, current_revision, names) {
+            Ok(body) => {
+                let expected_checksum = content_checksum(&body);
+                if expected_checksum != actual {
+                    stale_details.insert(
+                        name.to_owned(),
+                        format!("expected checksum {expected_checksum}, actual {actual}"),
+                    );
+                }
             }
+            Err(error) => findings.push(DoctorFindingDto {
+                shell: Some(name.into()),
+                severity: "warning".into(),
+                code: "render_failed".into(),
+                message: format!("无法渲染预期内容: {name}"),
+                action: Some("检查别名目标后重新同步".into()),
+                detail: Some(error.to_string()),
+            }),
         }
     }
 
@@ -903,25 +920,24 @@ fn override_scan_paths(
     paths
 }
 
-/// A definition is recoverable only when it is a real single-line alias or
-/// function definition; comments and anything else are recorded as unknown.
-fn is_simple_single_line_definition(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return false;
-    }
-    let lower = trimmed.to_ascii_lowercase();
-    lower.starts_with("alias ") || lower.starts_with("function ")
-}
-
 /// Tauri command: read the configured rc/profile files and record which
-/// aliases are already defined there. File content is only read, never executed.
+/// aliases are already defined there. File content is only read, never
+/// executed, and only metadata is stored: the raw definition line is never
+/// persisted or returned to the frontend.
 #[tauri::command]
 pub fn scan_overrides() -> Result<Vec<serde_json::Value>, String> {
     let paths = AppPaths::discover(None);
+    let database_path = paths.root.join("aliases.db");
+    if !database_path.exists() {
+        // A fresh config has no aliases to scan. Returning early keeps Doctor's
+        // `database_missing` finding deterministic instead of creating the DB.
+        return Ok(Vec::new());
+    }
     let config = paths.load_config().map_err(|error| error.to_string())?;
-    let database = database()?;
+    let database = Database::open(&database_path).map_err(|error| error.to_string())?;
     let aliases = database.list_aliases().map_err(|error| error.to_string())?;
+    let mut found: BTreeMap<(String, ShellKind), aliasmgr_core::storage::OverrideEntry> =
+        BTreeMap::new();
     for alias in &aliases {
         for shell in &alias.shells {
             let candidates = override_scan_paths(&config, &paths.root, shell);
@@ -933,18 +949,23 @@ pub fn scan_overrides() -> Result<Vec<serde_json::Value>, String> {
             else {
                 continue;
             };
-            let definition = source.definition.trim();
-            if is_simple_single_line_definition(definition) {
-                database
-                    .record_override(&alias.name, shell, Some(definition), true)
-                    .map_err(|error| error.to_string())?;
-            } else {
-                database
-                    .record_override(&alias.name, shell, None, false)
-                    .map_err(|error| error.to_string())?;
-            }
+            found.insert(
+                (alias.name.clone(), shell.clone()),
+                aliasmgr_core::storage::OverrideEntry {
+                    name: alias.name.clone(),
+                    shell: shell.clone(),
+                    definition_kind: source.kind.as_str().to_owned(),
+                    recoverable: source.recoverable,
+                },
+            );
         }
     }
+    let entries: Vec<_> = found.into_values().collect();
+    // Replaces every scan-produced row atomically, so a definition removed
+    // from the rc file also disappears from the UI.
+    database
+        .replace_overrides(&entries)
+        .map_err(|error| error.to_string())?;
     database
         .overridden_definitions()
         .map_err(|error| error.to_string())
@@ -1283,7 +1304,22 @@ mod tests {
     }
 
     #[test]
-    fn scan_overrides_records_recoverable_and_unknown_definitions() {
+    fn scan_overrides_does_not_create_a_missing_database() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("overrides-missing-db");
+
+        let overrides = scan_overrides().unwrap();
+        assert!(overrides.is_empty());
+        assert!(
+            !config.root.join("aliases.db").exists(),
+            "scan must not create the database on a fresh config"
+        );
+    }
+
+    #[test]
+    fn scan_overrides_records_metadata_and_clears_stale_rows() {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -1294,8 +1330,13 @@ mod tests {
         let rc = config.root.join("bashrc.custom");
         let mut app_config = aliasmgr_core::config::AppConfig::default();
         app_config.shells.bash_rc_path = Some(rc.clone());
+        app_config.shells.powershell7_profile_path = Some(rc.clone());
         app_config.save(&paths).unwrap();
-        std::fs::write(&rc, "alias gs='git status'\n# alias cm='commented out'\n").unwrap();
+        std::fs::write(
+            &rc,
+            "alias gs='git status'\nfunction multi {\nalias mygs='other'\nSet-Alias -Name psa -Value git -Scope Global\n",
+        )
+        .unwrap();
         std::fs::write(
             config.root.join(".bashrc"),
             "function deploy() { echo hi; }\n",
@@ -1303,12 +1344,17 @@ mod tests {
         .unwrap();
 
         let database = Database::open(config.root.join("aliases.db")).unwrap();
-        for name in ["gs", "cm", "deploy"] {
+        for (name, shells) in [
+            ("gs", vec![ShellKind::Bash]),
+            ("multi", vec![ShellKind::Bash]),
+            ("deploy", vec![ShellKind::Bash]),
+            ("psa", vec![ShellKind::PowerShell7]),
+        ] {
             database
                 .insert_alias(&AliasRecord {
                     name: name.into(),
                     executable: "tool".into(),
-                    shells: vec![ShellKind::Bash],
+                    shells,
                     ..Default::default()
                 })
                 .unwrap();
@@ -1317,39 +1363,175 @@ mod tests {
         let rc_before = std::fs::read_to_string(&rc).unwrap();
 
         let overrides = scan_overrides().unwrap();
-        // Repeated scans replace the (name, shell) row instead of appending.
+        // Repeated scans replace rows instead of appending duplicates.
         let repeated = scan_overrides().unwrap();
         assert_eq!(
             repeated.len(),
             overrides.len(),
             "repeated scans must not duplicate override rows"
         );
-        assert!(repeated
-            .iter()
-            .all(|entry| entry["shell"] == "bash" && entry["name"].is_string()));
         // Scanning only reads the rc file: content and encoding stay untouched.
         assert_eq!(std::fs::read_to_string(&rc).unwrap(), rc_before);
 
-        let gs = overrides
-            .iter()
-            .find(|entry| entry["name"] == "gs")
-            .expect("alias definition must be captured");
+        let find = |list: &[serde_json::Value], name: &str| {
+            list.iter()
+                .find(|entry| entry["name"] == name)
+                .unwrap_or_else(|| panic!("{name} missing from overrides"))
+                .clone()
+        };
+
+        let gs = find(&overrides, "gs");
         assert_eq!(gs["shell"], "bash");
+        assert_eq!(gs["definition_kind"], "alias");
         assert_eq!(gs["recoverable"], true);
-        assert_eq!(gs["original_definition"], "alias gs='git status'");
+        assert!(
+            gs.get("original_definition").is_none(),
+            "raw rc lines must not cross the IPC boundary"
+        );
 
-        let cm = overrides
-            .iter()
-            .find(|entry| entry["name"] == "cm")
-            .expect("non-simple definition must still be recorded");
-        assert_eq!(cm["recoverable"], false);
-        assert!(cm["original_definition"].is_null());
+        let multi = find(&overrides, "multi");
+        assert_eq!(multi["definition_kind"], "function");
+        assert_eq!(
+            multi["recoverable"], false,
+            "an opening brace alone is not a complete definition"
+        );
 
-        let deploy = overrides
-            .iter()
-            .find(|entry| entry["name"] == "deploy")
-            .expect("default .bashrc function must be captured");
+        let deploy = find(&overrides, "deploy");
+        assert_eq!(deploy["definition_kind"], "function");
         assert_eq!(deploy["recoverable"], true);
+
+        let psa = find(&overrides, "psa");
+        assert_eq!(psa["shell"], "powershell7");
+        assert_eq!(psa["definition_kind"], "set_alias");
+        assert_eq!(psa["recoverable"], true);
+
+        assert!(
+            overrides.iter().all(|entry| entry["name"] != "mygs"),
+            "a longer name must not create an override for gs"
+        );
+        assert!(overrides
+            .iter()
+            .all(|entry| entry.get("original_definition").is_none()));
+
+        // Removing the definitions from the rc file clears their rows.
+        std::fs::write(&rc, "# now empty\n").unwrap();
+        let after_removal = scan_overrides().unwrap();
+        assert_eq!(
+            after_removal.len(),
+            1,
+            "only deploy remains: {after_removal:?}"
+        );
+        assert_eq!(after_removal[0]["name"], "deploy");
+    }
+
+    #[test]
+    fn doctor_reports_nothing_for_healthy_multi_shell_install() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-healthy");
+        let aliases = [
+            AliasRecord {
+                name: "bash-only".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                revision: 2,
+                ..Default::default()
+            },
+            AliasRecord {
+                name: "zsh-only".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Zsh],
+                revision: 2,
+                ..Default::default()
+            },
+            AliasRecord {
+                name: "everywhere".into(),
+                executable: "git".into(),
+                shells: vec![
+                    ShellKind::Bash,
+                    ShellKind::Zsh,
+                    ShellKind::PowerShell5,
+                    ShellKind::PowerShell7,
+                ],
+                revision: 2,
+                ..Default::default()
+            },
+        ];
+        let coordinator = SyncCoordinator::new(&config.root);
+        for shell in [
+            ShellKind::Bash,
+            ShellKind::Zsh,
+            ShellKind::PowerShell5,
+            ShellKind::PowerShell7,
+        ] {
+            let shell_aliases: Vec<AliasRecord> = aliases
+                .iter()
+                .filter(|alias| alias.shells.contains(&shell))
+                .cloned()
+                .collect();
+            coordinator
+                .apply(&shell_aliases, std::slice::from_ref(&shell), 2)
+                .unwrap();
+        }
+
+        let findings = doctor_status().unwrap();
+        assert!(
+            findings.is_empty(),
+            "a healthy multi-shell install must report nothing: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_render_failures_instead_of_ignoring_them() {
+        use aliasmgr_core::model::{ShellState, ShellStatus};
+
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-render-failed");
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "broken".into(),
+                executable: "./definitely-missing-tool".into(),
+                shells: vec![ShellKind::Bash],
+                revision: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        database
+            .upsert_shell_state(&ShellState {
+                shell: ShellKind::Bash,
+                applied_revision: 2,
+                file_checksum: String::new(),
+                loader_installed: true,
+                status: ShellStatus::Ok,
+                last_error: None,
+            })
+            .unwrap();
+        drop(database);
+
+        // A checksum-valid file, so only the fresh render can fail.
+        let body = "# Alias Manager\n# revision: 2\n";
+        let checksum = content_checksum(body);
+        let generated = config.root.join("generated/bash.sh");
+        std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        std::fs::write(&generated, format!("{body}# file_checksum: {checksum}\n")).unwrap();
+
+        let findings = doctor_status().unwrap();
+        let failure = findings
+            .iter()
+            .find(|finding| {
+                finding.code == "render_failed" && finding.shell.as_deref() == Some("bash")
+            })
+            .expect("render failure must be reported");
+        assert_eq!(failure.severity, "warning");
+        assert!(failure
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("target is missing"));
     }
 
     #[test]

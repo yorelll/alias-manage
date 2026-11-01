@@ -120,6 +120,20 @@ pub enum ShellStatus {
     Unknown,
 }
 
+impl ShellKind {
+    /// Stable lowercase name used by the CLI, the GUI and stored metadata.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ShellKind::Bash => "bash",
+            ShellKind::Zsh => "zsh",
+            ShellKind::PowerShell5 => "powershell5",
+            ShellKind::PowerShell7 => "powershell7",
+            ShellKind::Fish => "fish",
+            ShellKind::PosixSh => "posix_sh",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShellState {
     pub shell: ShellKind,
