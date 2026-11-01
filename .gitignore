@@ -9,3 +9,14 @@ dist/
 .vscode/
 .idea/
 .worktrees/
+
+# Local agent / tool caches
+.claude/
+.codegraph/
+.superpowers/
+
+# Verification artifacts (source of truth is scripts/)
+test/aliasmgr-linux-*
+test/aliasmgr-windows-*
+test/verify-*.sh
+test/verify-*.ps1
