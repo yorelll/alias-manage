@@ -86,6 +86,10 @@ pub struct AliasDto {
     pub enabled: bool,
     pub tags: Vec<String>,
     pub revision: i64,
+    #[serde(default)]
+    pub path_mode: Option<String>,
+    #[serde(default)]
+    pub path_origin: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +141,38 @@ fn shell_from_str(value: &str) -> Result<ShellKind, String> {
     }
 }
 
+fn path_mode_to_str(mode: &PathMode) -> &'static str {
+    match mode {
+        PathMode::Absolute => "absolute",
+        PathMode::RelativeToWorkingDirectory => "relative_to_working_directory",
+    }
+}
+
+fn path_mode_from_str(value: &str) -> Result<PathMode, String> {
+    match value {
+        "absolute" => Ok(PathMode::Absolute),
+        "relative_to_working_directory" => Ok(PathMode::RelativeToWorkingDirectory),
+        other => Err(format!("unknown path mode: {other}")),
+    }
+}
+
+fn path_origin_to_str(origin: &PathOrigin) -> &'static str {
+    match origin {
+        PathOrigin::GuiFilePicker => "gui_file_picker",
+        PathOrigin::CliArgument => "cli_argument",
+        PathOrigin::Import => "import",
+    }
+}
+
+fn path_origin_from_str(value: &str) -> Result<PathOrigin, String> {
+    match value {
+        "gui_file_picker" => Ok(PathOrigin::GuiFilePicker),
+        "cli_argument" => Ok(PathOrigin::CliArgument),
+        "import" => Ok(PathOrigin::Import),
+        other => Err(format!("unknown path origin: {other}")),
+    }
+}
+
 fn alias_to_dto(alias: &AliasRecord) -> AliasDto {
     AliasDto {
         id: alias.id.to_string(), name: alias.name.clone(), description: alias.description.clone(),
@@ -144,6 +180,8 @@ fn alias_to_dto(alias: &AliasRecord) -> AliasDto {
         fixed_args: alias.fixed_args.clone(), pass_args: alias.pass_args, working_directory: alias.working_directory.clone(),
         environment: alias.environment.clone(), shells: alias.shells.iter().map(shell_kind_to_str).map(str::to_owned).collect(),
         enabled: alias.enabled, tags: alias.tags.clone(), revision: alias.revision,
+        path_mode: Some(path_mode_to_str(&alias.path_mode).to_owned()),
+        path_origin: Some(path_origin_to_str(&alias.path_origin).to_owned()),
     }
 }
 
@@ -186,8 +224,14 @@ fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
     alias.revision = dto.revision;
     alias.target_type = target_type_from_str(&dto.target_type)?;
     alias.shells = dto.shells.iter().map(|shell| shell_from_str(shell)).collect::<Result<_, _>>()?;
-    alias.path_mode = PathMode::Absolute;
-    alias.path_origin = PathOrigin::GuiFilePicker;
+    alias.path_mode = match dto.path_mode.as_deref() {
+        Some(value) => path_mode_from_str(value)?,
+        None => PathMode::Absolute,
+    };
+    alias.path_origin = match dto.path_origin.as_deref() {
+        Some(value) => path_origin_from_str(value)?,
+        None => PathOrigin::GuiFilePicker,
+    };
     validate_alias(&alias).map_err(|error| error.to_string())?;
     Ok(alias)
 }
@@ -203,6 +247,17 @@ pub fn create_alias(mut alias: AliasDto) -> Result<AliasDto, String> {
 pub fn update_alias(alias: AliasDto) -> Result<AliasDto, String> {
     let database = database()?;
     AliasService::new(&database).update(dto_to_alias(alias)?).map(|saved| alias_to_dto(&saved)).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn delete_alias(id: String) -> Result<bool, String> {
+    let parsed = uuid::Uuid::parse_str(&id).map_err(|error| error.to_string())?;
+    let database = database()?;
+    let Some(alias) = database.get_alias(parsed).map_err(|error| error.to_string())? else { return Ok(false) };
+    for shell in &alias.shells {
+        database.retire_name(&alias.name, shell, alias.revision).map_err(|error| error.to_string())?;
+    }
+    database.delete_alias(parsed).map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -255,9 +310,9 @@ pub fn import_preview(file: String) -> Result<ImportPreviewDto, String> { import
 
 #[tauri::command]
 pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
-    let mut report = import_path(std::path::Path::new(&file))?;
+    let report = import_path(std::path::Path::new(&file))?;
     let database = database()?;
-    for alias in report.accepted_records.drain(..) { database.insert_alias(&alias).map_err(|error| error.to_string())?; }
+    database.insert_aliases_atomic(&report.accepted_records).map_err(|error| error.to_string())?;
     Ok(import_dto(report.into_public()))
 }
 
@@ -285,8 +340,29 @@ pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> { Ok(if pur
 
 #[tauri::command]
 pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
+    use aliasmgr_core::uninstall::{uninstall, UninstallMode};
+
     let paths = AppPaths::discover(None);
-    aliasmgr_core::uninstall::uninstall(&paths.root, if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases }, None).map_err(|error| error.to_string())?;
+    let config = paths.load_config().map_err(|error| error.to_string())?;
+    let mut loaders: Vec<std::path::PathBuf> = [
+        config.shells.bash_rc_path,
+        config.shells.zsh_rc_path,
+        config.shells.powershell5_profile_path,
+        config.shells.powershell7_profile_path,
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    loaders.push(paths.root.join(".bashrc"));
+    loaders.push(paths.root.join(".zshrc"));
+    loaders.sort();
+    loaders.dedup();
+
+    let mode = if purge { UninstallMode::PurgeAliases } else { UninstallMode::RetainAliases };
+    uninstall(&paths.root, mode, None).map_err(|error| error.to_string())?;
+    for loader in loaders.iter().filter(|path| path.exists()) {
+        uninstall(&paths.root, UninstallMode::RetainAliases, Some(loader)).map_err(|error| error.to_string())?;
+    }
     Ok(vec!["卸载清理已完成；引用目标文件未处理".into()])
 }
 
@@ -387,6 +463,45 @@ mod tests {
     fn unknown_enum_names_are_rejected() {
         assert!(target_type_from_str("nope").is_err());
         assert!(shell_from_str("nope").is_err());
+    }
+
+    #[test]
+    fn alias_dto_round_trip_preserves_path_mode_and_origin() {
+        let alias = AliasRecord {
+            name: "rel".into(),
+            executable: "./tool".into(),
+            path_mode: PathMode::RelativeToWorkingDirectory,
+            path_origin: PathOrigin::Import,
+            ..Default::default()
+        };
+        let dto = alias_to_dto(&alias);
+        assert_eq!(dto.path_mode.as_deref(), Some("relative_to_working_directory"));
+        assert_eq!(dto.path_origin.as_deref(), Some("import"));
+        let restored = dto_to_alias(dto).unwrap();
+        assert_eq!(restored.path_mode, PathMode::RelativeToWorkingDirectory);
+        assert_eq!(restored.path_origin, PathOrigin::Import);
+    }
+
+    #[test]
+    fn missing_path_fields_default_to_absolute_gui_picker() {
+        let mut dto = alias_to_dto(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() });
+        dto.path_mode = None;
+        dto.path_origin = None;
+        let restored = dto_to_alias(dto).unwrap();
+        assert_eq!(restored.path_mode, PathMode::Absolute);
+        assert_eq!(restored.path_origin, PathOrigin::GuiFilePicker);
+    }
+
+    #[test]
+    fn unknown_path_values_are_rejected() {
+        let mut dto = alias_to_dto(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() });
+        dto.path_mode = Some("sideways".into());
+        assert!(dto_to_alias(dto.clone()).is_err());
+        dto.path_mode = Some("absolute".into());
+        dto.path_origin = Some("magic".into());
+        assert!(dto_to_alias(dto).is_err());
+        assert!(path_mode_from_str("nope").is_err());
+        assert!(path_origin_from_str("nope").is_err());
     }
 
     #[test]

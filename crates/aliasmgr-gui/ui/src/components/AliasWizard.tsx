@@ -1,11 +1,11 @@
 import { useState } from "react";
 import type { AliasDto } from "../lib";
-import { normalizeTags } from "../lib";
+import { emptyAliasDraft, normalizeTags } from "../lib";
 import { TagInput } from "./TagInput";
 
 export function AliasWizard({ initial, tags, onCancel, onSave }: { initial?: AliasDto; tags: string[]; onCancel: () => void; onSave: (alias: AliasDto) => Promise<string | null> }) {
   const [advanced, setAdvanced] = useState(false);
-  const [draft, setDraft] = useState<AliasDto>(initial ?? { id: "00000000-0000-0000-0000-000000000000", name: "", description: "", executable: "", target_type: "native_executable", fixed_args: [], pass_args: true, working_directory: null, environment: {}, shells: ["bash"], enabled: true, tags: [], revision: 1 });
+  const [draft, setDraft] = useState<AliasDto>(initial ?? emptyAliasDraft());
   const [error, setError] = useState<string | null>(null);
   const update = (patch: Partial<AliasDto>) => setDraft((value) => ({ ...value, ...patch }));
   const save = async () => { if (!/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(draft.name)) { setError("invalid alias name"); return; } const result = await onSave({ ...draft, tags: normalizeTags(draft.tags) }); if (result) setError(result); };
