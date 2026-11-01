@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { tauriInvoke } from "../lib";
 
 const SHELLS = ["bash", "zsh", "powershell5", "powershell7"] as const;
@@ -7,20 +7,24 @@ export function GeneratedFilePanel() {
   const [shell, setShell] = useState<string>("bash");
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const requestToken = useRef(0);
 
   const changeShell = (value: string) => {
+    requestToken.current += 1;
     setShell(value);
     setOutput("");
     setError(null);
   };
 
   const run = async (command: "generated_preview" | "reload_command") => {
+    const token = ++requestToken.current;
     setOutput("");
     setError(null);
     try {
-      setOutput(String(await tauriInvoke(command, { shell })));
+      const result = String(await tauriInvoke(command, { shell }));
+      if (requestToken.current === token) setOutput(result);
     } catch (reason) {
-      setError(String(reason));
+      if (requestToken.current === token) setError(String(reason));
     }
   };
 

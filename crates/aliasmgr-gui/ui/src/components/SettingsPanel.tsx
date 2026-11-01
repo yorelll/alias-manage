@@ -11,15 +11,16 @@ export function SettingsPanel() {
   const edit = (patch: Partial<Settings>) => {
     setDraft((value) => (value ? { ...value, ...patch } : value));
     setSaved(null);
+    setError(null);
   };
   const save = async () => {
     if (!draft) return;
     setSaved(null);
+    setError(null);
     try {
       const stored = await tauriInvoke("config_save", { settings: draft }) as Settings;
       setDraft(stored);
       setSaved(`Settings saved for ${stored.config_directory}.`);
-      setError(null);
     } catch (reason) {
       setSaved(null);
       setError(String(reason));

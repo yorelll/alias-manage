@@ -95,6 +95,7 @@ export function AliasesPage() {
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hasLoaded = useRef(false);
 
   useEffect(() => () => {
     if (deleteTimer.current) clearTimeout(deleteTimer.current);
@@ -102,7 +103,7 @@ export function AliasesPage() {
 
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
+    if (!hasLoaded.current) setLoading(true);
     const load = async () => {
       try {
         const result = usesFilteredSearch(query, selectedTags)
@@ -115,7 +116,10 @@ export function AliasesPage() {
       } catch (reason) {
         if (!cancelled) setError(String(reason));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          hasLoaded.current = true;
+          setLoading(false);
+        }
       }
     };
     void load();
@@ -227,7 +231,7 @@ export function AliasesPage() {
       {loading ? (
         <p className="alias-loading" role="status">Loading aliases…</p>
       ) : aliases.length === 0 ? (
-        filtered ? (
+        error ? null : filtered ? (
           <ul className="alias-list"><li className="alias-list-empty"><span>No matches for current filters.</span></li></ul>
         ) : (
           <ul className="alias-list"><li className="alias-list-empty"><span aria-hidden="true">☰</span><span>No aliases yet. Create your first alias to get started.</span></li></ul>
@@ -243,7 +247,7 @@ export function AliasesPage() {
             pendingDeleteId={pendingDeleteId}
             confirmDeleteDisabled={!deleteArmed}
           />
-          {aliases.length === SEARCH_LIMIT && (
+          {filtered && aliases.length === SEARCH_LIMIT && (
             <p className="result-limit-notice" role="status">Showing first {SEARCH_LIMIT} results. Refine your search to see more.</p>
           )}
         </>

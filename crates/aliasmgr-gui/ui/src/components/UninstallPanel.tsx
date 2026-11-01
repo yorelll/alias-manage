@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { tauriInvoke } from "../lib";
 
 export function UninstallPanel() {
@@ -6,8 +6,10 @@ export function UninstallPanel() {
   const [preview, setPreview] = useState<string[]>([]);
   const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const previewToken = useRef(0);
 
   const selectMode = (value: boolean) => {
+    previewToken.current += 1;
     setPurge(value);
     setArmed(false);
     setPreview([]);
@@ -16,12 +18,15 @@ export function UninstallPanel() {
 
   const execute = async () => {
     if (!armed) {
+      const token = ++previewToken.current;
       try {
-        setPreview(await tauriInvoke("uninstall_preview", { purge }) as string[]);
+        const items = await tauriInvoke("uninstall_preview", { purge }) as string[];
+        if (previewToken.current !== token) return;
+        setPreview(items);
         setArmed(true);
         setError(null);
       } catch (reason) {
-        setError(String(reason));
+        if (previewToken.current === token) setError(String(reason));
       }
       return;
     }
