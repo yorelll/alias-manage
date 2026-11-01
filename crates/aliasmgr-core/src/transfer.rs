@@ -62,6 +62,26 @@ fn is_sensitive_environment_key(key: &str) -> bool {
         .any(|part| upper.contains(part))
 }
 
+/// Warnings echo names and environment keys into terminals and logs. Control
+/// characters (ANSI escapes, newlines) are stripped and the display is capped,
+/// so a crafted import file cannot inject terminal sequences or split lines.
+const MAX_WARNING_NAME_CHARS: usize = 128;
+
+fn sanitized_name(name: &str) -> String {
+    let filtered: Vec<char> = name
+        .chars()
+        .filter(|character| !character.is_control())
+        .collect();
+    let mut cleaned: String = filtered.iter().take(MAX_WARNING_NAME_CHARS).collect();
+    if cleaned.is_empty() {
+        cleaned.push_str("<unnamed>");
+    }
+    if filtered.len() > MAX_WARNING_NAME_CHARS {
+        cleaned.push('…');
+    }
+    cleaned
+}
+
 fn filter_sensitive_environment(
     environment: &mut BTreeMap<String, String>,
     warnings: &mut Vec<String>,
@@ -73,7 +93,10 @@ fn filter_sensitive_environment(
         .collect();
     for key in keys {
         environment.remove(&key);
-        warnings.push(format!("sensitive environment variable omitted: {key}"));
+        warnings.push(format!(
+            "sensitive environment variable omitted: {}",
+            sanitized_name(&key)
+        ));
     }
 }
 
@@ -211,7 +234,7 @@ pub fn import_records(
         if alias.path_mode == PathMode::RelativeToWorkingDirectory {
             report.warnings.push(format!(
                 "relative path requires a selected base directory: {}",
-                alias.name
+                sanitized_name(&alias.name)
             ));
             report.skipped.push(alias.name);
             continue;
@@ -233,8 +256,9 @@ pub fn import_records(
                     }
                     alias.name = candidate;
                     report.warnings.push(format!(
-                        "renamed due to name conflict: {original} -> {}",
-                        alias.name
+                        "renamed due to name conflict: {} -> {}",
+                        sanitized_name(&original),
+                        sanitized_name(&alias.name)
                     ));
                 }
                 ConflictStrategy::Overwrite => {}
@@ -249,9 +273,10 @@ pub fn import_records(
         // or PowerShell-reserved names). The warning carries only the error
         // text, never environment values.
         if let Err(error) = validate_alias(&alias) {
-            report
-                .warnings
-                .push(format!("invalid alias rejected: {} ({error})", alias.name));
+            report.warnings.push(format!(
+                "invalid alias rejected: {} ({error})",
+                sanitized_name(&alias.name)
+            ));
             report.skipped.push(alias.name);
             continue;
         }
@@ -573,5 +598,80 @@ mod tests {
             import_records(vec![reserved], &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
         assert_eq!(confirmed.skipped, vec!["ls"]);
         assert!(confirmed.accepted_records.is_empty());
+    }
+
+    #[test]
+    fn import_warnings_strip_control_characters_and_cap_displayed_names() {
+        let control = AliasRecord {
+            name: "bad\u{1b}[31mname".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        let long_name = "a".repeat(200);
+        let long = AliasRecord {
+            name: long_name.clone(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        let relative = AliasRecord {
+            name: "re\u{1b}l".into(),
+            executable: "git".into(),
+            path_mode: PathMode::RelativeToWorkingDirectory,
+            ..Default::default()
+        };
+        let report = import_records(
+            vec![control, long, relative],
+            &BTreeMap::new(),
+            ConflictStrategy::Ask,
+        )
+        .unwrap();
+        assert_eq!(report.skipped.len(), 3);
+        for warning in &report.warnings {
+            assert!(
+                !warning.chars().any(char::is_control),
+                "warning contains control characters: {warning:?}"
+            );
+        }
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("bad[31mname")));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("relative path") && warning.contains("rel")));
+        assert!(report
+            .warnings
+            .iter()
+            .all(|warning| !warning.contains(&long_name)));
+    }
+
+    #[test]
+    fn rename_warnings_strip_control_characters() {
+        let name = "evil\u{1b}name".to_string();
+        let existing = BTreeMap::from([(
+            name.clone(),
+            AliasRecord {
+                name: name.clone(),
+                executable: "tool".into(),
+                ..Default::default()
+            },
+        )]);
+        let incoming = AliasRecord {
+            name,
+            executable: "tool".into(),
+            ..Default::default()
+        };
+        let report = import_records(vec![incoming], &existing, ConflictStrategy::Rename).unwrap();
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.contains("renamed"))
+            .expect("rename must emit a warning");
+        assert!(
+            !warning.chars().any(char::is_control),
+            "rename warning contains control characters: {warning:?}"
+        );
+        assert!(warning.contains("evilname"));
     }
 }

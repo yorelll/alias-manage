@@ -4,6 +4,8 @@ use thiserror::Error;
 pub enum AliasError {
     #[error("invalid alias name")]
     InvalidAliasName,
+    #[error("invalid alias record: {0}")]
+    InvalidAliasRecord(String),
     #[error("invalid argument template")]
     InvalidArgTemplate,
     #[error("advanced shell mode is unsupported")]

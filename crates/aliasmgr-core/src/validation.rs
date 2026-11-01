@@ -45,8 +45,15 @@ pub fn validate_powershell_name(name: &str) -> Result<(), AliasError> {
 
 pub fn validate_alias(alias: &AliasRecord) -> Result<(), AliasError> {
     validate_alias_name(&alias.name)?;
-    if alias.executable.trim().is_empty() || alias.shells.is_empty() {
-        return Err(AliasError::InvalidAliasName);
+    if alias.executable.trim().is_empty() {
+        return Err(AliasError::InvalidAliasRecord(
+            "executable must not be empty".into(),
+        ));
+    }
+    if alias.shells.is_empty() {
+        return Err(AliasError::InvalidAliasRecord(
+            "at least one shell is required".into(),
+        ));
     }
     if alias.advanced_shell_mode || alias.target_type == TargetType::RawShellCommand {
         return Err(AliasError::AdvancedModeUnsupported);
@@ -119,6 +126,22 @@ mod tests {
         assert!(matches!(
             validate_alias(&value),
             Err(AliasError::NameReserved)
+        ));
+    }
+
+    #[test]
+    fn reports_empty_executable_and_shells_distinctly() {
+        let mut value = alias("cm");
+        value.executable = "   ".into();
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("executable")
+        ));
+        let mut value = alias("cm");
+        value.shells.clear();
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("shell")
         ));
     }
 }

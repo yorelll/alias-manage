@@ -232,3 +232,59 @@ fn cli_import_rejects_invalid_records_and_summary_counts_warnings() {
         .is_empty());
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn cli_binary_reports_import_warnings_and_never_echoes_values() {
+    let root = std::env::temp_dir().join(format!(
+        "aliasmgr-cli-import-binary-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default()
+    ));
+    let config = root.join("config");
+    let file = root.join("aliases.json");
+    let mut alias = AliasRecord {
+        name: "1badname".into(),
+        executable: "git".into(),
+        ..Default::default()
+    };
+    alias
+        .environment
+        .insert("MODE".into(), "super-secret-value".into());
+    std::fs::create_dir_all(&root).unwrap();
+    let contents = serde_json::to_string(&aliasmgr_core::transfer::ExportFile {
+        format_version: aliasmgr_core::transfer::FORMAT_VERSION,
+        exported_at: "2026-01-01T00:00:00+00:00".into(),
+        exported_by_version: "test".into(),
+        aliases: vec![alias],
+    })
+    .unwrap();
+    std::fs::write(&file, contents).unwrap();
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_aliasmgr"))
+        .args([
+            "--config-dir",
+            config.to_str().unwrap(),
+            "import",
+            file.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "import failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.contains("warnings=1"), "stdout: {stdout}");
+    assert!(
+        stderr.contains("warning: invalid alias rejected:"),
+        "stderr: {stderr}"
+    );
+    assert!(!stdout.contains("super-secret-value"), "stdout: {stdout}");
+    assert!(!stderr.contains("super-secret-value"), "stderr: {stderr}");
+    let _ = std::fs::remove_dir_all(root);
+}

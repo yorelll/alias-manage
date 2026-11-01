@@ -9,6 +9,7 @@ pub fn exit_code(error: &AliasError) -> i32 {
         AliasError::NotFound(_) => 4,
         AliasError::TargetMissing(_) | AliasError::UnsafePath => 6,
         AliasError::InvalidAliasName
+        | AliasError::InvalidAliasRecord(_)
         | AliasError::InvalidArgTemplate
         | AliasError::AdvancedModeUnsupported => 5,
         AliasError::PermissionDenied => 7,
@@ -36,6 +37,10 @@ mod tests {
         assert_eq!(exit_code(&AliasError::CaseFoldConflict("Build".into())), 3);
         assert_eq!(exit_code(&AliasError::NotFound("cm".into())), 4);
         assert_eq!(exit_code(&AliasError::TargetMissing("x".into())), 6);
+        assert_eq!(
+            exit_code(&AliasError::InvalidAliasRecord("empty".into())),
+            5
+        );
         assert_eq!(exit_code(&AliasError::InvalidArgTemplate), 5);
         assert_eq!(exit_code(&AliasError::ChecksumMismatch), 13);
         assert_eq!(exit_code(&AliasError::UnreliableFilesystem), 13);
