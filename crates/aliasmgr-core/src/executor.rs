@@ -21,7 +21,7 @@ impl Executor for StructuredExecutor {
     fn target_type(&self) -> TargetType { TargetType::NativeExecutable }
     fn validate(&self, alias: &AliasRecord) -> Result<(), AliasError> {
         if alias.executable.trim().is_empty() { return Err(AliasError::TargetMissing(alias.executable.clone())); }
-        if !Path::new(&alias.executable).exists() && alias.executable.contains('/') || alias.executable.contains('\\') { return Err(AliasError::TargetMissing(alias.executable.clone())); }
+        if !Path::new(&alias.executable).exists() && (alias.executable.contains('/') || alias.executable.contains('\\')) { return Err(AliasError::TargetMissing(alias.executable.clone())); }
         Ok(())
     }
     fn render_argv(&self, alias: &AliasRecord, args: &[String]) -> Result<CommandSpec, AliasError> {
@@ -156,6 +156,18 @@ mod tests {
             assert_eq!(spec.argv[0], "tool");
             assert_eq!(spec.argv[1], "script path.py");
         }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn existing_windows_path_targets_are_accepted() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-executor-path-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let script = root.join("script.py");
+        std::fs::write(&script, "print(1)").unwrap();
+        let value = AliasRecord { executable: script.to_string_lossy().into_owned(), ..Default::default() };
+        assert!(executor_for(&value).unwrap().render_argv(&value, &[]).is_ok());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

@@ -287,6 +287,14 @@ impl Database {
         Ok(crate::model::ManagedNameSet { current, retired })
     }
 
+    pub fn max_retired_revision(&self) -> Result<i64, AliasError> {
+        Ok(self.conn.query_row(
+            "SELECT COALESCE(MAX(retired_at_revision), 0) FROM retired_names",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?)
+    }
+
     pub fn prune_retired_names(&self, minimum_revision: i64) -> Result<usize, AliasError> {
         Ok(self.conn.execute(
             "DELETE FROM retired_names WHERE retired_at_revision < ?1",
@@ -342,15 +350,15 @@ impl Database {
     }
 
     pub fn update_alias(&self, alias: &AliasRecord) -> Result<bool, AliasError> {
-        let stored_created_at = self
+        let stored = self
             .conn
             .query_row(
-                "SELECT created_at FROM aliases WHERE id = ?1",
+                "SELECT created_at, revision FROM aliases WHERE id = ?1",
                 params![alias.id.to_string()],
-                |row| row.get::<_, String>(0),
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)),
             )
             .optional()?;
-        let Some(stored_created_at) = stored_created_at else {
+        let Some((stored_created_at, stored_revision)) = stored else {
             return Ok(false);
         };
         if self
@@ -373,10 +381,13 @@ impl Database {
         checked_checksum(alias)?;
         // created_at is DB-owned and immutable: callers only supply a checksum over the
         // record they built, so restore the stored timestamp before recomputing it.
+        // The revision is likewise DB-owned and advances on every successful write.
         let mut record = alias.clone();
         record.created_at = DateTime::parse_from_rfc3339(&stored_created_at)
             .map(|value| value.with_timezone(&Utc))
             .map_err(|error| AliasError::Config(error.to_string()))?;
+        record.revision = stored_revision.saturating_add(1);
+        record.updated_at = Utc::now();
         let checksum = record_checksum(&record)?;
         let changed = self.conn.execute(
             "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19 WHERE id=?1",

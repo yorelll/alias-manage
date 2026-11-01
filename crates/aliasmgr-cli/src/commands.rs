@@ -1,7 +1,7 @@
 use crate::cli::{AddArgs, Command, UpdateArgs};
 use crate::messages::NON_INTERACTIVE;
 use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
-use aliasmgr_core::{error::AliasError, model::{record_checksum, AliasRecord, ShellKind}, storage::Database, validation::validate_alias};
+use aliasmgr_core::{config::AppPaths, error::AliasError, model::{record_checksum, AliasRecord, ShellKind}, storage::Database, validation::validate_alias};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -11,12 +11,8 @@ pub fn ensure_interactive(command: &Command, is_tty: bool) -> Result<(), AliasEr
     Ok(())
 }
 
-fn config_root(config_dir: Option<&str>) -> PathBuf {
-    config_dir.map(Path::new).map(|path| path.to_path_buf()).or_else(|| std::env::var_os("ALIASMGR_CONFIG_DIR").map(Into::into)).unwrap_or_else(|| Path::new(".").join(".alias-manager").to_path_buf())
-}
-
 fn database(config_dir: Option<&str>) -> Result<Database, AliasError> {
-    let root = config_root(config_dir);
+    let root = AppPaths::discover(config_dir.map(Path::new)).root;
     std::fs::create_dir_all(&root)?;
     Database::open(root.join("aliases.db"))
 }
@@ -59,7 +55,7 @@ pub fn find_query(config_dir: Option<&str>, query: &str, fuzzy: bool, field: Opt
 pub fn remove(config_dir: Option<&str>, name: &str) -> Result<bool, AliasError> {
     let database = database(config_dir)?;
     let alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::NotFound(name.into()))?;
-    for shell in &alias.shells { database.retire_name(name, shell, alias.revision)?; }
+    for shell in &alias.shells { database.retire_name(name, shell, alias.revision.saturating_add(1))?; }
     database.delete_alias(alias.id)
 }
 pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::NotFound(name.into()))?; alias.enabled = enabled; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
@@ -77,13 +73,13 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
     if args.pass_args { alias.pass_args = true; }
     validate_alias(&alias)?;
     for shell in previous_shells.iter().filter(|shell| !alias.shells.contains(shell)) {
-        database.retire_name(&alias.name, shell, alias.revision)?;
+        database.retire_name(&alias.name, shell, alias.revision.saturating_add(1))?;
     }
     alias.record_checksum = record_checksum(&alias)?;
     database.update_alias(&alias)?;
-    Ok(alias)
+    database.get_alias(alias.id)?.ok_or_else(|| AliasError::NotFound(args.name.clone()))
 }
-pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::NotFound(old.into()))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision)?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
+pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::NotFound(old.into()))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision.saturating_add(1))?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 #[allow(dead_code)] pub fn find(config_dir: Option<&str>, query: &str, fuzzy: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> { find_query(config_dir, query, fuzzy, None, limit, tags) }
 #[allow(dead_code)] pub fn retired_names(config_dir: Option<&str>, shell: &str) -> Result<Vec<String>, AliasError> { let kind = match shell { "zsh" => ShellKind::Zsh, "powershell5" => ShellKind::PowerShell5, "powershell7" => ShellKind::PowerShell7, _ => ShellKind::Bash }; Ok(database(config_dir)?.managed_name_set(&kind)?.retired) }
 pub fn shell_detect() -> aliasmgr_core::detection::DetectionResult { aliasmgr_core::detection::detect(&aliasmgr_core::detection::DetectionContext { explicit: None, parent_shell: None, shell_env: std::env::var("SHELL").ok(), login_shell: None }) }
@@ -95,8 +91,32 @@ pub fn reload_shell(explicit: Option<&str>) -> Result<String, AliasError> {
         None => Ok(detected_shell_name()),
     }
 }
-pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasError> { if dry_run { return Ok(String::new()); } let aliases = list(config_dir)?; let database = database(config_dir)?; let mut shells = aliases.iter().flat_map(|alias| alias.shells.clone()).collect::<Vec<_>>(); for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] { if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) { shells.push(shell); } } shells.sort(); shells.dedup(); let coordinator = aliasmgr_core::sync::SyncCoordinator::new(config_dir.unwrap_or(".alias-manager")); let mut results = Vec::new(); for shell in &shells { let names = database.managed_name_set(shell)?; let shell_aliases = aliases.iter().filter(|alias| alias.shells.contains(shell)).cloned().collect::<Vec<_>>(); results.extend(coordinator.apply_with_managed_names(&shell_aliases, std::slice::from_ref(shell), 1, &names)?.results); } Ok(format!("synced {} shell results", results.len())) }
-pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String { let root = config_dir.unwrap_or(".alias-manager"); match shell { "zsh" => format!("source '{root}/generated/zsh.sh'"), "powershell5" => format!(". '{root}/generated/powershell5.ps1'"), "powershell7" => format!(". '{root}/generated/powershell7.ps1'"), _ => format!(". '{root}/generated/bash.sh'"), } }
+pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasError> {
+    if dry_run { return Ok(String::new()); }
+    let aliases = list(config_dir)?;
+    let database = database(config_dir)?;
+    let mut shells = aliases.iter().flat_map(|alias| alias.shells.clone()).collect::<Vec<_>>();
+    for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] {
+        if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) { shells.push(shell); }
+    }
+    shells.sort();
+    shells.dedup();
+    // Revisions must stay monotonic across deletes: tombstones advanced the counter too.
+    let revision = aliases.iter().map(|alias| alias.revision).max().unwrap_or(1).max(database.max_retired_revision()?).max(1);
+    let coordinator = aliasmgr_core::sync::SyncCoordinator::new(AppPaths::discover(config_dir.map(Path::new)).root);
+    let mut results = Vec::new();
+    for shell in &shells {
+        let names = database.managed_name_set(shell)?;
+        let shell_aliases = aliases.iter().filter(|alias| alias.shells.contains(shell)).cloned().collect::<Vec<_>>();
+        results.extend(coordinator.apply_with_managed_names(&shell_aliases, std::slice::from_ref(shell), revision, &names)?.results);
+    }
+    Ok(format!("synced {} shell results", results.len()))
+}
+pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String {
+    let root = AppPaths::discover(config_dir.map(Path::new)).root;
+    let root = root.to_string_lossy();
+    match shell { "zsh" => format!("source '{root}/generated/zsh.sh'"), "powershell5" => format!(". '{root}/generated/powershell5.ps1'"), "powershell7" => format!(". '{root}/generated/powershell7.ps1'"), _ => format!(". '{root}/generated/bash.sh'"), }
+}
 
 pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
@@ -138,7 +158,7 @@ fn read_import_file(file: &str) -> Result<Vec<AliasRecord>, AliasError> {
 }
 
 fn existing_aliases(config_dir: Option<&str>) -> Result<BTreeMap<String, AliasRecord>, AliasError> {
-    let path = config_root(config_dir).join("aliases.db");
+    let path = AppPaths::discover(config_dir.map(Path::new)).root.join("aliases.db");
     if !path.exists() { return Ok(BTreeMap::new()); }
     Ok(Database::open_read_only(path)?.list_aliases()?.into_iter().map(|alias| (alias.name.clone(), alias)).collect())
 }
@@ -158,7 +178,36 @@ pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<ImportRepo
     database(config_dir)?.insert_aliases_atomic(&report.accepted_records)?;
     Ok(report.into_public())
 }
-pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> { let root = config_dir.map(Path::new).unwrap_or_else(|| Path::new(".alias-manager")); aliasmgr_core::uninstall::uninstall(root, if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases }, None).map(|_| ()) }
+pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> {
+    let paths = AppPaths::discover(config_dir.map(Path::new));
+    // A broken config must not prevent purge and loader cleanup.
+    let config = paths.load_config().unwrap_or_default();
+    let mut loaders = [
+        config.shells.bash_rc_path,
+        config.shells.zsh_rc_path,
+        config.shells.powershell5_profile_path,
+        config.shells.powershell7_profile_path,
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<PathBuf>>();
+    loaders.push(paths.root.join(".bashrc"));
+    loaders.push(paths.root.join(".zshrc"));
+    loaders.retain(|path| path.exists());
+    loaders.sort();
+    loaders.dedup();
+    let mode = if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases };
+    aliasmgr_core::uninstall::uninstall(&paths.root, mode, None)?;
+    // Loader blocks live in user profiles: only a changed profile is rewritten, with a backup.
+    for loader in &loaders {
+        let content = std::fs::read_to_string(loader)?;
+        let cleaned = aliasmgr_core::shells::common::remove_loader(&content)?;
+        if cleaned != content {
+            aliasmgr_core::shells::common::write_profile_content(loader, &cleaned)?;
+        }
+    }
+    Ok(())
+}
 pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
     let database_path_exists = paths.root.join("aliases.db").exists();
@@ -168,7 +217,7 @@ pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
     for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] {
         if !paths.generated_path(match shell { ShellKind::Bash => "bash", ShellKind::Zsh => "zsh", ShellKind::PowerShell5 => "powershell5", ShellKind::PowerShell7 => "powershell7", _ => "unsupported" }).exists() { findings.push(format!("生成文件缺失: {shell:?}")); }
     }
-    let revision = database.list_aliases()?.iter().map(|alias| alias.revision).max().unwrap_or(0);
+    let revision = database.list_aliases()?.iter().map(|alias| alias.revision).max().unwrap_or(0).max(database.max_retired_revision()?);
     for state in database.shell_states()? {
         if state.applied_revision < revision { findings.push(format!("Shell {:?} 生成文件过期", state.shell)); }
         if let Some(error) = state.last_error { findings.push(format!("Shell {:?} 同步失败: {error}", state.shell)); }
