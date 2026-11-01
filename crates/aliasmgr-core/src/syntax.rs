@@ -8,7 +8,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-const POWERSHELL_PARSE_PROBE: &str = "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){exit 1}";
+const POWERSHELL_PARSE_PROBE: &str = "$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){[Console]::Error.WriteLine($e[0].Message);exit 1}";
 
 /// Validates generated shell content before it replaces the live file.
 ///
@@ -26,6 +26,8 @@ pub fn check(shell: &ShellKind, content: &str) -> Result<(), AliasError> {
 }
 
 fn check_shell_script(program: &str, content: &str) -> Result<(), AliasError> {
+    // Interpreter discovery is a bare PATH lookup on purpose: when the shell is not
+    // on PATH this boundary is a documented best-effort no-op, not a failed check.
     let mut child = match Command::new(program)
         .arg("-n")
         .stdin(Stdio::piped())

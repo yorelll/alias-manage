@@ -27,7 +27,7 @@ impl SyncCoordinator {
         fs::create_dir_all(self.config_dir.join("generated"))?;
         fs::create_dir_all(self.config_dir.join("backups/generated"))?;
         let _lock = FileLock::acquire(self.config_dir.join("sync.lock"), Duration::from_secs(10))?;
-        let config = AppPaths { root: self.config_dir.clone() }.load_config().unwrap_or_default();
+        let config = AppPaths { root: self.config_dir.clone() }.load_config()?;
         let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
         let journal = self.config_dir.join("operation.journal");
         let revision_from = revision.saturating_sub(1);
@@ -45,10 +45,16 @@ impl SyncCoordinator {
         for shell in shells {
             let path = self.generated_path(shell);
             let temp = path.with_extension(format!("tmp.{}", std::process::id()));
-            match self.render_shell(aliases, shell, revision, names).and_then(|body| crate::syntax::check(shell, &body).map(|_| body)) {
-                Ok(body) => {
+            let rendered = self.render_shell(aliases, shell, revision, names)
+                .map(|body| {
                     let checksum = content_checksum(&body);
-                    fs::write(&temp, shell_file_content(shell, &body, &checksum, &config))?;
+                    let file_content = shell_file_content(shell, &body, &checksum, &config);
+                    (checksum, file_content)
+                })
+                .and_then(|(checksum, file_content)| crate::syntax::check(shell, &file_content).map(|_| (checksum, file_content)));
+            match rendered {
+                Ok((checksum, file_content)) => {
+                    fs::write(&temp, &file_content)?;
                     fs::rename(&temp, &path)?;
                     let state = crate::model::ShellState { shell: shell.clone(), applied_revision: revision, file_checksum: checksum.clone(), loader_installed: true, status: ShellStatus::Ok, last_error: None };
                     database.upsert_shell_state(&state)?;
@@ -69,7 +75,7 @@ impl SyncCoordinator {
     pub fn recover_pending_operations(&self) -> Result<(), AliasError> {
         let journal = self.config_dir.join("operation.journal"); if !journal.exists() { return Ok(()); }
         let content = fs::read_to_string(&journal)?;
-        let config = AppPaths { root: self.config_dir.clone() }.load_config().unwrap_or_default();
+        let config = AppPaths { root: self.config_dir.clone() }.load_config()?;
         if let Some(backups) = content.lines().find_map(|line| line.strip_prefix("backups_json=")) {
             for entry in serde_json::from_str::<Vec<serde_json::Value>>(backups)? {
                 let target = entry.get("target").and_then(serde_json::Value::as_str).ok_or_else(|| AliasError::Config("invalid journal target".into()))?;
@@ -82,6 +88,8 @@ impl SyncCoordinator {
                     let revision = content.lines().find_map(|line| line.strip_prefix("revision_to=")).and_then(|value| value.parse().ok()).unwrap_or(0);
                     let shell = match Path::new(target).file_name().and_then(|name| name.to_str()) { Some("bash.sh") => ShellKind::Bash, Some("zsh.sh") => ShellKind::Zsh, Some("powershell5.ps1") => ShellKind::PowerShell5, Some("powershell7.ps1") => ShellKind::PowerShell7, _ => continue };
                     let names = database.managed_name_set(&shell)?;
+                    // This re-render path intentionally skips syntax::check; it only serves a
+                    // committed journal entry and is currently unreachable from apply_internal.
                     let body = self.render_shell(&aliases, &shell, revision, &names)?;
                     let checksum = content_checksum(&body);
                     fs::write(target, shell_file_content(&shell, &body, &checksum, &config))?;
@@ -162,6 +170,44 @@ mod tests {
         coordinator.apply(&[alias], &[ShellKind::PowerShell7], 3).unwrap();
         let seven = fs::read(root.join("generated/powershell7.ps1")).unwrap();
         assert!(!seven.starts_with(&[0xEF, 0xBB, 0xBF]));
+        let _ = fs::remove_dir_all(root);
+    }
+    fn bash_available() -> bool { std::process::Command::new("bash").arg("--version").stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|status| status.success()).unwrap_or(false) }
+    #[test] fn cleanup_markers_match_the_number_of_managed_names() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-cleanup-two-{}", std::process::id()));
+        let aliases = vec![
+            AliasRecord { name: "one".into(), executable: "git".into(), ..Default::default() },
+            AliasRecord { name: "two".into(), executable: "git".into(), ..Default::default() },
+        ];
+        SyncCoordinator::new(&root).apply(&aliases, &[ShellKind::Bash], 2).unwrap();
+        let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
+        assert_eq!(content.matches("# aliasmgr cleanup:").count(), 2);
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test] fn syntax_failure_preserves_previous_generated_file_and_leaves_no_temp() {
+        if !bash_available() { return; }
+        let root = std::env::temp_dir().join(format!("aliasmgr-syntax-preserve-{}", std::process::id()));
+        let good = AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() };
+        SyncCoordinator::new(&root).apply(&[good], &[ShellKind::Bash], 1).unwrap();
+        let previous = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
+        let broken = AliasRecord { name: "bad(".into(), executable: "git".into(), ..Default::default() };
+        let receipt = SyncCoordinator::new(&root).apply(&[broken], &[ShellKind::Bash], 2).unwrap();
+        assert_eq!(receipt.results[0].status, ShellStatus::Failed);
+        assert!(receipt.results[0].error.as_deref().unwrap_or_default().contains("syntax check"));
+        assert_eq!(fs::read_to_string(root.join("generated/bash.sh")).unwrap(), previous);
+        let leftovers = fs::read_dir(root.join("generated")).unwrap().filter_map(Result::ok).filter(|entry| entry.file_name().to_string_lossy().contains(".tmp.")).count();
+        assert_eq!(leftovers, 0);
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test] fn powershell7_bom_can_be_enabled_through_config() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-bom7-on-{}", std::process::id()));
+        let mut config = AppConfig::default();
+        config.runtime.powershell7_bom = true;
+        config.save(&AppPaths { root: root.clone() }).unwrap();
+        let alias = AliasRecord { name: "gs".into(), executable: "git.exe".into(), ..Default::default() };
+        SyncCoordinator::new(&root).apply(&[alias], &[ShellKind::PowerShell7], 2).unwrap();
+        let bytes = fs::read(root.join("generated/powershell7.ps1")).unwrap();
+        assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
         let _ = fs::remove_dir_all(root);
     }
     #[test] fn powershell5_bom_can_be_disabled_through_config() {

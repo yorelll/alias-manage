@@ -40,6 +40,8 @@ pub enum AliasError {
     ShellNotInstalled,
     #[error("generated file failed syntax check: {0}")]
     SyntaxCheck(String),
+    #[error("sync failed for some shells: {0}")]
+    PartialSync(String),
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("serialization error: {0}")]

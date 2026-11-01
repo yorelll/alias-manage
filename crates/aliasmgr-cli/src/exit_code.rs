@@ -9,6 +9,7 @@ pub fn exit_code(error: &AliasError) -> i32 {
         AliasError::PermissionDenied => 7,
         AliasError::LockTimeout => 8,
         AliasError::SyntaxCheck(_) => 9,
+        AliasError::PartialSync(_) => 10,
         AliasError::SchemaTooNew | AliasError::ShellNotInstalled => 12,
         AliasError::ChecksumMismatch | AliasError::Database(_) | AliasError::Serialization(_) | AliasError::Io(_) | AliasError::UnreliableFilesystem => 13,
         AliasError::ConfirmationRequired => 14,
@@ -32,6 +33,7 @@ mod tests {
         assert_eq!(exit_code(&AliasError::PermissionDenied), 7);
         assert_eq!(exit_code(&AliasError::LockTimeout), 8);
         assert_eq!(exit_code(&AliasError::SyntaxCheck("bad".into())), 9);
+        assert_eq!(exit_code(&AliasError::PartialSync("bash: boom".into())), 10);
         assert_eq!(exit_code(&AliasError::SchemaTooNew), 12);
         assert_eq!(exit_code(&AliasError::ConfirmationRequired), 14);
     }

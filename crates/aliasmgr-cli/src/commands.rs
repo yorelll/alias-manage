@@ -1,7 +1,7 @@
 use crate::cli::{AddArgs, Command, UpdateArgs};
 use crate::messages::NON_INTERACTIVE;
 use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
-use aliasmgr_core::{error::AliasError, model::{record_checksum, AliasRecord, ShellKind}, storage::Database, validation::validate_alias};
+use aliasmgr_core::{error::AliasError, model::{record_checksum, AliasRecord, ShellKind, ShellStatus}, storage::Database, validation::validate_alias};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -95,7 +95,7 @@ pub fn reload_shell(explicit: Option<&str>) -> Result<String, AliasError> {
         None => Ok(detected_shell_name()),
     }
 }
-pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasError> { if dry_run { return Ok(String::new()); } let aliases = list(config_dir)?; let database = database(config_dir)?; let mut shells = aliases.iter().flat_map(|alias| alias.shells.clone()).collect::<Vec<_>>(); for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] { if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) { shells.push(shell); } } shells.sort(); shells.dedup(); let coordinator = aliasmgr_core::sync::SyncCoordinator::new(config_dir.unwrap_or(".alias-manager")); let mut results = Vec::new(); for shell in &shells { let names = database.managed_name_set(shell)?; let shell_aliases = aliases.iter().filter(|alias| alias.shells.contains(shell)).cloned().collect::<Vec<_>>(); results.extend(coordinator.apply_with_managed_names(&shell_aliases, std::slice::from_ref(shell), 1, &names)?.results); } Ok(format!("synced {} shell results", results.len())) }
+pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasError> { if dry_run { return Ok(String::new()); } let aliases = list(config_dir)?; let database = database(config_dir)?; let mut shells = aliases.iter().flat_map(|alias| alias.shells.clone()).collect::<Vec<_>>(); for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] { if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) { shells.push(shell); } } shells.sort(); shells.dedup(); let coordinator = aliasmgr_core::sync::SyncCoordinator::new(config_dir.unwrap_or(".alias-manager")); let mut results = Vec::new(); for shell in &shells { let names = database.managed_name_set(shell)?; let shell_aliases = aliases.iter().filter(|alias| alias.shells.contains(shell)).cloned().collect::<Vec<_>>(); results.extend(coordinator.apply_with_managed_names(&shell_aliases, std::slice::from_ref(shell), 1, &names)?.results); } let failures = results.iter().filter(|result| result.status == ShellStatus::Failed).map(|result| format!("{:?}: {}", result.shell, result.error.as_deref().unwrap_or("unknown error"))).collect::<Vec<_>>(); if !failures.is_empty() { return Err(AliasError::PartialSync(failures.join("; "))); } Ok(format!("synced {} shell results", results.len())) }
 pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String { let root = config_dir.unwrap_or(".alias-manager"); match shell { "zsh" => format!("source '{root}/generated/zsh.sh'"), "powershell5" => format!(". '{root}/generated/powershell5.ps1'"), "powershell7" => format!(". '{root}/generated/powershell7.ps1'"), _ => format!(". '{root}/generated/bash.sh'"), } }
 
 pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
@@ -105,7 +105,7 @@ pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, Alia
     let loader = aliasmgr_core::shells::common::render_loader(&generated);
     let before = std::fs::read_to_string(&rc_path).unwrap_or_default();
     if aliasmgr_core::shells::common::install_loader(&before, &loader)? == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &loader)?;
+    aliasmgr_core::shells::common::write_loader_file_with_keep(&rc_path, &before, &loader, config.backups.rc_keep)?;
     Ok(true)
 }
 
@@ -117,7 +117,7 @@ pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, Al
     let before = std::fs::read_to_string(&rc_path)?;
     let cleaned = aliasmgr_core::shells::common::remove_loader(&before)?;
     if cleaned == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_profile_content(&rc_path, &cleaned)?;
+    aliasmgr_core::shells::common::write_profile_content_with_keep(&rc_path, &cleaned, config.backups.rc_keep)?;
     Ok(true)
 }
 
