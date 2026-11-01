@@ -11,7 +11,10 @@ use std::{
 #[cfg(test)]
 pub(crate) static INTERPRETER_PATH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-const POWERSHELL_PARSE_PROBE: &str = "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8;$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){[Console]::Error.WriteLine($e[0].Message);exit 1}";
+/// Setting `[Console]::OutputEncoding` throws on PowerShell for Linux when the
+/// output is redirected, so only install the UTF-8 encoding on Windows; parser
+/// messages there would otherwise arrive in the console code page.
+const POWERSHELL_PARSE_PROBE: &str = "if ($env:OS -eq 'Windows_NT') { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 };$t=$null;$e=$null;[void][System.Management.Automation.Language.Parser]::ParseFile($env:ALIASMGR_SYNTAX_FILE,[ref]$t,[ref]$e);if($e.Count -gt 0){[Console]::Error.WriteLine($e[0].Message);exit 1}";
 
 /// Validates generated shell content before it replaces the live file.
 ///
@@ -177,6 +180,27 @@ mod tests {
             "powershell",
             &["-NoProfile", "-NonInteractive", "-Command", "exit 0"],
         )
+    }
+
+    #[test]
+    fn powershell_encoding_guard_is_windows_only() {
+        assert!(POWERSHELL_PARSE_PROBE.contains("if ($env:OS -eq 'Windows_NT')"));
+        assert!(POWERSHELL_PARSE_PROBE.contains("ParseFile"));
+    }
+
+    #[test]
+    fn powershell_encoding_guard_executes_when_powershell_is_available() {
+        if !powershell_available() {
+            return;
+        }
+        let guard = "if ($env:OS -eq 'Windows_NT') { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 }; exit 0";
+        let status = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", guard])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success());
     }
 
     #[test]
