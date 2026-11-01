@@ -11,11 +11,24 @@ fn preview_and_confirm_agree_when_only_the_environment_config_dir_is_set() {
     let previous = std::env::var_os("ALIASMGR_CONFIG_DIR");
     std::env::set_var("ALIASMGR_CONFIG_DIR", &root);
 
-    let add = AddArgs { name: "existing".into(), exec: "git".into(), args: vec![], shell: vec!["bash".into()], cwd: None, environment: vec![], tags: vec![], no_pass_args: false };
+    let add = AddArgs {
+        name: "existing".into(),
+        exec: "git".into(),
+        args: vec![],
+        shell: vec!["bash".into()],
+        cwd: None,
+        environment: vec![],
+        tags: vec![],
+        no_pass_args: false,
+    };
     commands::add(None, &add).unwrap();
 
     let file = root.join("incoming.json");
-    let incoming = AliasRecord { name: "existing".into(), executable: "git".into(), ..Default::default() };
+    let incoming = AliasRecord {
+        name: "existing".into(),
+        executable: "git".into(),
+        ..Default::default()
+    };
     export_json(&file, std::slice::from_ref(&incoming)).unwrap();
 
     let preview = commands::import_file(None, file.to_str().unwrap(), false).unwrap();

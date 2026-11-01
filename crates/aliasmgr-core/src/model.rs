@@ -30,11 +30,18 @@ pub enum ShellKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PathMode { Absolute, RelativeToWorkingDirectory }
+pub enum PathMode {
+    Absolute,
+    RelativeToWorkingDirectory,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum PathOrigin { GuiFilePicker, CliArgument, Import }
+pub enum PathOrigin {
+    GuiFilePicker,
+    CliArgument,
+    Import,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AliasRecord {
@@ -60,31 +67,58 @@ pub struct AliasRecord {
 }
 
 pub fn record_checksum(alias: &AliasRecord) -> Result<String, serde_json::Error> {
-    let mut value = alias.clone(); value.record_checksum.clear(); value.updated_at = value.created_at;
-    let json = serde_json::to_vec(&value)?; use sha2::{Digest, Sha256}; let mut digest = Sha256::new(); digest.update(json); Ok(format!("{:x}", digest.finalize()))
+    let mut value = alias.clone();
+    value.record_checksum.clear();
+    value.updated_at = value.created_at;
+    let json = serde_json::to_vec(&value)?;
+    use sha2::{Digest, Sha256};
+    let mut digest = Sha256::new();
+    digest.update(json);
+    Ok(format!("{:x}", digest.finalize()))
 }
 
 impl Default for AliasRecord {
     fn default() -> Self {
         let now = Utc::now();
         Self {
-            id: Uuid::new_v4(), name: String::new(), description: String::new(),
-            target_type: TargetType::NativeExecutable, executable: String::new(),
-            fixed_args: Vec::new(), pass_args: true, working_directory: None,
-            environment: BTreeMap::new(), shells: vec![ShellKind::Bash], enabled: true,
-            advanced_shell_mode: false, tags: Vec::new(), path_mode: PathMode::Absolute,
-            path_origin: PathOrigin::CliArgument, created_at: now, updated_at: now,
-            record_checksum: String::new(), revision: 1,
+            id: Uuid::new_v4(),
+            name: String::new(),
+            description: String::new(),
+            target_type: TargetType::NativeExecutable,
+            executable: String::new(),
+            fixed_args: Vec::new(),
+            pass_args: true,
+            working_directory: None,
+            environment: BTreeMap::new(),
+            shells: vec![ShellKind::Bash],
+            enabled: true,
+            advanced_shell_mode: false,
+            tags: Vec::new(),
+            path_mode: PathMode::Absolute,
+            path_origin: PathOrigin::CliArgument,
+            created_at: now,
+            updated_at: now,
+            record_checksum: String::new(),
+            revision: 1,
         }
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Conflict { pub name: String, pub reason: String }
+pub struct Conflict {
+    pub name: String,
+    pub reason: String,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
-pub enum ShellStatus { Ok, Stale, Failed, LoaderMissing, Unknown }
+pub enum ShellStatus {
+    Ok,
+    Stale,
+    Failed,
+    LoaderMissing,
+    Unknown,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShellState {
@@ -97,13 +131,23 @@ pub struct ShellState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ManagedNameSet { pub current: Vec<String>, pub retired: Vec<String> }
+pub struct ManagedNameSet {
+    pub current: Vec<String>,
+    pub retired: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct ShellSyncResult { pub shell: ShellKind, pub status: ShellStatus, pub error: Option<String> }
+pub struct ShellSyncResult {
+    pub shell: ShellKind,
+    pub status: ShellStatus,
+    pub error: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct SyncReceipt { pub revision: i64, pub results: Vec<ShellSyncResult> }
+pub struct SyncReceipt {
+    pub revision: i64,
+    pub results: Vec<ShellSyncResult>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -112,7 +156,10 @@ mod tests {
     #[test]
     fn checksum_is_stable_for_same_content() {
         let alias = AliasRecord::default();
-        assert_eq!(record_checksum(&alias).unwrap(), record_checksum(&alias).unwrap());
+        assert_eq!(
+            record_checksum(&alias).unwrap(),
+            record_checksum(&alias).unwrap()
+        );
     }
 
     #[test]

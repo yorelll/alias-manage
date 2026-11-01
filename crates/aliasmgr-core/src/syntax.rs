@@ -1,7 +1,6 @@
 use crate::{error::AliasError, model::ShellKind};
 use std::{
-    env,
-    fs,
+    env, fs,
     io::{ErrorKind, Write},
     path::PathBuf,
     process::{Command, Stdio},
@@ -55,7 +54,12 @@ fn check_powershell(program: &str, content: &str) -> Result<(), AliasError> {
     let path = syntax_temp_path();
     fs::write(&path, content)?;
     let result = Command::new(program)
-        .args(["-NoProfile", "-NonInteractive", "-Command", POWERSHELL_PARSE_PROBE])
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            POWERSHELL_PARSE_PROBE,
+        ])
         .env("ALIASMGR_SYNTAX_FILE", &path)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -72,10 +76,18 @@ fn check_powershell(program: &str, content: &str) -> Result<(), AliasError> {
 
 fn syntax_temp_path() -> PathBuf {
     static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-    let nanos = SystemTime::now().duration_since(UNIX_EPOCH).map(|duration| duration.as_nanos()).unwrap_or_default();
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
     // The sequence keeps concurrent checks in one process from sharing a temp path.
     let sequence = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    env::temp_dir().join(format!("aliasmgr-syntax-{}-{}-{}.ps1", std::process::id(), nanos, sequence))
+    env::temp_dir().join(format!(
+        "aliasmgr-syntax-{}-{}-{}.ps1",
+        std::process::id(),
+        nanos,
+        sequence
+    ))
 }
 
 fn syntax_error(stderr: &[u8]) -> AliasError {
@@ -107,7 +119,10 @@ mod tests {
             return;
         }
         let result = check(&ShellKind::Bash, "if then\n");
-        assert!(matches!(result, Err(AliasError::SyntaxCheck(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(AliasError::SyntaxCheck(_))),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -146,7 +161,10 @@ mod tests {
         }
         let error = check(&ShellKind::PowerShell5, "if (").unwrap_err();
         let message = error.to_string();
-        assert!(!message.contains(char::REPLACEMENT_CHARACTER), "mojibake: {message}");
+        assert!(
+            !message.contains(char::REPLACEMENT_CHARACTER),
+            "mojibake: {message}"
+        );
         assert!(message.contains("if"), "unexpected message: {message}");
     }
 

@@ -72,10 +72,8 @@ impl Database {
     /// changes or any other write. Only `busy_timeout` is configured. Used by
     /// read-only paths such as import preview so they cannot mutate storage.
     pub fn open_read_only(path: impl AsRef<Path>) -> Result<Self, AliasError> {
-        let conn = Connection::open_with_flags(
-            path.as_ref(),
-            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-        )?;
+        let conn =
+            Connection::open_with_flags(path.as_ref(), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         Ok(Self { conn, root: None })
     }
@@ -225,21 +223,31 @@ impl Database {
         let mut statement = self.conn.prepare("SELECT shell, applied_revision, file_checksum, loader_installed, status, last_error FROM shell_state ORDER BY shell")?;
         let rows = statement.query_map([], |row| {
             Ok(crate::model::ShellState {
-                shell: serde_json::from_str(&row.get::<_, String>(0)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(error)))?,
+                shell: serde_json::from_str(&row.get::<_, String>(0)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
                 applied_revision: row.get(1)?,
                 file_checksum: row.get(2)?,
                 loader_installed: row.get::<_, i64>(3)? != 0,
-                status: serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(error)))?,
+                status: serde_json::from_str(&row.get::<_, String>(4)?).map_err(|error| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(error),
+                    )
+                })?,
                 last_error: row.get(5)?,
             })
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(AliasError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(AliasError::from)
     }
 
-    pub fn upsert_shell_state(
-        &self,
-        state: &crate::model::ShellState,
-    ) -> Result<(), AliasError> {
+    pub fn upsert_shell_state(&self, state: &crate::model::ShellState) -> Result<(), AliasError> {
         self.conn.execute(
             "INSERT INTO shell_state(shell, applied_revision, file_checksum, loader_installed, status, last_error) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(shell) DO UPDATE SET applied_revision=excluded.applied_revision,file_checksum=excluded.file_checksum,loader_installed=excluded.loader_installed,status=excluded.status,last_error=excluded.last_error",
             params![
@@ -281,7 +289,9 @@ impl Database {
             .collect::<Result<Vec<String>, _>>()?;
         let retired = self
             .conn
-            .prepare("SELECT name FROM retired_names WHERE shell = ?1 ORDER BY retired_at_revision")?
+            .prepare(
+                "SELECT name FROM retired_names WHERE shell = ?1 ORDER BY retired_at_revision",
+            )?
             .query_map(params![shell_json], |row| row.get(0))?
             .collect::<Result<Vec<String>, _>>()?;
         Ok(crate::model::ManagedNameSet { current, retired })
@@ -315,7 +325,8 @@ impl Database {
                 "captured_at": row.get::<_, String>(5)?,
             }))
         })?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(AliasError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(AliasError::from)
     }
 
     pub fn record_override(
@@ -435,9 +446,7 @@ impl Database {
     }
 }
 
-fn reliability_error_for(
-    reliability: crate::config::FilesystemReliability,
-) -> Option<AliasError> {
+fn reliability_error_for(reliability: crate::config::FilesystemReliability) -> Option<AliasError> {
     match reliability {
         crate::config::FilesystemReliability::FallbackDelete => {
             Some(AliasError::UnreliableFilesystem)
@@ -451,7 +460,9 @@ fn reliability_error_for(
 /// counting the backup that was just written. Rotation is best-effort: a
 /// failure here must never stop the database from opening.
 fn rotate_database_backups(directory: &Path, newest: &Path, config_root: Option<&Path>) {
-    let Some(config_root) = config_root else { return };
+    let Some(config_root) = config_root else {
+        return;
+    };
     let config = crate::config::AppPaths {
         root: config_root.to_path_buf(),
     }
@@ -579,7 +590,10 @@ mod tests {
         database.insert_alias(&first).unwrap();
         database.insert_alias(&second).unwrap();
         assert_eq!(database.get_alias(first.id).unwrap().unwrap(), first);
-        assert_eq!(database.get_alias_by_name("alpha").unwrap().unwrap(), second);
+        assert_eq!(
+            database.get_alias_by_name("alpha").unwrap().unwrap(),
+            second
+        );
         assert_eq!(
             database
                 .list_aliases()
@@ -670,10 +684,8 @@ mod tests {
 
     #[test]
     fn checksum_is_stored_and_tampering_is_detected() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-checksum-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-checksum-{}", std::process::id()));
         let database = Database::open(root.join("aliases.db")).unwrap();
         let alias = database_alias("checked");
         database.insert_alias(&alias).unwrap();
@@ -767,7 +779,11 @@ mod tests {
     fn connection_pragmas_are_configured_for_durable_storage() {
         let database = Database::open_in_memory().unwrap();
         assert!(matches!(
-            database.journal_mode().unwrap().to_ascii_lowercase().as_str(),
+            database
+                .journal_mode()
+                .unwrap()
+                .to_ascii_lowercase()
+                .as_str(),
             "wal" | "memory" | "delete"
         ));
         assert_eq!(database.synchronous_mode().unwrap(), 2);
@@ -777,13 +793,15 @@ mod tests {
 
     #[test]
     fn file_database_uses_wal_when_supported() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-pragmas-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-pragmas-{}", std::process::id()));
         let database = Database::open(root.join("aliases.db")).unwrap();
         assert!(matches!(
-            database.journal_mode().unwrap().to_ascii_lowercase().as_str(),
+            database
+                .journal_mode()
+                .unwrap()
+                .to_ascii_lowercase()
+                .as_str(),
             "wal" | "delete"
         ));
         drop(database);
@@ -792,10 +810,8 @@ mod tests {
 
     #[test]
     fn migration_backup_is_created_before_reopening_existing_database() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-backup-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-backup-{}", std::process::id()));
         let path = root.join("aliases.db");
         drop(Database::open(&path).unwrap());
         drop(Database::open(&path).unwrap());
@@ -809,10 +825,8 @@ mod tests {
 
     #[test]
     fn failed_migration_restores_the_existing_database_file() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-restore-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-restore-{}", std::process::id()));
         let path = root.join("aliases.db");
         let database = Database::open(&path).unwrap();
         database
@@ -837,10 +851,8 @@ mod tests {
 
     #[test]
     fn open_creates_parent_directory_for_a_new_database() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-parent-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-parent-{}", std::process::id()));
         let path = root.join("nested").join("aliases.db");
         drop(Database::open(&path).unwrap());
         assert!(path.exists());
@@ -910,13 +922,30 @@ mod tests {
     fn insert_aliases_atomic_rolls_back_every_record_on_failure() {
         let database = Database::open_in_memory().unwrap();
         database
-            .insert_alias(&AliasRecord { name: "taken".into(), executable: "git".into(), ..Default::default() })
+            .insert_alias(&AliasRecord {
+                name: "taken".into(),
+                executable: "git".into(),
+                ..Default::default()
+            })
             .unwrap();
-        let first = AliasRecord { name: "first".into(), executable: "git".into(), ..Default::default() };
-        let duplicate = AliasRecord { name: "taken".into(), executable: "git".into(), ..Default::default() };
+        let first = AliasRecord {
+            name: "first".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        let duplicate = AliasRecord {
+            name: "taken".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
         assert!(database.insert_aliases_atomic(&[first, duplicate]).is_err());
         assert_eq!(
-            database.list_aliases().unwrap().iter().map(|alias| alias.name.as_str()).collect::<Vec<_>>(),
+            database
+                .list_aliases()
+                .unwrap()
+                .iter()
+                .map(|alias| alias.name.as_str())
+                .collect::<Vec<_>>(),
             vec!["taken"]
         );
     }
@@ -928,7 +957,11 @@ mod tests {
         {
             let database = Database::open(&path).unwrap();
             database
-                .insert_alias(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() })
+                .insert_alias(&AliasRecord {
+                    name: "gs".into(),
+                    executable: "git".into(),
+                    ..Default::default()
+                })
                 .unwrap();
         }
         let database = Database::open_read_only(&path).unwrap();
@@ -981,10 +1014,8 @@ mod tests {
 
     #[test]
     fn reopening_a_database_rotates_old_backups_to_the_configured_limit() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-rotate-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-rotate-{}", std::process::id()));
         let path = root.join("aliases.db");
         {
             let database = Database::open(&path).unwrap();
@@ -1020,7 +1051,10 @@ mod tests {
             .expect("the newly created backup must be retained");
         assert!(fresh.starts_with("aliases-") && fresh.ends_with(".db"));
         assert_eq!(
-            database.get_alias_by_name("kept").unwrap().map(|alias| alias.name),
+            database
+                .get_alias_by_name("kept")
+                .unwrap()
+                .map(|alias| alias.name),
             Some("kept".to_string())
         );
         drop(database);
@@ -1029,10 +1063,8 @@ mod tests {
 
     #[test]
     fn failed_migration_does_not_prune_existing_backups() {
-        let root = std::env::temp_dir().join(format!(
-            "aliasmgr-storage-corrupt-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-storage-corrupt-{}", std::process::id()));
         let path = root.join("aliases.db");
         let database = Database::open(&path).unwrap();
         database
