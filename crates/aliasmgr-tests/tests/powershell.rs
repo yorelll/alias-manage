@@ -1,20 +1,50 @@
 use aliasmgr_core::{model::{AliasRecord, ManagedNameSet, ShellKind}, shells::powershell};
 #[cfg(windows)]
 use aliasmgr_core::detection::installed_powershells;
-use std::{fs, process::Command};
+use std::{fs, path::PathBuf, process::Command};
 
 #[cfg(windows)]
 #[test]
 fn discovers_available_powershell_executables_and_versions() {
     let installations = installed_powershells();
     assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell5));
-    assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell7));
     assert!(installations.iter().all(|item| !item.executable.as_os_str().is_empty() && item.version.is_some()));
+    if pwsh_on_path() {
+        assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell7));
+    } else {
+        eprintln!("skipping PowerShell 7 discovery assertion: pwsh is not on PATH (Windows CI has both)");
+    }
 }
 
+/// Some developer machines only ship Windows PowerShell 5.1; the PowerShell 7
+/// assertion is therefore gated on `pwsh` actually being reachable.
+#[cfg(windows)]
+fn pwsh_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|directory| {
+            ["pwsh.exe", "pwsh"]
+                .iter()
+                .any(|name| directory.join(name).is_file())
+        })
+    })
+}
 
 fn powershell_command() -> Option<&'static str> {
     if cfg!(windows) { Some("powershell") } else { None }
+}
+
+/// Each test gets its own directory: these tests run in parallel in one process
+/// and previously shared `aliasmgr-ps-parser-{pid}`, so one test could delete
+/// the file another test was still parsing.
+fn unique_parser_root(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "aliasmgr-ps-parser-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default()
+    ))
 }
 
 #[test]
@@ -33,7 +63,7 @@ fn generated_powershell_script_passes_parser_in_windows_powershell_5_1() {
     let Some(command) = powershell_command() else { return; };
     let alias = AliasRecord { name: "gs".into(), executable: "git.exe".into(), fixed_args: vec!["status".into()], ..Default::default() };
     let script = powershell::render(&alias, ShellKind::PowerShell5, &ManagedNameSet { current: vec![], retired: vec![] }).unwrap();
-    let root = std::env::temp_dir().join(format!("aliasmgr-ps-parser-{}", std::process::id()));
+    let root = unique_parser_root("generated");
     fs::create_dir_all(&root).unwrap();
     let path = root.join("generated.ps1");
     fs::write(&path, script).unwrap();
@@ -66,7 +96,7 @@ fn powershell_preemption_removes_builtin_alias_before_function_definition() {
 fn powershell_5_1_parser_accepts_generated_file() {
     let alias = AliasRecord { name: "gs".into(), executable: "git.exe".into(), fixed_args: vec!["status".into()], ..Default::default() };
     let script = powershell::render(&alias, ShellKind::PowerShell5, &ManagedNameSet { current: vec![], retired: vec![] }).unwrap();
-    let root = std::env::temp_dir().join(format!("aliasmgr-ps-parser-{}", std::process::id()));
+    let root = unique_parser_root("accepts");
     std::fs::create_dir_all(&root).unwrap();
     let path = root.join("generated.ps1");
     std::fs::write(&path, script).unwrap();

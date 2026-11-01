@@ -89,24 +89,39 @@ pub fn filesystem_reliability(path: &Path) -> FilesystemReliability {
     if !path.exists() { return FilesystemReliability::Unknown; }
     #[cfg(unix)]
     {
-        let filesystem = std::fs::read_to_string("/proc/mounts").ok().and_then(|mounts| {
-            let candidate = path.canonicalize().ok()?;
-            mounts.lines().filter_map(|line| {
-                let mut fields = line.split_whitespace();
-                let _device = fields.next()?;
-                let mount = PathBuf::from(fields.next()?);
-                let kind = fields.next()?;
-                candidate.starts_with(&mount).then_some(kind.to_owned())
-            }).max_by_key(|mount| mount.len())
-        });
-        match filesystem.as_deref() {
-            Some("nfs") | Some("nfs4") | Some("cifs") | Some("smbfs") | Some("9p") | Some("fuse.sshfs") => FilesystemReliability::FallbackDelete,
-            Some("ext2") | Some("ext3") | Some("ext4") | Some("xfs") | Some("btrfs") | Some("tmpfs") | Some("overlay") => FilesystemReliability::Reliable,
-            Some(_) | None => FilesystemReliability::Unknown,
-        }
+        let (Ok(mounts), Ok(candidate)) =
+            (fs::read_to_string("/proc/mounts"), path.canonicalize())
+        else {
+            return FilesystemReliability::Unknown;
+        };
+        reliability_from_mounts(&mounts, &candidate)
     }
     #[cfg(windows)]
     { let _ = path; FilesystemReliability::Unknown }
+}
+
+/// Resolves the filesystem type backing `candidate` from `/proc/mounts` content.
+/// The longest matching mount path wins, so a local filesystem nested inside a
+/// network mount is classified by its own type instead of its ancestor's.
+#[cfg(any(unix, test))]
+fn reliability_from_mounts(mounts: &str, candidate: &Path) -> FilesystemReliability {
+    let filesystem = mounts
+        .lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            let _device = fields.next()?;
+            let mount = PathBuf::from(fields.next()?);
+            let kind = fields.next()?;
+            if !candidate.starts_with(&mount) { return None; }
+            Some((mount.as_os_str().len(), kind))
+        })
+        .max_by_key(|(length, _)| *length)
+        .map(|(_, kind)| kind.to_owned());
+    match filesystem.as_deref() {
+        Some("nfs") | Some("nfs4") | Some("cifs") | Some("smbfs") | Some("9p") | Some("fuse.sshfs") => FilesystemReliability::FallbackDelete,
+        Some("ext2") | Some("ext3") | Some("ext4") | Some("xfs") | Some("btrfs") | Some("tmpfs") | Some("overlay") => FilesystemReliability::Reliable,
+        Some(_) | None => FilesystemReliability::Unknown,
+    }
 }
 
 pub fn path_safety(path: &Path) -> PathSafety {
@@ -180,5 +195,37 @@ mod tests {
         assert_eq!(result, PathSafety::Unknown);
         #[cfg(not(windows))]
         assert!(matches!(result, PathSafety::Safe | PathSafety::OtherWritable | PathSafety::Unknown));
+    }
+
+    #[test]
+    fn nested_local_mount_inside_a_network_ancestor_is_reliable() {
+        let mounts = "\
+sshfs#host:/export /home/user/remote fuse.sshfs rw 0 0
+/dev/sda1 /home/user/remote/local ext4 rw 0 0
+";
+        assert_eq!(
+            reliability_from_mounts(mounts, Path::new("/home/user/remote/local/project")),
+            FilesystemReliability::Reliable
+        );
+        assert_eq!(
+            reliability_from_mounts(mounts, Path::new("/home/user/remote/project")),
+            FilesystemReliability::FallbackDelete
+        );
+    }
+
+    #[test]
+    fn nested_network_mount_under_overlay_root_falls_back() {
+        let mounts = "\
+overlay / overlay rw 0 0
+server:/data /data nfs4 rw 0 0
+";
+        assert_eq!(
+            reliability_from_mounts(mounts, Path::new("/data/projects")),
+            FilesystemReliability::FallbackDelete
+        );
+        assert_eq!(
+            reliability_from_mounts(mounts, Path::new("/srv/local")),
+            FilesystemReliability::Reliable
+        );
     }
 }

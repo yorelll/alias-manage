@@ -49,7 +49,16 @@ fn confirmed_import_recomputes_checksums_after_filtering_sensitive_environment()
     alias.environment.insert("PASSWORD".into(), "hunter2".into());
     alias.environment.insert("MODE".into(), "test".into());
     std::fs::create_dir_all(&root).unwrap();
-    export_json(&file, std::slice::from_ref(&alias)).unwrap();
+    // Hand-written imports may still arrive with secrets: `export_json` itself
+    // strips them, so build the fixture directly to exercise import filtering.
+    let file_contents = serde_json::to_string(&aliasmgr_core::transfer::ExportFile {
+        format_version: aliasmgr_core::transfer::FORMAT_VERSION,
+        exported_at: "2026-01-01T00:00:00+00:00".into(),
+        exported_by_version: "test".into(),
+        aliases: vec![alias],
+    })
+    .unwrap();
+    std::fs::write(&file, file_contents).unwrap();
 
     let report = commands::import_file(Some(config.to_str().unwrap()), file.to_str().unwrap(), true).unwrap();
     assert_eq!(report.imported, vec!["sensitive"]);
