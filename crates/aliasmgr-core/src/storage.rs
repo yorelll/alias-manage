@@ -39,7 +39,6 @@ impl Database {
                 chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
             ));
             std::fs::copy(path, &backup)?;
-            rotate_database_backups(&directory, &backup, root.as_deref());
             Some(backup)
         } else {
             None
@@ -53,6 +52,11 @@ impl Database {
                 std::fs::copy(backup, path)?;
             }
             return Err(error);
+        }
+        // Rotate only once the new connection has migrated successfully: a
+        // corrupt database must not prune the good history it fails to open.
+        if let (Some(backup), Some(parent)) = (backup.as_deref(), path.parent()) {
+            rotate_database_backups(&parent.join("backups/db"), backup, root.as_deref());
         }
         Ok(Self { conn, root })
     }
@@ -74,6 +78,13 @@ impl Database {
         )?;
         conn.execute_batch("PRAGMA busy_timeout = 5000;")?;
         Ok(Self { conn, root: None })
+    }
+
+    /// Filesystem root the database was opened from, if any. Exposed to tests
+    /// so the reliability wiring can be asserted against the same mapping.
+    #[cfg(test)]
+    fn root(&self) -> Option<&Path> {
+        self.root.as_deref()
     }
 
     fn configure(conn: &Connection) -> Result<(), AliasError> {
@@ -917,25 +928,26 @@ mod tests {
 
     #[test]
     fn in_memory_database_reports_no_reliability_error() {
-        assert!(Database::open_in_memory()
-            .unwrap()
-            .reliability_error()
-            .is_none());
+        let database = Database::open_in_memory().unwrap();
+        assert!(database.root().is_none());
+        assert!(database.reliability_error().is_none());
     }
 
     #[test]
-    fn file_database_on_local_temp_storage_reports_no_reliability_error() {
+    fn file_database_reliability_error_matches_the_filesystem_mapping() {
         let root = std::env::temp_dir().join(format!(
             "aliasmgr-storage-reliability-{}",
             std::process::id()
         ));
         let database = Database::open(root.join("aliases.db")).unwrap();
-        assert!(database.reliability_error().is_none());
+        let filesystem = database.root().expect("file databases know their root");
+        let expected =
+            reliability_error_for(crate::config::filesystem_reliability(filesystem)).is_some();
+        assert_eq!(database.reliability_error().is_some(), expected);
         drop(database);
         let _ = std::fs::remove_dir_all(root);
     }
 
-    #[cfg(unix)]
     #[test]
     fn fallback_delete_reliability_maps_to_unreliable_filesystem() {
         use crate::config::FilesystemReliability;
@@ -945,6 +957,15 @@ mod tests {
         ));
         assert!(reliability_error_for(FilesystemReliability::Reliable).is_none());
         assert!(reliability_error_for(FilesystemReliability::Unknown).is_none());
+    }
+
+    fn backup_names(directory: &Path) -> std::collections::BTreeSet<String> {
+        std::fs::read_dir(directory)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_file())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect()
     }
 
     #[test]
@@ -964,25 +985,67 @@ mod tests {
                 })
                 .unwrap();
         }
+        let mut config = crate::config::AppConfig::default();
+        config.backups.db_keep = 2;
+        config
+            .save(&crate::config::AppPaths { root: root.clone() })
+            .unwrap();
         let backups = root.join("backups/db");
         std::fs::create_dir_all(&backups).unwrap();
         for index in 0..10 {
             std::fs::write(backups.join(format!("aliases-fake-{index}.db")), "fake").unwrap();
         }
+        let before = backup_names(&backups);
         let database = Database::open(&path).unwrap();
-        let remaining = std::fs::read_dir(&backups)
-            .unwrap()
-            .filter_map(Result::ok)
-            .count();
-        assert!(
-            remaining <= 5,
-            "expected at most db_keep (5) backups, found {remaining}"
+        let after = backup_names(&backups);
+        assert_eq!(
+            after.len(),
+            2,
+            "expected exactly db_keep (2) backups, found {after:?}"
         );
+        let fresh = after
+            .iter()
+            .find(|name| !before.contains(*name))
+            .expect("the newly created backup must be retained");
+        assert!(fresh.starts_with("aliases-") && fresh.ends_with(".db"));
         assert_eq!(
             database.get_alias_by_name("kept").unwrap().map(|alias| alias.name),
             Some("kept".to_string())
         );
         drop(database);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_migration_does_not_prune_existing_backups() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-storage-corrupt-{}",
+            std::process::id()
+        ));
+        let path = root.join("aliases.db");
+        let database = Database::open(&path).unwrap();
+        database
+            .conn
+            .execute("PRAGMA user_version = 999", [])
+            .unwrap();
+        drop(database);
+        let backups = root.join("backups/db");
+        std::fs::create_dir_all(&backups).unwrap();
+        let mut seeded = std::collections::BTreeSet::new();
+        for index in 0..10 {
+            let name = format!("aliases-good-{index}.db");
+            std::fs::write(backups.join(&name), "good").unwrap();
+            seeded.insert(name);
+        }
+        assert!(matches!(
+            Database::open(&path),
+            Err(AliasError::SchemaTooNew)
+        ));
+        let after = backup_names(&backups);
+        assert!(
+            seeded.is_subset(&after),
+            "a failed open pruned good backups: {after:?}"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 }

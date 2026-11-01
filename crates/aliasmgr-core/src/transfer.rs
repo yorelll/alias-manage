@@ -67,14 +67,20 @@ fn contains_powershell(shells: &[ShellKind]) -> bool {
 
 /// Mirrors the storage-level conflict rule: an exact name always conflicts, and
 /// incoming PowerShell aliases additionally conflict with existing PowerShell
-/// aliases whose name differs only by case.
+/// aliases whose name differs only by case. Folding uses `str::to_lowercase`,
+/// exactly like the `name_folded` column, so non-ASCII names agree with storage.
 fn conflicts_with_existing(name: &str, powershell: bool, existing: &BTreeMap<String, AliasRecord>) -> bool {
     if existing.contains_key(name) { return true; }
-    powershell && existing.values().any(|record| record.name.ne(name) && record.name.eq_ignore_ascii_case(name) && contains_powershell(&record.shells))
+    if !powershell { return false; }
+    let folded = name.to_lowercase();
+    existing.values().any(|record| record.name != name && record.name.to_lowercase() == folded && contains_powershell(&record.shells))
 }
 
 fn conflicts_within_file(name: &str, powershell: bool, accepted: &[AliasRecord]) -> bool {
-    accepted.iter().any(|record| record.name == name || (powershell && record.name.ne(name) && record.name.eq_ignore_ascii_case(name) && contains_powershell(&record.shells)))
+    if accepted.iter().any(|record| record.name == name) { return true; }
+    if !powershell { return false; }
+    let folded = name.to_lowercase();
+    accepted.iter().any(|record| record.name.to_lowercase() == folded && contains_powershell(&record.shells))
 }
 
 pub fn import_records(mut aliases: Vec<AliasRecord>, existing: &BTreeMap<String, AliasRecord>, strategy: ConflictStrategy) -> Result<ImportReport, AliasError> {
@@ -171,6 +177,22 @@ mod tests {
         assert!(preview.accepted_records.is_empty());
         let confirmed = import_records(vec![incoming], &existing, ConflictStrategy::Ask).unwrap();
         assert_eq!(confirmed.skipped, vec!["foo"]);
+        database.insert_aliases_atomic(&confirmed.accepted_records).unwrap();
+        assert_eq!(database.list_aliases().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn non_ascii_case_fold_conflicts_are_skipped_in_preview_and_confirm() {
+        let database = crate::storage::Database::open_in_memory().unwrap();
+        database.insert_alias(&AliasRecord { name: "Ä".into(), executable: "tool".into(), shells: vec![ShellKind::PowerShell5], ..Default::default() }).unwrap();
+        let existing: BTreeMap<_, _> = database.list_aliases().unwrap().into_iter().map(|alias| (alias.name.clone(), alias)).collect();
+        let incoming = AliasRecord { name: "ä".into(), executable: "tool".into(), shells: vec![ShellKind::PowerShell5], ..Default::default() };
+        let preview = import_records(vec![incoming.clone()], &existing, ConflictStrategy::Ask).unwrap();
+        assert!(preview.imported.is_empty());
+        assert_eq!(preview.skipped, vec!["ä"]);
+        let confirmed = import_records(vec![incoming], &existing, ConflictStrategy::Ask).unwrap();
+        assert_eq!(confirmed.skipped, vec!["ä"]);
+        assert!(confirmed.accepted_records.is_empty());
         database.insert_aliases_atomic(&confirmed.accepted_records).unwrap();
         assert_eq!(database.list_aliases().unwrap().len(), 1);
     }

@@ -7,13 +7,26 @@ use std::{fs, path::PathBuf, process::Command};
 #[test]
 fn discovers_available_powershell_executables_and_versions() {
     let installations = installed_powershells();
-    if let Some(five) = installations.iter().find(|item| item.kind == ShellKind::PowerShell5) {
-        assert!(!five.executable.as_os_str().is_empty() && five.version.is_some());
+    assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell5));
+    assert!(installations.iter().all(|item| !item.executable.as_os_str().is_empty() && item.version.is_some()));
+    if pwsh_on_path() {
+        assert!(installations.iter().any(|item| item.kind == ShellKind::PowerShell7));
+    } else {
+        eprintln!("skipping PowerShell 7 discovery assertion: pwsh is not on PATH (Windows CI has both)");
     }
-    match installations.iter().find(|item| item.kind == ShellKind::PowerShell7) {
-        Some(seven) => assert!(!seven.executable.as_os_str().is_empty() && seven.version.is_some()),
-        None => eprintln!("skipping PowerShell 7 discovery assertion: pwsh is not on PATH (Windows CI has both)"),
-    }
+}
+
+/// Some developer machines only ship Windows PowerShell 5.1; the PowerShell 7
+/// assertion is therefore gated on `pwsh` actually being reachable.
+#[cfg(windows)]
+fn pwsh_on_path() -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|directory| {
+            ["pwsh.exe", "pwsh"]
+                .iter()
+                .any(|name| directory.join(name).is_file())
+        })
+    })
 }
 
 fn powershell_command() -> Option<&'static str> {
