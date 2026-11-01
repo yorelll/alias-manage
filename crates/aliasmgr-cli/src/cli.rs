@@ -1,3 +1,4 @@
+use aliasmgr_core::model::{PathMode, TargetType};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -21,6 +22,61 @@ pub struct Cli {
 pub enum OutputFormat {
     Table,
     Json,
+}
+
+/// CLI-exposed target types. `RawShellCommand` is deliberately absent: raw
+/// shell commands are rejected by the model, and clap rejects the value as a
+/// usage error (exit 2) instead of accepting an unsupported record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum TargetTypeArg {
+    #[value(name = "native_executable")]
+    NativeExecutable,
+    #[value(name = "python_script")]
+    PythonScript,
+    #[value(name = "powershell_script")]
+    PowerShellScript,
+    #[value(name = "batch")]
+    Batch,
+    #[value(name = "shell_script")]
+    ShellScript,
+    #[value(name = "java_jar")]
+    JavaJar,
+    #[value(name = "cmdlet")]
+    Cmdlet,
+    #[value(name = "change_directory")]
+    ChangeDirectory,
+}
+
+impl From<TargetTypeArg> for TargetType {
+    fn from(value: TargetTypeArg) -> Self {
+        match value {
+            TargetTypeArg::NativeExecutable => TargetType::NativeExecutable,
+            TargetTypeArg::PythonScript => TargetType::PythonScript,
+            TargetTypeArg::PowerShellScript => TargetType::PowerShellScript,
+            TargetTypeArg::Batch => TargetType::Batch,
+            TargetTypeArg::ShellScript => TargetType::ShellScript,
+            TargetTypeArg::JavaJar => TargetType::JavaJar,
+            TargetTypeArg::Cmdlet => TargetType::Cmdlet,
+            TargetTypeArg::ChangeDirectory => TargetType::ChangeDirectory,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PathModeArg {
+    #[value(name = "absolute")]
+    Absolute,
+    #[value(name = "relative_to_working_directory")]
+    RelativeToWorkingDirectory,
+}
+
+impl From<PathModeArg> for PathMode {
+    fn from(value: PathModeArg) -> Self {
+        match value {
+            PathModeArg::Absolute => PathMode::Absolute,
+            PathModeArg::RelativeToWorkingDirectory => PathMode::RelativeToWorkingDirectory,
+        }
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -117,6 +173,10 @@ pub struct AddArgs {
     pub tags: Vec<String>,
     #[arg(long)]
     pub no_pass_args: bool,
+    #[arg(long, value_enum)]
+    pub target_type: Option<TargetTypeArg>,
+    #[arg(long, value_enum)]
+    pub path_mode: Option<PathModeArg>,
 }
 
 #[derive(Debug, Args)]
@@ -139,6 +199,10 @@ pub struct UpdateArgs {
     pub no_pass_args: bool,
     #[arg(long, conflicts_with = "no_pass_args")]
     pub pass_args: bool,
+    #[arg(long, value_enum)]
+    pub target_type: Option<TargetTypeArg>,
+    #[arg(long, value_enum)]
+    pub path_mode: Option<PathModeArg>,
 }
 
 #[derive(Debug, Subcommand)]

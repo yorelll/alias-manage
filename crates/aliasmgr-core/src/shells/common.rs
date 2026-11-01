@@ -71,6 +71,14 @@ pub fn write_profile_content_with_keep(
     content: &str,
     keep: usize,
 ) -> Result<(), AliasError> {
+    // A fresh account may not have the profile's parent directory yet (for
+    // example Documents\WindowsPowerShell); create it before backing up.
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
     if path.exists() {
         let backup_dir = path
             .parent()
@@ -152,6 +160,26 @@ mod tests {
         assert_eq!(loader_position(&once).unwrap(), LoaderPosition::AtEnd);
     }
     #[test]
+    fn powershell_loader_contains_markers_and_safe_invocation() {
+        let loader = render_powershell_loader(Path::new(
+            r"C:\Users\me\alias-manager\generated\powershell5.ps1",
+        ));
+        assert!(loader.starts_with(START_MARKER));
+        assert!(loader.contains(END_MARKER));
+        assert!(loader.contains("Test-Path -LiteralPath $__aliasmgr_generated_file"));
+        assert!(loader.contains(". $__aliasmgr_generated_file"));
+        assert!(loader
+            .contains("Remove-Variable __aliasmgr_generated_file -ErrorAction SilentlyContinue"));
+        assert!(loader.contains(r"'C:\Users\me\alias-manager\generated\powershell5.ps1'"));
+        assert!(!loader.contains("[ -r"));
+        assert!(!loader.contains("unset -v"));
+    }
+    #[test]
+    fn powershell_loader_escapes_single_quotes_in_paths() {
+        let loader = render_powershell_loader(Path::new("/tmp/it's/generated.ps1"));
+        assert!(loader.contains("'/tmp/it''s/generated.ps1'"));
+    }
+    #[test]
     fn loader_removal_preserves_user_content_and_rejects_unpaired_markers() {
         let loader = render_loader(Path::new("/tmp/generated.sh"));
         let content = install_loader("before\n", &loader).unwrap() + "after\n";
@@ -190,6 +218,14 @@ pub fn quote_posix(value: &str) -> String {
 }
 pub fn render_loader(generated_path: &Path) -> String {
     format!("{START_MARKER}\n# managed block, do not edit by hand\n__aliasmgr_generated_file={}\n[ -r \"$__aliasmgr_generated_file\" ] && . \"$__aliasmgr_generated_file\"\nunset -v __aliasmgr_generated_file\n{END_MARKER}\n", quote_posix(&generated_path.to_string_lossy()))
+}
+/// PowerShell equivalent of [`render_loader`]. The body only dot-sources a file
+/// that exists, so a missing generated file cannot break profile startup, and it
+/// removes its temporary variable afterwards. The path is single-quoted with
+/// PowerShell's doubled-quote escaping.
+pub fn render_powershell_loader(generated_path: &Path) -> String {
+    let generated = generated_path.to_string_lossy().replace('\'', "''");
+    format!("{START_MARKER}\n# managed block, do not edit by hand\n$__aliasmgr_generated_file = '{generated}'; if (Test-Path -LiteralPath $__aliasmgr_generated_file) {{ . $__aliasmgr_generated_file }}; Remove-Variable __aliasmgr_generated_file -ErrorAction SilentlyContinue\n{END_MARKER}\n")
 }
 pub fn install_loader(content: &str, loader: &str) -> Result<String, AliasError> {
     if content.matches(START_MARKER).count() > 1 || content.matches(END_MARKER).count() > 1 {

@@ -12,8 +12,13 @@ use std::{
     time::Duration,
 };
 
+/// Normalizes CRLF to LF so a checksum is stable regardless of the line
+/// ending selected for the generated file.
+fn normalize_line_endings(content: &str) -> String {
+    content.replace("\r\n", "\n")
+}
 pub fn content_checksum(content: &str) -> String {
-    let content = strip_bom(content);
+    let content = normalize_line_endings(strip_bom(content));
     let mut digest = Sha256::new();
     digest.update(
         content
@@ -38,14 +43,28 @@ fn backup_path(path: &Path, root: &Path) -> PathBuf {
 fn strip_bom(content: &str) -> &str {
     content.strip_prefix('\u{FEFF}').unwrap_or(content)
 }
+fn configured_line_ending(value: Option<&str>) -> &'static str {
+    match value.map(str::to_ascii_lowercase).as_deref() {
+        Some("crlf") => "\r\n",
+        _ => "\n",
+    }
+}
 fn shell_file_content(shell: &ShellKind, body: &str, checksum: &str, config: &AppConfig) -> String {
-    let bom = match shell {
-        ShellKind::PowerShell5 => config.runtime.powershell5_bom,
-        ShellKind::PowerShell7 => config.runtime.powershell7_bom,
-        _ => false,
+    let (bom, line_ending) = match shell {
+        ShellKind::PowerShell5 => (
+            config.runtime.powershell5_bom,
+            configured_line_ending(config.runtime.powershell5_line_ending.as_deref()),
+        ),
+        ShellKind::PowerShell7 => (
+            config.runtime.powershell7_bom,
+            configured_line_ending(config.runtime.powershell7_line_ending.as_deref()),
+        ),
+        _ => (false, "\n"),
     };
     let prefix = if bom { "\u{FEFF}" } else { "" };
-    format!("{prefix}{body}# file_checksum: {checksum}\n")
+    let content = format!("{body}# file_checksum: {checksum}\n");
+    let content = normalize_line_endings(&content).replace('\n', line_ending);
+    format!("{prefix}{content}")
 }
 pub struct SyncCoordinator {
     pub config_dir: PathBuf,
@@ -605,6 +624,146 @@ mod tests {
             .unwrap();
         let bytes = fs::read(root.join("generated/powershell7.ps1")).unwrap();
         assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn checksum_is_stable_across_lf_and_crlf_line_endings() {
+        let lf = "# revision: 1\n# managed: gs\nfunction gs() { command git \"$@\"; }\n# file_checksum: ignored\n";
+        let crlf = lf.replace('\n', "\r\n");
+        assert_eq!(content_checksum(lf), content_checksum(&crlf));
+        assert!(verify_file_checksum(&crlf, &content_checksum(lf)));
+    }
+    #[test]
+    fn powershell5_crlf_line_ending_config_writes_crlf_bytes() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-crlf5-{}", std::process::id()));
+        let mut config = AppConfig::default();
+        config.runtime.powershell5_line_ending = Some("crlf".into());
+        config.save(&AppPaths { root: root.clone() }).unwrap();
+        let alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git.exe".into(),
+            ..Default::default()
+        };
+        SyncCoordinator::new(&root)
+            .apply(&[alias], &[ShellKind::PowerShell5], 2)
+            .unwrap();
+        let bytes = fs::read(root.join("generated/powershell5.ps1")).unwrap();
+        assert!(
+            bytes.starts_with(&[0xEF, 0xBB, 0xBF]),
+            "BOM must still be written"
+        );
+        assert!(
+            bytes.windows(2).any(|window| window == b"\r\n"),
+            "expected CRLF bytes"
+        );
+        assert!(
+            !bytes
+                .windows(2)
+                .any(|window| window[1] == b'\n' && window[0] != b'\r'),
+            "expected no bare LF bytes"
+        );
+        let content = String::from_utf8(bytes).unwrap();
+        let checksum = content
+            .lines()
+            .find_map(|line| line.strip_prefix("# file_checksum: "))
+            .unwrap();
+        assert!(verify_file_checksum(&content, checksum));
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn powershell7_line_ending_defaults_to_lf_and_accepts_explicit_lf() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-lf7-{}", std::process::id()));
+        let mut config = AppConfig::default();
+        config.runtime.powershell7_line_ending = Some("lf".into());
+        config.save(&AppPaths { root: root.clone() }).unwrap();
+        let alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git.exe".into(),
+            ..Default::default()
+        };
+        SyncCoordinator::new(&root)
+            .apply(&[alias], &[ShellKind::PowerShell7], 2)
+            .unwrap();
+        let bytes = fs::read(root.join("generated/powershell7.ps1")).unwrap();
+        assert!(!bytes.contains(&b'\r'), "expected LF-only bytes");
+        assert!(bytes.windows(2).any(|window| window == b"\n#"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+    #[test]
+    fn powershell_line_ending_defaults_to_lf_when_unset() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-lf-none-{}", std::process::id()));
+        let alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git.exe".into(),
+            ..Default::default()
+        };
+        SyncCoordinator::new(&root)
+            .apply(
+                &[alias],
+                &[ShellKind::PowerShell5, ShellKind::PowerShell7],
+                2,
+            )
+            .unwrap();
+        let five = fs::read(root.join("generated/powershell5.ps1")).unwrap();
+        assert!(five.starts_with(&[0xEF, 0xBB, 0xBF]));
+        assert!(
+            !five.contains(&b'\r'),
+            "unset PS5 line ending must default to LF"
+        );
+        let seven = fs::read(root.join("generated/powershell7.ps1")).unwrap();
+        assert!(
+            !seven.contains(&b'\r'),
+            "unset PS7 line ending must default to LF"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn unknown_powershell_line_ending_values_fall_back_to_lf() {
+        let root = std::env::temp_dir().join(format!("aliasmgr-lf-unknown-{}", std::process::id()));
+        let mut config = AppConfig::default();
+        // A trailing space and an unrelated value are both unsupported.
+        config.runtime.powershell5_line_ending = Some("CRLF ".into());
+        config.runtime.powershell7_line_ending = Some("invalid".into());
+        config.save(&AppPaths { root: root.clone() }).unwrap();
+        let alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git.exe".into(),
+            ..Default::default()
+        };
+        SyncCoordinator::new(&root)
+            .apply(
+                &[alias],
+                &[ShellKind::PowerShell5, ShellKind::PowerShell7],
+                2,
+            )
+            .unwrap();
+        for file in ["powershell5.ps1", "powershell7.ps1"] {
+            let bytes = fs::read(root.join("generated").join(file)).unwrap();
+            assert!(!bytes.contains(&b'\r'), "{file} must fall back to LF");
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+    #[test]
+    fn powershell5_explicit_lf_line_ending_has_no_crlf_and_keeps_bom() {
+        let root =
+            std::env::temp_dir().join(format!("aliasmgr-lf-explicit-{}", std::process::id()));
+        let mut config = AppConfig::default();
+        config.runtime.powershell5_line_ending = Some("lf".into());
+        config.save(&AppPaths { root: root.clone() }).unwrap();
+        let alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git.exe".into(),
+            ..Default::default()
+        };
+        SyncCoordinator::new(&root)
+            .apply(&[alias], &[ShellKind::PowerShell5], 2)
+            .unwrap();
+        let bytes = fs::read(root.join("generated/powershell5.ps1")).unwrap();
+        assert!(bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
+        assert!(
+            !bytes.contains(&b'\r'),
+            "explicit LF must not write CR bytes"
+        );
         let _ = fs::remove_dir_all(root);
     }
     #[test]

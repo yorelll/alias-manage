@@ -12,6 +12,8 @@ fn args(name: &str) -> AddArgs {
         environment: vec![],
         tags: vec!["git".into()],
         no_pass_args: false,
+        target_type: None,
+        path_mode: None,
     }
 }
 
@@ -26,6 +28,8 @@ fn update_args(name: &str) -> UpdateArgs {
         tags: None,
         no_pass_args: false,
         pass_args: false,
+        target_type: None,
+        path_mode: None,
     }
 }
 
