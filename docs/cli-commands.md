@@ -31,7 +31,9 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
   - `--arg` is repeatable and accepts leading hyphens, so `--arg --oneline` is valid. Because hyphen values are allowed, a following flag can be consumed as a value when it is ambiguous; use `--arg=--oneline` or place other flags before `--arg` in that case.
   - `--shell` accepts `bash`, `zsh`, `powershell5`, and `powershell7`, and is repeatable. When omitted, the alias targets Bash only.
   - `--env KEY=VALUE` is repeatable and is stored on the record. A missing `=`, an empty key, or an invalid shell is a configuration error (exit 1).
-  - `--no-pass-args` sets `pass_args=false`; user arguments are forwarded by default.
+  - `--cwd PATH` applies to each generated invocation without changing the caller's shell: Bash/Zsh run the command in a subshell after `cd`; PowerShell uses `Push-Location` and restores it in `finally`.
+  - `--env` values apply only to the generated invocation: Bash/Zsh invoke the target through `env KEY=VALUE ...`; PowerShell saves, sets, and restores each variable in `finally`.
+  - `--no-pass-args` sets `pass_args=false`; user arguments are forwarded by default. When fixed arguments contain `{{args}}`, user arguments are inserted at that position; `{{{{args}}}}` renders the literal text `{{args}}`. Without a placeholder, user arguments are appended at the end only when `pass_args` is true.
   - Advanced Shell mode and raw Shell commands are rejected by validation and are not exposed as CLI flags.
 - `get <NAME>`: prints the stored record. A missing alias is `NotFound` (exit 4).
 - `list [--sort FIELD] [--desc] [--limit N] [--tag TAG]...`
