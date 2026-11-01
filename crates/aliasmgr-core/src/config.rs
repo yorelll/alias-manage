@@ -206,6 +206,44 @@ mod tests {
     }
 
     #[test]
+    fn empty_config_dir_falls_through_to_the_platform_default() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["ALIASMGR_CONFIG_DIR"];
+        let saved = keys.map(|key| (key, env::var_os(key)));
+        env::set_var("ALIASMGR_CONFIG_DIR", "");
+        assert_eq!(AppPaths::discover(None).root, platform_default_root());
+        restore_env(&saved);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn non_unicode_config_dir_is_preserved_on_windows() {
+        use std::os::windows::ffi::OsStringExt;
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["ALIASMGR_CONFIG_DIR"];
+        let saved = keys.map(|key| (key, env::var_os(key)));
+        // An unpaired surrogate is not valid UTF-16, so env::var() would reject it.
+        let value = std::ffi::OsString::from_wide(&[0xD800]);
+        env::set_var("ALIASMGR_CONFIG_DIR", &value);
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from(&value));
+        restore_env(&saved);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_unicode_config_dir_is_preserved_on_unix() {
+        use std::os::unix::ffi::OsStringExt;
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["ALIASMGR_CONFIG_DIR"];
+        let saved = keys.map(|key| (key, env::var_os(key)));
+        // Invalid UTF-8 bytes, so env::var() would reject them.
+        let value = std::ffi::OsString::from_vec(vec![0xFF, 0xFE]);
+        env::set_var("ALIASMGR_CONFIG_DIR", &value);
+        assert_eq!(AppPaths::discover(None).root, PathBuf::from(&value));
+        restore_env(&saved);
+    }
+
+    #[test]
     fn defaults_load_and_round_trip_through_toml() {
         let root = std::env::temp_dir().join(format!("aliasmgr-config-{}", std::process::id()));
         let paths = AppPaths { root: root.clone() };

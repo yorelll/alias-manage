@@ -90,3 +90,30 @@ fn deletions_keep_revisions_monotonic_and_doctor_detects_staleness() {
     assert!(!findings.iter().any(|finding| finding.contains("过期")), "doctor findings after sync: {findings:?}");
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn rename_retires_the_old_name_for_every_bound_shell() {
+    let root = std::env::temp_dir().join(format!("aliasmgr-cli-rename-{}", std::process::id()));
+    let config = root.to_string_lossy().to_string();
+
+    let mut add = add_args("x");
+    add.shell = vec!["bash".into(), "zsh".into()];
+    commands::add(Some(&config), &add).unwrap();
+    commands::sync(Some(&config), false).unwrap();
+    for file in ["bash.sh", "zsh.sh"] {
+        let content = std::fs::read_to_string(root.join("generated").join(file)).unwrap();
+        assert!(content.contains("x() {"), "{file} must define x: {content}");
+    }
+
+    assert!(commands::rename(Some(&config), "x", "y").unwrap());
+    commands::sync(Some(&config), false).unwrap();
+    for file in ["bash.sh", "zsh.sh"] {
+        let content = std::fs::read_to_string(root.join("generated").join(file)).unwrap();
+        assert!(!content.contains("x() {"), "{file} still defines the old name: {content}");
+        assert!(content.contains("# retired: x"), "{file} misses the tombstone: {content}");
+        assert!(content.contains("unalias 'x'"), "{file} misses the cleanup: {content}");
+        assert!(content.contains("y() {"), "{file} misses the new name: {content}");
+        assert!(content.contains("# managed: y"), "{file} misses the managed line: {content}");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}

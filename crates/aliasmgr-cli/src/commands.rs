@@ -79,7 +79,17 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
     database.update_alias(&alias)?;
     database.get_alias(alias.id)?.ok_or_else(|| AliasError::NotFound(args.name.clone()))
 }
-pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::NotFound(old.into()))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision.saturating_add(1))?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
+pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> {
+    let database = database(config_dir)?;
+    let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::NotFound(old.into()))?;
+    for shell in &alias.shells {
+        database.retire_name(old, shell, alias.revision.saturating_add(1))?;
+    }
+    alias.name = new.into();
+    validate_alias(&alias)?;
+    alias.record_checksum = record_checksum(&alias)?;
+    database.update_alias(&alias)
+}
 #[allow(dead_code)] pub fn find(config_dir: Option<&str>, query: &str, fuzzy: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> { find_query(config_dir, query, fuzzy, None, limit, tags) }
 #[allow(dead_code)] pub fn retired_names(config_dir: Option<&str>, shell: &str) -> Result<Vec<String>, AliasError> { let kind = match shell { "zsh" => ShellKind::Zsh, "powershell5" => ShellKind::PowerShell5, "powershell7" => ShellKind::PowerShell7, _ => ShellKind::Bash }; Ok(database(config_dir)?.managed_name_set(&kind)?.retired) }
 pub fn shell_detect() -> aliasmgr_core::detection::DetectionResult { aliasmgr_core::detection::detect(&aliasmgr_core::detection::DetectionContext { explicit: None, parent_shell: None, shell_env: std::env::var("SHELL").ok(), login_shell: None }) }
