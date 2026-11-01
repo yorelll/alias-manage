@@ -15,8 +15,12 @@ import {
   type Page,
   NAV_ITEMS,
   createAliasPayload,
+  aliasFiltersActive,
+  clearAliasFilters,
   mergeEditedAlias,
+  nextDataVersion,
   searchAliasesArgs,
+  statusShellText,
   statusSummaryText,
   tauriInvoke,
   toggleAliasEnabled,
@@ -70,7 +74,7 @@ export function StatusDrawer({ status, error }: StatusDrawerProps) {
           ) : status ? (
             <>
               <span className="status-label">Version</span><span className="status-value">{status.version}</span>
-              <span className="status-label">Shell</span><span className="status-value">{status.detected_shell ?? "none detected"} {status.detected_shell && `(${status.detection_source})`}</span>
+              <span className="status-label">Shell</span><span className="status-value">{statusShellText(status)}</span>
               <span className="status-label">Config dir</span><span className="status-value">{status.config_directory}</span>
             </>
           ) : <span className="status-value">Loading…</span>}
@@ -82,7 +86,7 @@ export function StatusDrawer({ status, error }: StatusDrawerProps) {
 
 type WizardState = { mode: "create" } | { mode: "edit"; alias: AliasDto };
 
-export function AliasesPage() {
+export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?: number; onOpenImport?: () => void }) {
   const [aliases, setAliases] = useState<AliasDto[]>([]);
   const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
   const [query, setQuery] = useState("");
@@ -124,7 +128,7 @@ export function AliasesPage() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [query, fuzzy, selectedTags, reloadToken]);
+  }, [query, fuzzy, selectedTags, reloadToken, refreshToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -132,7 +136,7 @@ export function AliasesPage() {
       .then((value) => { if (!cancelled) setTagCounts(value as Record<string, number>); })
       .catch((reason) => { if (!cancelled) setError(String(reason)); });
     return () => { cancelled = true; };
-  }, [reloadToken]);
+  }, [reloadToken, refreshToken]);
 
   const refresh = () => setReloadToken((value) => value + 1);
 
@@ -204,10 +208,15 @@ export function AliasesPage() {
   const filtered = usesFilteredSearch(query, selectedTags);
 
   return (
-    <div data-testid="aliases-page">
+    <div data-testid="aliases-page" tabIndex={-1}>
       <div className="page-header">
         <h1 className="page-title">Aliases</h1>
-        <button className="btn-add-alias" onClick={() => { cancelDelete(); setWizard({ mode: "create" }); }}>+ Add alias</button>
+        <div className="page-actions">
+          {onOpenImport && (
+            <button type="button" className="btn-secondary" onClick={onOpenImport}>Import</button>
+          )}
+          <button type="button" className="btn-add-alias" onClick={() => { cancelDelete(); setWizard({ mode: "create" }); }}>+ Add alias</button>
+        </div>
       </div>
       {error && <p role="alert">{error}</p>}
       <div className="alias-toolbar">
@@ -218,6 +227,19 @@ export function AliasesPage() {
           onChange={(value) => { setQuery(value.query); setFuzzy(value.fuzzy); }}
         />
         <TagFacet counts={tagCounts} selected={selectedTags} onChange={setSelectedTags} />
+        <button
+          type="button"
+          className="btn-secondary"
+          disabled={!aliasFiltersActive(query, fuzzy, selectedTags)}
+          onClick={() => {
+            const cleared = clearAliasFilters();
+            setQuery(cleared.query);
+            setFuzzy(cleared.fuzzy);
+            setSelectedTags(cleared.tags);
+          }}
+        >
+          Clear filters
+        </button>
       </div>
       {wizard && (
         <AliasWizard
@@ -264,6 +286,25 @@ export function App() {
   const [page, setPage] = useState<Page>("aliases");
   const [status, setStatus] = useState<StartupStatus | null>(null);
   const [statusError, setStatusError] = useState(false);
+  const [dataVersion, setDataVersion] = useState(0);
+  const syncPageRef = useRef<HTMLDivElement | null>(null);
+  const focusSyncAfterNavigation = useRef(false);
+
+  const invalidateAliasData = () => setDataVersion((value) => nextDataVersion(value));
+
+  const openImportPage = () => {
+    focusSyncAfterNavigation.current = true;
+    setPage("sync");
+  };
+
+  useEffect(() => {
+    if (page === "sync" && focusSyncAfterNavigation.current) {
+      focusSyncAfterNavigation.current = false;
+      const fileInput = document.getElementById("import-file-input") as HTMLInputElement | null;
+      if (fileInput && !fileInput.disabled) fileInput.focus();
+      else syncPageRef.current?.focus();
+    }
+  }, [page]);
 
   useEffect(() => {
     tauriInvoke("startup_status").then((value) => setStatus(value as StartupStatus)).catch(() => setStatusError(true));
@@ -279,11 +320,12 @@ export function App() {
       </nav>
       <div className="main-content">
         <div className="page-area">
-          {page === "aliases" && <AliasesPage />}
-          {page === "doctor" && <DoctorPanel />}
-          {page === "settings" && <><SettingsPanel /><UninstallPanel /></>}
-          {page === "sync" && <><ImportPanel /><GeneratedFilePanel /></>}
-          {page !== "aliases" && page !== "doctor" && page !== "settings" && page !== "sync" && <PlaceholderPage name={NAV_ITEMS.find((item) => item.id === page)?.label ?? page} />}
+          {/* Pages stay mounted so drafts survive navigation; inactive pages
+              are hidden from layout, the accessibility tree, and tab order. */}
+          <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} /></div>
+          <div hidden={page !== "sync"} ref={syncPageRef} tabIndex={-1}><ImportPanel onImported={invalidateAliasData} /><GeneratedFilePanel /></div>
+          <div hidden={page !== "doctor"}><DoctorPanel /></div>
+          <div hidden={page !== "settings"}><SettingsPanel /><UninstallPanel onUninstalled={invalidateAliasData} /></div>
         </div>
         <StatusDrawer status={status} error={statusError} />
       </div>
