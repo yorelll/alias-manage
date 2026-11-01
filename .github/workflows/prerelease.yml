@@ -342,7 +342,9 @@ jobs:
   build_linux_cli:
     name: Build Linux CLI
     needs: [fast_ci_gate, integration_gate, security_gate]
-    runs-on: ubuntu-24.04
+    # Build on the oldest supported runner so the glibc requirement stays
+    # compatible with Ubuntu 22.04 and newer.
+    runs-on: ubuntu-22.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4.2.2
