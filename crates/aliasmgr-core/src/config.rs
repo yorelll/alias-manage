@@ -30,7 +30,7 @@ pub struct ShellPathOverrides {
     pub powershell7_profile_path: Option<PathBuf>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellRuntimeConfig {
     pub default_shell: Option<String>,
     pub allow_relative_paths: bool,
@@ -39,6 +39,20 @@ pub struct ShellRuntimeConfig {
     pub powershell7_bom: bool,
     pub powershell5_line_ending: Option<String>,
     pub powershell7_line_ending: Option<String>,
+}
+
+impl Default for ShellRuntimeConfig {
+    fn default() -> Self {
+        Self {
+            default_shell: None,
+            allow_relative_paths: false,
+            execution_policy: None,
+            powershell5_bom: true,
+            powershell7_bom: false,
+            powershell5_line_ending: None,
+            powershell7_line_ending: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -158,6 +172,15 @@ mod tests {
         config.save(&paths).unwrap();
         assert_eq!(paths.load_config().unwrap().backups.rc_keep, 10);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shell_runtime_defaults_encode_powershell_bom_policy() {
+        let runtime = ShellRuntimeConfig::default();
+        assert!(runtime.powershell5_bom);
+        assert!(!runtime.powershell7_bom);
+        assert_eq!(runtime.default_shell, None);
+        assert!(!runtime.allow_relative_paths);
     }
 
     #[test]

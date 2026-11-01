@@ -38,6 +38,8 @@ pub enum AliasError {
     Config(String),
     #[error("shell is not installed")]
     ShellNotInstalled,
+    #[error("generated file failed syntax check: {0}")]
+    SyntaxCheck(String),
     #[error("database error: {0}")]
     Database(#[from] rusqlite::Error),
     #[error("serialization error: {0}")]
