@@ -1,17 +1,18 @@
 use aliasmgr_core::{
     config::AppPaths,
-    detection::{detect, DetectionContext},
+    detection::{detect, find_definition_source, DetectionContext},
     model::{AliasRecord, ManagedNameSet, PathMode, PathOrigin, ShellKind, TargetType},
     search::{SearchField, SearchQuery, SortField},
     service::AliasService,
     shells::{bash, powershell, zsh},
     storage::Database,
-    sync::{content_checksum, verify_file_checksum},
+    sync::{content_checksum, verify_file_checksum, SyncCoordinator},
     transfer::{self, ConflictStrategy, ImportReport},
     validation::validate_alias,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 
 /// Serializable status returned to the frontend on startup.
 #[derive(Debug, Clone, Serialize)]
@@ -20,6 +21,8 @@ pub struct StartupStatus {
     pub version: String,
     /// The detected shell kind as a stable lowercase string, or null when none detected.
     pub detected_shell: Option<String>,
+    /// Shells found on PATH, as stable lowercase strings, in detection order.
+    pub installed_shells: Vec<String>,
     /// Which detection source was used (e.g. "explicit", "parent", "shell_env",
     /// "login_shell", or "installed").
     pub detection_source: String,
@@ -65,6 +68,12 @@ pub fn startup_status() -> StartupStatus {
         .as_ref()
         .map(shell_kind_to_str)
         .map(str::to_owned);
+    let installed_shells = detection
+        .installed
+        .iter()
+        .map(shell_kind_to_str)
+        .map(str::to_owned)
+        .collect();
     let detection_source = detection.source;
 
     let paths = AppPaths::discover(None);
@@ -73,6 +82,7 @@ pub fn startup_status() -> StartupStatus {
     StartupStatus {
         version,
         detected_shell,
+        installed_shells,
         detection_source,
         config_directory,
     }
@@ -251,31 +261,33 @@ pub fn tag_counts() -> Result<BTreeMap<String, usize>, String> {
 }
 
 fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
-    let mut alias = AliasRecord::default();
-    alias.id = uuid::Uuid::parse_str(&dto.id).map_err(|error| error.to_string())?;
-    alias.name = dto.name;
-    alias.description = dto.description;
-    alias.executable = dto.executable;
-    alias.fixed_args = dto.fixed_args;
-    alias.pass_args = dto.pass_args;
-    alias.working_directory = dto.working_directory;
-    alias.environment = dto.environment;
-    alias.enabled = dto.enabled;
-    alias.tags = dto.tags;
-    alias.revision = dto.revision;
-    alias.target_type = target_type_from_str(&dto.target_type)?;
-    alias.shells = dto
-        .shells
-        .iter()
-        .map(|shell| shell_from_str(shell))
-        .collect::<Result<_, _>>()?;
-    alias.path_mode = match dto.path_mode.as_deref() {
-        Some(value) => path_mode_from_str(value)?,
-        None => PathMode::Absolute,
-    };
-    alias.path_origin = match dto.path_origin.as_deref() {
-        Some(value) => path_origin_from_str(value)?,
-        None => PathOrigin::GuiFilePicker,
+    let alias = AliasRecord {
+        id: uuid::Uuid::parse_str(&dto.id).map_err(|error| error.to_string())?,
+        name: dto.name,
+        description: dto.description,
+        executable: dto.executable,
+        fixed_args: dto.fixed_args,
+        pass_args: dto.pass_args,
+        working_directory: dto.working_directory,
+        environment: dto.environment,
+        enabled: dto.enabled,
+        tags: dto.tags,
+        revision: dto.revision,
+        target_type: target_type_from_str(&dto.target_type)?,
+        shells: dto
+            .shells
+            .iter()
+            .map(|shell| shell_from_str(shell))
+            .collect::<Result<_, _>>()?,
+        path_mode: match dto.path_mode.as_deref() {
+            Some(value) => path_mode_from_str(value)?,
+            None => PathMode::Absolute,
+        },
+        path_origin: match dto.path_origin.as_deref() {
+            Some(value) => path_origin_from_str(value)?,
+            None => PathOrigin::GuiFilePicker,
+        },
+        ..AliasRecord::default()
     };
     validate_alias(&alias).map_err(|error| error.to_string())?;
     Ok(alias)
@@ -362,8 +374,10 @@ pub fn delete_alias(id: String) -> Result<bool, String> {
         return Ok(false);
     };
     for shell in &alias.shells {
+        // Match the CLI: the tombstone must outrank the deleted revision so a
+        // later sync renders the cleanup block for this name.
         database
-            .retire_name(&alias.name, shell, alias.revision)
+            .retire_name(&alias.name, shell, alias.revision.saturating_add(1))
             .map_err(|error| error.to_string())?;
     }
     database
@@ -401,6 +415,8 @@ pub struct SettingsDto {
 
 #[tauri::command]
 pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
+    const KNOWN_SHELLS: [&str; 4] = ["bash", "zsh", "powershell5", "powershell7"];
+
     let paths = AppPaths::discover(None);
     let mut findings = Vec::new();
     // Check existence before opening: `Database::open` would create the file.
@@ -415,51 +431,8 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
         });
     }
     let database = database()?;
-    for shell in ["bash", "zsh", "powershell5", "powershell7"] {
-        let path = paths.generated_path(shell);
-        if !path.exists() {
-            findings.push(DoctorFindingDto {
-                shell: Some(shell.into()),
-                severity: "warning".into(),
-                code: "generated_missing".into(),
-                message: format!("生成文件缺失: {shell}"),
-                action: Some("执行同步".into()),
-                detail: None,
-            });
-            continue;
-        }
-        // Generated files carry the checksum of their own body; a mismatch
-        // means the file was edited outside Alias Manager.
-        let Ok(content) = std::fs::read_to_string(&path) else {
-            continue;
-        };
-        let expected = content
-            .lines()
-            .find_map(|line| line.strip_prefix("# file_checksum: "));
-        let actual = content_checksum(&content);
-        match expected {
-            Some(expected) if verify_file_checksum(&content, expected) => {}
-            Some(expected) => findings.push(DoctorFindingDto {
-                shell: Some(shell.into()),
-                severity: "warning".into(),
-                code: "generated_modified".into(),
-                message: format!("生成文件已被手动修改: {shell}"),
-                action: Some("重新同步以覆盖手动修改".into()),
-                detail: Some(format!("expected {expected}, actual {actual}")),
-            }),
-            None => findings.push(DoctorFindingDto {
-                shell: Some(shell.into()),
-                severity: "warning".into(),
-                code: "generated_modified".into(),
-                message: format!("生成文件缺少校验和标记: {shell}"),
-                action: Some("重新同步以修复生成文件".into()),
-                detail: Some(format!("expected <missing>, actual {actual}")),
-            }),
-        }
-    }
-    let max_alias_revision = database
-        .list_aliases()
-        .map_err(|error| error.to_string())?
+    let aliases = database.list_aliases().map_err(|error| error.to_string())?;
+    let max_alias_revision = aliases
         .iter()
         .map(|alias| alias.revision)
         .max()
@@ -468,6 +441,128 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
         .max_retired_revision()
         .map_err(|error| error.to_string())?;
     let current_revision = max_alias_revision.max(max_retired_revision);
+
+    // Only shells an alias asks for (or that still have tombstones) should get
+    // a generated file; an untouched install must not look broken.
+    let mut referenced_shells: BTreeSet<String> = BTreeSet::new();
+    for alias in &aliases {
+        for shell in &alias.shells {
+            referenced_shells.insert(shell_kind_to_str(shell).to_owned());
+        }
+    }
+    let mut managed_names = BTreeMap::new();
+    for name in KNOWN_SHELLS {
+        let Ok(kind) = shell_from_str(name) else {
+            continue;
+        };
+        let names = database
+            .managed_name_set(&kind)
+            .map_err(|error| error.to_string())?;
+        if !names.retired.is_empty() {
+            referenced_shells.insert(name.to_owned());
+        }
+        managed_names.insert(name.to_owned(), names);
+    }
+
+    let coordinator = SyncCoordinator::new(&paths.root);
+    let mut stale_details: BTreeMap<String, String> = BTreeMap::new();
+    for name in KNOWN_SHELLS {
+        if !referenced_shells.contains(name) {
+            continue;
+        }
+        let path = paths.generated_path(name);
+        if !path.exists() {
+            findings.push(DoctorFindingDto {
+                shell: Some(name.into()),
+                severity: "warning".into(),
+                code: "generated_missing".into(),
+                message: format!("生成文件缺失: {name}"),
+                action: Some("执行同步".into()),
+                detail: None,
+            });
+            continue;
+        }
+        let content = match std::fs::read(&path) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => content,
+                Err(error) => {
+                    findings.push(DoctorFindingDto {
+                        shell: Some(name.into()),
+                        severity: "warning".into(),
+                        code: "generated_unreadable".into(),
+                        message: format!("生成文件编码无效: {name}"),
+                        action: Some("重新同步以修复生成文件".into()),
+                        detail: Some(error.to_string()),
+                    });
+                    continue;
+                }
+            },
+            Err(error) => {
+                findings.push(DoctorFindingDto {
+                    shell: Some(name.into()),
+                    severity: "warning".into(),
+                    code: "generated_unreadable".into(),
+                    message: format!("生成文件无法读取: {name}"),
+                    action: Some("重新同步以修复生成文件".into()),
+                    detail: Some(error.to_string()),
+                });
+                continue;
+            }
+        };
+        // Generated files carry the checksum of their own body; a mismatch
+        // means the file was edited outside Alias Manager.
+        let expected = content
+            .lines()
+            .find_map(|line| line.strip_prefix("# file_checksum: "));
+        let actual = content_checksum(&content);
+        let mut modified = false;
+        match expected {
+            Some(expected) if verify_file_checksum(&content, expected) => {}
+            Some(expected) => {
+                modified = true;
+                findings.push(DoctorFindingDto {
+                    shell: Some(name.into()),
+                    severity: "warning".into(),
+                    code: "generated_modified".into(),
+                    message: format!("生成文件已被手动修改: {name}"),
+                    action: Some("重新同步以覆盖手动修改".into()),
+                    detail: Some(format!("expected {expected}, actual {actual}")),
+                });
+            }
+            None => {
+                modified = true;
+                findings.push(DoctorFindingDto {
+                    shell: Some(name.into()),
+                    severity: "warning".into(),
+                    code: "generated_modified".into(),
+                    message: format!("生成文件缺少校验和标记: {name}"),
+                    action: Some("重新同步以修复生成文件".into()),
+                    detail: Some(format!("expected <missing>, actual {actual}")),
+                });
+            }
+        }
+        if modified {
+            continue;
+        }
+        // A checksum line can be self-consistent while the body is stale. The
+        // fresh render (no writes) tells us what the current DB should produce.
+        let Ok(kind) = shell_from_str(name) else {
+            continue;
+        };
+        let Some(names) = managed_names.get(name) else {
+            continue;
+        };
+        if let Ok(body) = coordinator.render_shell(&aliases, &kind, current_revision, names) {
+            let expected_checksum = content_checksum(&body);
+            if expected_checksum != actual {
+                stale_details.insert(
+                    name.to_owned(),
+                    format!("expected checksum {expected_checksum}, actual {actual}"),
+                );
+            }
+        }
+    }
+
     for state in database.shell_states().map_err(|error| error.to_string())? {
         let shell = shell_kind_to_str(&state.shell).to_owned();
         if let Some(error) = &state.last_error {
@@ -491,18 +586,23 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
             });
         }
         if state.applied_revision < current_revision {
-            findings.push(DoctorFindingDto {
-                shell: Some(shell.clone()),
-                severity: "warning".into(),
-                code: "stale".into(),
-                message: format!("生成文件落后于数据库: {shell}"),
-                action: Some("执行同步".into()),
-                detail: Some(format!(
+            stale_details.entry(shell).or_insert_with(|| {
+                format!(
                     "applied revision {}, expected {current_revision}",
                     state.applied_revision
-                )),
+                )
             });
         }
+    }
+    for (shell, detail) in stale_details {
+        findings.push(DoctorFindingDto {
+            shell: Some(shell.clone()),
+            severity: "warning".into(),
+            code: "stale".into(),
+            message: format!("生成文件落后于数据库: {shell}"),
+            action: Some("执行同步".into()),
+            detail: Some(detail),
+        });
     }
     if let Some(error) = database.reliability_error() {
         findings.push(DoctorFindingDto {
@@ -549,7 +649,11 @@ fn existing_alias_map(database: &Database) -> Result<BTreeMap<String, AliasRecor
 fn import_path(path: &std::path::Path) -> Result<ImportReport, String> {
     let database = database()?;
     let existing = existing_alias_map(&database)?;
-    let aliases = if path.extension().and_then(|extension| extension.to_str()) == Some("toml") {
+    let is_toml = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("toml"));
+    let aliases = if is_toml {
         transfer::read_toml(path)
     } else {
         transfer::read_json(path)
@@ -667,16 +771,23 @@ pub fn config_get() -> Result<SettingsDto, String> {
 
 #[tauri::command]
 pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
-    let paths = AppPaths {
-        root: std::path::PathBuf::from(&settings.config_directory),
-    };
+    // The config directory is resolved at startup and is read-only in the UI:
+    // never create a different directory or report a save that did not happen.
+    let paths = AppPaths::discover(None);
+    let requested = PathBuf::from(&settings.config_directory);
+    if requested != paths.root {
+        return Err(format!("配置目录为只读，无法更改: {}", requested.display()));
+    }
     let mut config = paths.load_config().map_err(|error| error.to_string())?;
     config.backups.rc_keep = settings.backup_keep;
     config.logs.keep_files = settings.log_keep;
     config.runtime.default_shell = Some(settings.default_shell.clone());
     config.runtime.allow_relative_paths = settings.allow_relative_paths;
     config.save(&paths).map_err(|error| error.to_string())?;
-    Ok(settings)
+    Ok(SettingsDto {
+        config_directory: paths.root.to_string_lossy().into_owned(),
+        ..settings
+    })
 }
 
 #[tauri::command]
@@ -731,6 +842,110 @@ pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
 #[tauri::command]
 pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> {
     database()?
+        .overridden_definitions()
+        .map_err(|error| error.to_string())
+}
+
+/// Default PowerShell profile path used when no override is configured.
+fn default_powershell_profile_path(shell: &ShellKind) -> Option<PathBuf> {
+    if cfg!(windows) {
+        let home = std::env::var_os("USERPROFILE").map(PathBuf::from)?;
+        let folder = match shell {
+            ShellKind::PowerShell5 => "WindowsPowerShell",
+            ShellKind::PowerShell7 => "PowerShell",
+            _ => return None,
+        };
+        Some(
+            home.join("Documents")
+                .join(folder)
+                .join("Microsoft.PowerShell_profile.ps1"),
+        )
+    } else {
+        match shell {
+            // Windows PowerShell 5.1 does not exist outside Windows.
+            ShellKind::PowerShell7 => std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".config").join("powershell").join("profile.ps1")),
+            _ => None,
+        }
+    }
+}
+
+/// Candidate rc/profile files for a shell: configured path first, then the
+/// platform default. Only paths are collected; nothing is read or written here.
+fn override_scan_paths(
+    config: &aliasmgr_core::config::AppConfig,
+    root: &Path,
+    shell: &ShellKind,
+) -> Vec<PathBuf> {
+    let candidates = match shell {
+        ShellKind::Bash => vec![
+            config.shells.bash_rc_path.clone(),
+            Some(root.join(".bashrc")),
+        ],
+        ShellKind::Zsh => vec![config.shells.zsh_rc_path.clone(), Some(root.join(".zshrc"))],
+        ShellKind::PowerShell5 => vec![
+            config.shells.powershell5_profile_path.clone(),
+            default_powershell_profile_path(shell),
+        ],
+        ShellKind::PowerShell7 => vec![
+            config.shells.powershell7_profile_path.clone(),
+            default_powershell_profile_path(shell),
+        ],
+        _ => Vec::new(),
+    };
+    let mut paths = Vec::new();
+    for candidate in candidates.into_iter().flatten() {
+        if !paths.contains(&candidate) {
+            paths.push(candidate);
+        }
+    }
+    paths
+}
+
+/// A definition is recoverable only when it is a real single-line alias or
+/// function definition; comments and anything else are recorded as unknown.
+fn is_simple_single_line_definition(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return false;
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower.starts_with("alias ") || lower.starts_with("function ")
+}
+
+/// Tauri command: read the configured rc/profile files and record which
+/// aliases are already defined there. File content is only read, never executed.
+#[tauri::command]
+pub fn scan_overrides() -> Result<Vec<serde_json::Value>, String> {
+    let paths = AppPaths::discover(None);
+    let config = paths.load_config().map_err(|error| error.to_string())?;
+    let database = database()?;
+    let aliases = database.list_aliases().map_err(|error| error.to_string())?;
+    for alias in &aliases {
+        for shell in &alias.shells {
+            let candidates = override_scan_paths(&config, &paths.root, shell);
+            if candidates.is_empty() {
+                continue;
+            }
+            let Some(source) = find_definition_source(&candidates, &alias.name)
+                .map_err(|error| error.to_string())?
+            else {
+                continue;
+            };
+            let definition = source.definition.trim();
+            if is_simple_single_line_definition(definition) {
+                database
+                    .record_override(&alias.name, shell, Some(definition), true)
+                    .map_err(|error| error.to_string())?;
+            } else {
+                database
+                    .record_override(&alias.name, shell, None, false)
+                    .map_err(|error| error.to_string())?;
+            }
+        }
+    }
+    database
         .overridden_definitions()
         .map_err(|error| error.to_string())
 }
@@ -910,6 +1125,219 @@ mod tests {
     }
 
     #[test]
+    fn doctor_reports_missing_files_only_for_referenced_shells() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-missing");
+        Database::open(config.root.join("aliases.db")).unwrap();
+
+        let findings = doctor_status().unwrap();
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "generated_missing"),
+            "unreferenced shells must not be reported missing: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_unreadable_generated_files() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-unreadable");
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        let generated = config.root.join("generated/bash.sh");
+        std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        std::fs::write(&generated, [0xFFu8, 0xFE, 0x00, 0x80]).unwrap();
+
+        let findings = doctor_status().unwrap();
+        let unreadable = findings
+            .iter()
+            .find(|finding| {
+                finding.code == "generated_unreadable" && finding.shell.as_deref() == Some("bash")
+            })
+            .expect("invalid UTF-8 must be reported instead of skipped");
+        assert_eq!(unreadable.severity, "warning");
+        assert!(unreadable.detail.is_some());
+    }
+
+    #[test]
+    fn doctor_detects_stale_content_behind_a_valid_checksum() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-stale-content");
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                revision: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        database
+            .upsert_shell_state(&aliasmgr_core::model::ShellState {
+                shell: ShellKind::Bash,
+                applied_revision: 2,
+                file_checksum: String::new(),
+                loader_installed: true,
+                status: aliasmgr_core::model::ShellStatus::Ok,
+                last_error: None,
+            })
+            .unwrap();
+        drop(database);
+
+        // Self-consistent checksum, but the rendered body predates the alias.
+        let body = "# Alias Manager\n# revision: 1\n# managed: \n# retired: \n";
+        let checksum = content_checksum(body);
+        let generated = config.root.join("generated/bash.sh");
+        std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        std::fs::write(&generated, format!("{body}# file_checksum: {checksum}\n")).unwrap();
+
+        let findings = doctor_status().unwrap();
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "generated_modified"),
+            "checksum-valid file must not be reported as modified"
+        );
+        let stale = findings
+            .iter()
+            .find(|finding| finding.code == "stale" && finding.shell.as_deref() == Some("bash"))
+            .expect("rendered-content mismatch must be reported as stale");
+        assert_eq!(stale.severity, "warning");
+        assert!(stale
+            .detail
+            .as_deref()
+            .unwrap()
+            .contains("expected checksum"));
+    }
+
+    #[test]
+    fn config_save_rejects_changing_the_config_directory() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("config-save");
+        let requested = config.root.join("elsewhere");
+        let result = config_save(SettingsDto {
+            config_directory: requested.to_string_lossy().into_owned(),
+            default_shell: "bash".into(),
+            backup_keep: 1,
+            log_keep: 1,
+            allow_relative_paths: false,
+        });
+        assert!(result.is_err());
+        assert!(
+            !requested.exists(),
+            "a rejected save must not create directories"
+        );
+        assert!(!config.root.join("config.toml").exists());
+    }
+
+    #[test]
+    fn content_import_accepts_bare_arrays_and_uppercase_toml_filenames() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("import-formats");
+
+        let bare = serde_json::to_string(&vec![AliasRecord {
+            name: "bare-json".into(),
+            executable: "git".into(),
+            ..Default::default()
+        }])
+        .unwrap();
+        let preview = import_preview_content(bare, "sample.json".into()).unwrap();
+        assert_eq!(preview.imported, vec!["bare-json"]);
+
+        let toml_path = config.root.join("import.TOML");
+        aliasmgr_core::transfer::export_toml(
+            &toml_path,
+            &[AliasRecord {
+                name: "toml-one".into(),
+                executable: "git".into(),
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        let toml_content = std::fs::read_to_string(&toml_path).unwrap();
+        let preview = import_preview_content(toml_content, "import.TOML".into()).unwrap();
+        assert_eq!(preview.imported, vec!["toml-one"]);
+
+        let file_preview = import_preview(toml_path.to_string_lossy().into_owned()).unwrap();
+        assert_eq!(file_preview.imported, vec!["toml-one"]);
+    }
+
+    #[test]
+    fn scan_overrides_records_recoverable_and_unknown_definitions() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("overrides");
+        let paths = AppPaths {
+            root: config.root.clone(),
+        };
+        let rc = config.root.join("bashrc.custom");
+        let mut app_config = aliasmgr_core::config::AppConfig::default();
+        app_config.shells.bash_rc_path = Some(rc.clone());
+        app_config.save(&paths).unwrap();
+        std::fs::write(&rc, "alias gs='git status'\n# alias cm='commented out'\n").unwrap();
+        std::fs::write(
+            config.root.join(".bashrc"),
+            "function deploy() { echo hi; }\n",
+        )
+        .unwrap();
+
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        for name in ["gs", "cm", "deploy"] {
+            database
+                .insert_alias(&AliasRecord {
+                    name: name.into(),
+                    executable: "tool".into(),
+                    shells: vec![ShellKind::Bash],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        drop(database);
+
+        let overrides = scan_overrides().unwrap();
+        let gs = overrides
+            .iter()
+            .find(|entry| entry["name"] == "gs")
+            .expect("alias definition must be captured");
+        assert_eq!(gs["recoverable"], true);
+        assert_eq!(gs["original_definition"], "alias gs='git status'");
+
+        let cm = overrides
+            .iter()
+            .find(|entry| entry["name"] == "cm")
+            .expect("non-simple definition must still be recorded");
+        assert_eq!(cm["recoverable"], false);
+        assert!(cm["original_definition"].is_null());
+
+        let deploy = overrides
+            .iter()
+            .find(|entry| entry["name"] == "deploy")
+            .expect("default .bashrc function must be captured");
+        assert_eq!(deploy["recoverable"], true);
+    }
+
+    #[test]
     fn doctor_detects_tampered_generated_file_and_stale_state() {
         use aliasmgr_core::model::{ShellState, ShellStatus};
 
@@ -979,12 +1407,14 @@ mod tests {
         let status = StartupStatus {
             version: "0.1.0".to_owned(),
             detected_shell: Some("bash".to_owned()),
+            installed_shells: vec!["bash".to_owned(), "zsh".to_owned()],
             detection_source: "shell_env".to_owned(),
             config_directory: "/home/user/.config/alias-manager".to_owned(),
         };
         let json = serde_json::to_string(&status).expect("serialization failed");
         assert!(json.contains("\"version\":\"0.1.0\""));
         assert!(json.contains("\"detected_shell\":\"bash\""));
+        assert!(json.contains("\"installed_shells\":[\"bash\",\"zsh\"]"));
         assert!(json.contains("\"detection_source\":\"shell_env\""));
         assert!(json.contains("\"config_directory\""));
     }
@@ -994,6 +1424,7 @@ mod tests {
         let status = StartupStatus {
             version: "0.1.0".to_owned(),
             detected_shell: None,
+            installed_shells: Vec::new(),
             detection_source: "installed".to_owned(),
             config_directory: "/tmp/test".to_owned(),
         };
@@ -1200,6 +1631,7 @@ mod tests {
             .unwrap();
         let bash_names = database.managed_name_set(&ShellKind::Bash).unwrap();
         let zsh_names = database.managed_name_set(&ShellKind::Zsh).unwrap();
+        let retired_revision = database.max_retired_revision().unwrap();
         drop(database);
 
         // Restore the process-wide environment and temp directory before asserting.
@@ -1213,6 +1645,8 @@ mod tests {
         assert!(remaining.is_none());
         assert!(bash_names.retired.contains(&"gsdel".to_string()));
         assert!(zsh_names.retired.contains(&"gsdel".to_string()));
+        // The tombstone outranks the deleted revision (1 -> 2), like the CLI.
+        assert_eq!(retired_revision, 2);
     }
 
     #[test]

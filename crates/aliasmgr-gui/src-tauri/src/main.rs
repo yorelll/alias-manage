@@ -26,6 +26,7 @@ fn main() {
             commands::uninstall_preview,
             commands::uninstall_confirm,
             commands::overridden_definitions,
+            commands::scan_overrides,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
