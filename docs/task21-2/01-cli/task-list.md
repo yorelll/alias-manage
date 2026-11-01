@@ -5,6 +5,8 @@
 当前结果来源：`test/aliasmgr-last-result/verification-summary.json` 和 `test/aliasmgr-win-last-result/verification-summary.json`。
 当前 CLI 脚本结果：Linux `PASS`（33/33）；Windows `PASS_WITH_EXPECTED_LIMITATIONS`（9 PASS，4 EXPECTED-LIMITATION）。
 
+> 2026-11-01 本地重跑说明：修复 `scripts/verify-cli-windows.ps1` 的 W-006 注释与 W-008 用例后，本地结果为 11 PASS + 2 EXPECTED-LIMITATION（W-006/W-008 转为 PASS）。该结果尚未归档到 `test/`，因此下方历史结果与复选框保持不变。
+
 结果枚举：`PASS | FAIL | BLOCKED | EXPECTED-LIMITATION | NOT-APPLICABLE`
 
 ### 复选框规则
@@ -291,9 +293,9 @@
 
 - [ ] W-006：标签分面单选/多选/清除
   - 类型：脚本验证
-  - 当前结果：EXPECTED-LIMITATION（`--oneline` 参数不可用：`error: unexpected argument '--oneline' found`）
+  - 当前结果：历史归档 EXPECTED-LIMITATION（旧脚本把 `--oneline` 当成未知参数）；2026-11-01 本地重跑 PASS（`--arg --oneline` 已支持），结果尚未归档
   - 详细说明：[windows-cli.md — 搜索和标签分面](windows-cli.md)
-  - 证据：`test/aliasmgr-win-last-result/verification-summary.json`
+  - 证据：历史 `test/aliasmgr-win-last-result/verification-summary.json`；本地重跑 `target/verify-ws7/result/verification-summary.json`（未提交）
 
 - [x] W-007：JSON/TOML 导入
   - 类型：脚本验证
@@ -303,9 +305,9 @@
 
 - [ ] W-008：retain/purge 卸载
   - 类型：脚本验证
-  - 当前结果：EXPECTED-LIMITATION（`--dry-run` 参数不可用：`error: unexpected argument '--dry-run' found`）
+  - 当前结果：历史归档 EXPECTED-LIMITATION（旧脚本误用 `shell uninstall --dry-run`）；2026-11-01 本地重跑 PASS（隔离配置下 retain 保留 generated/db、purge 删除托管文件、目标文件保留、loader 块移除），结果尚未归档
   - 详细说明：[windows-cli.md](windows-cli.md)
-  - 证据：`test/aliasmgr-win-last-result/verification-summary.json`
+  - 证据：历史 `test/aliasmgr-win-last-result/verification-summary.json`；本地重跑 `target/verify-ws7/result/verification-summary.json`（未提交）
 
 - [x] W-009：删除别名（CRUD 完成）
   - 类型：脚本验证

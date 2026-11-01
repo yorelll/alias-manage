@@ -16,6 +16,7 @@ This inventory maps stable behavior IDs to the focused test target and workflow 
 | Y-001–Y-009 | sync, rollback, journal, shell state, forward recovery | `aliasmgr-core` sync tests | CI and Integration |
 | C-001–C-012 | CLI lifecycle, output, diagnostics, transfer, uninstall | `aliasmgr-cli` integration tests | CI and Integration CLI jobs |
 | G-001–G-012 | GUI frontend contracts, panels, commands, invoke args | GUI Node tests | CI GUI Linux/Windows jobs |
+| G-RUST (14 tests) | Tauri commands, DTO/checksum behavior, state scoping | `aliasmgr-gui` crate unit tests | Intended CI GUI Linux/Windows jobs; not yet run for this branch |
 | F-001–F-010 | failure paths and redaction | validation/storage/transfer/diagnostics tests | CI and Integration |
 | N-001–N-003 | isolation, no environment dumps, no secret fixture output | `cli_layers`, workflow isolation assertions | Integration jobs |
 | PERF-001 | 500/1000 alias generation benchmark | `aliasmgr-tests --test benchmark` | Integration/benchmark job |
@@ -27,3 +28,19 @@ This inventory maps stable behavior IDs to the focused test target and workflow 
 - Release `32093979406`: dry-run packaging status, unsigned source archive, SHA256SUMS, sanitized manifest, and source security scan.
 
 Failure-path coverage includes invalid names, missing targets, exact/case-fold conflicts, checksum mismatch, permission/unsafe-path results, lock timeout, malformed imports, unsupported records, partial sync, and purge target protection. The inventory does not claim PowerShell Profile/ExecutionPolicy, OneDrive, oh-my-zsh ordering, installers, or real GUI windows.
+
+## Coverage additions (2026-11-01, local evidence only)
+
+These map the newer behaviors to the tests that exercise them. No CI run has been triggered for the documentation branch; local results are preflight, not CI evidence.
+
+| Behavior | Local test target | Result |
+|---|---|---|
+| Configuration root precedence (`--config-dir` > non-empty `ALIASMGR_CONFIG_DIR` > platform default) | `crates/aliasmgr-cli/tests/config_root.rs` | 1 passed |
+| Revision monotonicity across update/delete/tombstones | `crates/aliasmgr-cli/tests/revisions.rs`; core `sync` tests | 3 passed |
+| `update` field preservation, NotFound = 4, invalid shell/env = 1 | `crates/aliasmgr-cli/tests/crud.rs`, `parse.rs` | 14 passed combined |
+| `import` preview vs `--yes`, sensitive environment filtering | `crates/aliasmgr-cli/tests/transfer.rs`, `import_env.rs`; core `transfer.rs` | 6 passed combined |
+| `uninstall` retain/purge, loader removal, target-file protection | `crates/aliasmgr-cli/tests/uninstall.rs`; core `uninstall.rs`; `scripts/verify-cli-windows.ps1` W-008 | 3 passed + W-008 PASS locally |
+| Syntax check boundary and previous-file preservation | `crates/aliasmgr-core/src/syntax.rs` tests; `sync.rs::syntax_failure_preserves_previous_generated_file_and_leaves_no_temp` | passed |
+| PowerShell 5.1 BOM default, PS7 BOM opt-in, checksum BOM stripping | `crates/aliasmgr-core/src/sync.rs` BOM tests; `config.rs` BOM defaults | passed |
+| GUI Rust commands/DTO/checksum | `aliasmgr-gui` crate unit tests | 14 passed |
+| GUI frontend wiring, search/tags, wizard, uninstall panel, script contracts | `crates/aliasmgr-gui/ui/src/{app,wiring,script-contracts}.test.ts` | 215 passed; typecheck/build passed |

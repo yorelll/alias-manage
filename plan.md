@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans` 执行本计划。所有步骤使用复选框跟踪，并在每个独立任务后运行对应测试。
 >
-> **验证方式：本项目采用 CI 驱动开发。本地没有 Rust 工具链（已实测：无 `cargo`/`rustc`/`rustup`），所有 `cargo` 命令只在 GitHub Actions 上执行，禁止在本地尝试。** 任务清单中带 `【CI】` 标记的条目表示“该命令由 CI 执行并通过”，带 `【本地】` 的条目才在本机执行（仅 `git`、`gh`、`npm`、`python`）。`gh` 如果不在 PATH，可以用绝对路径 `"D:/Program Files/GitHub CLI/gh.exe"`，但优先使用gh去执行。执行任何任务前必须先读 §11，其中的执行位置约定（§11.1.1、§11.1.2）、授权边界（§11.2）与迭代规则（§11.3）是硬性约束。
+> **验证方式：本地快速反馈 + GitHub Actions 跨平台门禁。本机已具备 Rust 工具链（cargo/rustc、MinGW gcc）与 Node/npm，编码阶段可本地运行 `cargo check`/`cargo test`/`cargo clippy`/`cargo fmt --check` 与前端 `npm` 命令做预检；运行前必须按 §11.1.1 设置 PATH 与隔离配置目录。跨平台 Shell、集成、打包与发布结论仍以 GitHub Actions 为唯一证据；本地通过不等于 CI 通过，未推送的分支不得声称 CI 成功。** 任务清单中带 `【CI】` 标记的条目表示“该命令由 CI 执行并通过”，带 `【本地】` 的条目表示可在本机执行（`git`、`gh`、`cargo`、`npm`、`python`、文件读写）。`gh` 如果不在 PATH，可以用绝对路径 `"D:/Program Files/GitHub CLI/gh.exe"`，但优先使用 gh 去执行。执行任何任务前必须先读 §11，其中的执行位置约定（§11.1.1、§11.1.2）、授权边界（§11.2）与迭代规则（§11.3）是硬性约束。
 
 **目标：** 构建一个支持 Linux 与 Windows 的跨平台命令别名管理器，以统一别名模型、安全的结构化参数透传、Shell 适配器和可回滚配置同步为核心。**跨平台 GUI 与 Linux CLI 同为基础需求**，两者共享同一核心库。
 
@@ -1030,7 +1030,7 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 ### 11.1 基本约定
 
-**本项目采用 CI 驱动开发（remote-first verification）。** 开发者本地不安装 Rust 工具链、Zsh、WebKitGTK、Visual Studio Build Tools、PowerShell 7 等工具，所有编译、测试与打包在 GitHub Actions 的 Linux/Windows runner 上执行。AI 通过本地已安装的 `gh` 读取运行结果并迭代。
+**本项目采用本地预检 + CI 门禁（local preflight, remote gate）。** 本机已有 Rust 工具链、Node/npm 和部分 Shell，可本地运行 `cargo check`/`cargo test`/`cargo clippy`/`cargo fmt --check` 与前端命令缩短反馈环。Linux/Windows 跨平台矩阵、真实 Shell 集成、Tauri 构建与打包仍在 GitHub Actions 上执行；合并与发布结论必须引用 CI run。AI 通过本地已安装的 `gh` 读取运行结果并迭代。
 
 标准迭代闭环：
 
@@ -1054,9 +1054,10 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 | `gh`                         | 已安装（2.97.0），**不在 PATH** | 位于 `D:\Program Files\GitHub CLI\gh.exe`，**必须使用绝对路径调用** |
 | `node` / `npm`               | 已安装（v24.16.0 / 11.13.0）    | 可做前端本地自检                                                    |
 | `python`                     | 已安装（3.12.3）                | 可本地校验测试夹具脚本语法                                          |
-| `cargo` / `rustc` / `rustup` | **未安装**                      | **本地无法执行任何 `cargo` 命令**                                   |
+| `cargo` / `rustc`            | 已安装（cargo 1.97+）           | 可本地执行 `cargo check`/`test`/`clippy`/`fmt`                      |
+| `gcc`（MinGW-W64）           | 已安装，但不在默认 PATH         | `rusqlite` bundled 构建需要；先 `export PATH="/d/mingw64/bin:$PATH"` |
 
-**结论：本地不存在 Rust 工具链，因此计划中所有 `cargo` 命令（含 `cargo fmt`、`cargo check`、`cargo clippy`、`cargo test`、`cargo tauri build`/`dev`）一律不在本地执行，只在 GitHub Actions 上执行。** 本项目不要求用户安装 Rust——这正是采用 CI 驱动开发的原因。
+**结论：本地可以执行 `cargo fmt`、`cargo check`、`cargo clippy`、`cargo test` 作为预检，但必须先把 MinGW `gcc` 与 Node 加入 PATH，并设置隔离的 `ALIASMGR_CONFIG_DIR`（见 `docs/testing.md`）。`cargo tauri build`/`dev` 与跨平台打包仍只在 GitHub Actions 或具备完整原生依赖的机器上执行。** 本地预检通过不代表 CI 通过；任何“已验证/已发布”的结论必须给出对应 CI run id。
 
 ```bash
 "gh.exe" run list --branch <branch> --limit 5
@@ -1076,13 +1077,13 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 判定规则（标记缺失时以此为准）：
 
-1. 任何 `cargo *` 命令 → **`【CI】`**，无例外；
-2. 任何需要 Bash、Zsh、PowerShell 5.1/7、WebKitGTK、MSVC 的验证 → **`【CI】`**；
+1. 任何 `cargo *` 命令 → 本地可做预检（先设置 PATH 与隔离配置目录）；跨平台与发布结论必须另有 **`【CI】`** 证据；
+2. 任何需要 Bash、Zsh、PowerShell 5.1/7 跨版本、WebKitGTK、MSVC 的验证 → **`【CI】`**（本机即使装有部分解释器，也不构成跨平台证据）；
 3. 任何打包（AppImage/deb/MSI/EXE）→ **`【CI】`**；
 4. `git` 提交推送、`gh` 查询、`npm` 前端自检、`python` 夹具语法检查 → `【本地】`；
 5. GUI 的可启动性与交互确认 → 既不在本地也不在 CI，由用户下载 artifact 后人工确认（§11.9）。
 
-**由此产生的完成判定规则（强制）：** 任何“测试通过”“已验证”“已修复”的结论必须以 **GitHub Actions 的运行结果**为证据，并在汇报时给出 run id 与结论。禁止基于“代码看起来对了”或本地未执行的命令宣称通过；本地缺少 `cargo` 意味着不存在“本地跑过了”这种可能性。任务清单中的 `【CI】执行 cargo test ...` 应理解为“该命令已由 CI 执行并通过”，而不是“AI 在本地执行过”。
+**由此产生的完成判定规则（强制）：** 本地预检结果可以记录为“本地通过”，但任何跨平台、合并或发布结论必须以 **GitHub Actions 的运行结果**为证据，并在汇报时给出 run id 与结论。禁止基于“代码看起来对了”或未执行的命令宣称通过；已推送但尚未运行的分支也不得声称 CI 成功。任务清单中的 `【CI】执行 cargo test ...` 应理解为“该命令已由 CI 执行并通过”，而不是“AI 在本地执行过”。
 
 ### 11.2 授权与操作边界（必须遵守）
 
@@ -1096,7 +1097,7 @@ PowerShell 的 Profile 加载时间是用户感知最强的部分（直接体现
 
 ### 11.3 迭代规则（防止无效轮询与资源浪费）
 
-- **一次迭代 = 一个语义完整的 commit。** 不允许为了触发 CI 而提交空 commit 或 `fix ci` 系列无意义提交。**本地没有 Rust 工具链，无法预先排除编译错误**，因此提交前必须靠仔细的静态审查（类型、借用、模块可见性、依赖项、feature 开关）压低往返次数——每次编译错误都要花一整轮 CI 才能发现。
+- **一次迭代 = 一个语义完整的 commit。** 不允许为了触发 CI 而提交空 commit 或 `fix ci` 系列无意义提交。**提交前先在本地跑 `cargo check`/`cargo test`/`cargo clippy`/`cargo fmt --check` 与前端检查**，排除大部分编译、格式和测试错误；跨平台分支与原生依赖差异仍需靠 CI 发现。
 - 推送后使用 `gh run watch --exit-status` 等待，而不是循环 `sleep` + `gh run list` 轮询。
 - 读取失败信息优先使用 `gh run view <id> --log-failed`，**不要下载完整日志**（完整日志包含大量无关输出，既慢又浪费上下文）。
 - 若同一根因连续失败 **3 次**仍未解决，停止迭代，向用户汇报已知信息与假设，请求决策；不要继续盲目试错。
