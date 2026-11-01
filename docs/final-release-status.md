@@ -2,7 +2,7 @@
 
 ## 当前结论（2026-11-01）
 
-文档与脚本收尾分支 `agent/ws7-docs` 已完成本地验证，但尚未推送，也没有触发任何 CI run。因此：
+当前分支 `feature/alias-manager-mvp` 已完成本地验证（收尾分支 `agent/ws7-docs` 已合并），但尚未推送，也没有触发任何 CI run。因此：
 
 - 本地验证通过：Rust workspace 172 个测试、GUI Tauri crate 14 个测试、GUI 前端 223 个测试（含 `task20.test.ts`）及 typecheck/build。
 - `cargo fmt --all -- --check`、GUI crate fmt check、`cargo clippy -D warnings` 均已在本地通过。
@@ -28,7 +28,7 @@
 
 | 工作流 | Run ID | 结果 | 说明 |
 |---|---:|---|---|
-| 当前分支 `agent/ws7-docs` | — | 未触发 | 分支尚未推送；无 CI 证据 |
+| 当前分支 `feature/alias-manager-mvp` | — | 未触发 | 分支尚未推送；无 CI 证据 |
 | Fast CI（历史） | 32245518564 | PASS | commit ed28bac；Linux/Windows workspace、lint、GUI npm、前端 test/typecheck/build |
 | Integration（历史） | 32245524584 | PASS | commit ed28bac；Bash、Zsh、oh-my-zsh contract、PowerShell 5.1/7、lock、CLI、benchmark、隔离 |
 | Fast CI（更早） | 32093176327 | PASS | 上一基线 |
@@ -36,7 +36,7 @@
 | Release dry-run（更早） | 32093979406 | PASS | packaging dry-run、unsigned source archive、SHA256SUMS、sanitized manifest、security scan |
 | Prerelease workflow | — | 待执行 | `workflow_dispatch` only；需 `create_prerelease=true` + `confirmation=CREATE-PRERELEASE` |
 
-历史 run 只对其对应 commit 生效，不代表当前分支。当前分支已合并 main（`52e0635`），但尚未推送，也没有任何 CI run；因此 CI 门禁、`gui-rust-windows` job 和 prerelease 打包都还没有在本分支上执行过。
+历史 run 只对其对应 commit 生效，不代表当前分支。当前分支已合并全部收尾提交（最新 `9d862a4`），但尚未推送，也没有任何 CI run；因此 CI 门禁、`gui-rust-windows` job 和 prerelease 打包都还没有在本分支上执行过。
 
 ## 测试与产物
 

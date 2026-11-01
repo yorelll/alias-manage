@@ -33,7 +33,7 @@
 - WS4b 已合并：文件系统可靠性接线、数据库备份轮转、导出脱敏、PowerShell 大小写折叠预览、PowerShell 测试隔离与 PS7 环境跳过。合并后工作区测试 147 pass / 0 fail。
 - WS3/WS4a/WS5 已通过复审并进入最终修正/合并队列。
 - WS6 已合并到 main（`52e0635`）：fmt 门禁改为 check-only，`ci.yml` 新增 `gui-rust-windows`（前端构建 + Tauri crate rustfmt/check/test），prerelease Tauri 构建改为在 crate 目录内执行并传入 `tauri-prerelease.json` 配置文件。
-- WS7 已完成本地收尾（分支 `agent/ws7-docs`，未推送、未触发 CI）：
+- WS7 已合并（收尾分支 `agent/ws7-docs`；当前分支未推送、未触发 CI）：
   - 已更新 `plan.md`、`README.md`、`docs/testing.md`，把“本地无 Rust 工具链”改为本地预检 + CI 门禁，并保留 CI 边界。
   - 已按实现重写 `docs/cli-commands.md`，更新 `docs/exit-codes.md`、`docs/limitations.md`、`docs/release-checklist.md`、`docs/final-release-status.md`、`docs/ci-test-inventory.md` 与 `docs/task21-2/01-cli/task-list.md` 的过时陈述。
   - `scripts/verify-cli-windows.ps1` 的 W-008 已改为隔离配置目录下的 retain/purge 检查，W-006 注释说明 `--arg --oneline` 已支持。
