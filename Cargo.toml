@@ -5,6 +5,7 @@ members = [
   "crates/aliasmgr-cli",
   "crates/aliasmgr-tests",
 ]
+exclude = ["crates/aliasmgr-gui/src-tauri"]
 
 [workspace.package]
 version = "0.1.0"
