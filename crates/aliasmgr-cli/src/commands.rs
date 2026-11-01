@@ -84,6 +84,12 @@ pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, Alia
         tags: args.tags.clone(),
         ..Default::default()
     };
+    if let Some(target_type) = args.target_type {
+        alias.target_type = target_type.into();
+    }
+    if let Some(path_mode) = args.path_mode {
+        alias.path_mode = path_mode.into();
+    }
     if !args.shell.is_empty() {
         alias.shells = parse_shells(&args.shell)?;
     }
@@ -212,6 +218,12 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
     }
     if let Some(tags) = &args.tags {
         alias.tags = tags.clone();
+    }
+    if let Some(target_type) = args.target_type {
+        alias.target_type = target_type.into();
+    }
+    if let Some(path_mode) = args.path_mode {
+        alias.path_mode = path_mode.into();
     }
     if args.no_pass_args {
         alias.pass_args = false;
@@ -376,27 +388,89 @@ pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String {
     }
 }
 
-pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let (rc_path, generated) = match shell.to_ascii_lowercase().as_str() {
-        "bash" => (
+fn default_powershell_profile_path(shell: &str) -> Option<PathBuf> {
+    if cfg!(windows) {
+        let home = std::env::var_os("USERPROFILE").map(PathBuf::from)?;
+        let folder = match shell {
+            "powershell5" => "WindowsPowerShell",
+            "powershell7" => "PowerShell",
+            _ => return None,
+        };
+        Some(
+            home.join("Documents")
+                .join(folder)
+                .join("Microsoft.PowerShell_profile.ps1"),
+        )
+    } else {
+        match shell {
+            // Windows PowerShell 5.1 does not exist outside Windows.
+            "powershell5" => None,
+            "powershell7" => std::env::var_os("HOME")
+                .map(PathBuf::from)
+                .map(|home| home.join(".config").join("powershell").join("profile.ps1")),
+            _ => None,
+        }
+    }
+}
+
+/// Resolves the profile/RC file for a Shell and whether the loader block must
+/// use PowerShell syntax. A configured path always wins over the platform
+/// default, which keeps tests and custom setups away from real profiles.
+fn loader_target(
+    config: &aliasmgr_core::config::AppConfig,
+    paths: &aliasmgr_core::config::AppPaths,
+    shell: &str,
+) -> Result<(PathBuf, bool), AliasError> {
+    match shell {
+        "bash" => Ok((
             config
                 .shells
                 .bash_rc_path
+                .clone()
                 .unwrap_or_else(|| paths.root.join(".bashrc")),
-            paths.generated_path("bash"),
-        ),
-        "zsh" => (
+            false,
+        )),
+        "zsh" => Ok((
             config
                 .shells
                 .zsh_rc_path
+                .clone()
                 .unwrap_or_else(|| paths.root.join(".zshrc")),
-            paths.generated_path("zsh"),
-        ),
-        _ => return Err(AliasError::ShellNotInstalled),
-    };
-    let loader = aliasmgr_core::shells::common::render_loader(&generated);
+            false,
+        )),
+        "powershell5" => config
+            .shells
+            .powershell5_profile_path
+            .clone()
+            .or_else(|| default_powershell_profile_path("powershell5"))
+            .map(|path| (path, true))
+            .ok_or(AliasError::ShellNotInstalled),
+        "powershell7" => config
+            .shells
+            .powershell7_profile_path
+            .clone()
+            .or_else(|| default_powershell_profile_path("powershell7"))
+            .map(|path| (path, true))
+            .ok_or(AliasError::ShellNotInstalled),
+        _ => Err(AliasError::ShellNotInstalled),
+    }
+}
+
+fn render_shell_loader(generated: &Path, powershell: bool) -> String {
+    if powershell {
+        aliasmgr_core::shells::common::render_powershell_loader(generated)
+    } else {
+        aliasmgr_core::shells::common::render_loader(generated)
+    }
+}
+
+pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
+    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
+    let config = paths.load_config()?;
+    let name = shell.to_ascii_lowercase();
+    let (rc_path, powershell) = loader_target(&config, &paths, &name)?;
+    let generated = paths.generated_path(&name);
+    let loader = render_shell_loader(&generated, powershell);
     let before = std::fs::read_to_string(&rc_path).unwrap_or_default();
     if aliasmgr_core::shells::common::install_loader(&before, &loader)? == before {
         return Ok(false);
@@ -413,17 +487,8 @@ pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, Alia
 pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
     let config = paths.load_config()?;
-    let rc_path = match shell.to_ascii_lowercase().as_str() {
-        "bash" => config
-            .shells
-            .bash_rc_path
-            .unwrap_or_else(|| paths.root.join(".bashrc")),
-        "zsh" => config
-            .shells
-            .zsh_rc_path
-            .unwrap_or_else(|| paths.root.join(".zshrc")),
-        _ => return Err(AliasError::ShellNotInstalled),
-    };
+    let name = shell.to_ascii_lowercase();
+    let (rc_path, _) = loader_target(&config, &paths, &name)?;
     if !rc_path.exists() {
         return Ok(false);
     }
@@ -444,17 +509,8 @@ pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, Al
 pub fn shell_install_status(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
     let config = paths.load_config()?;
-    let rc_path = match shell.to_ascii_lowercase().as_str() {
-        "bash" => config
-            .shells
-            .bash_rc_path
-            .unwrap_or_else(|| paths.root.join(".bashrc")),
-        "zsh" => config
-            .shells
-            .zsh_rc_path
-            .unwrap_or_else(|| paths.root.join(".zshrc")),
-        _ => return Err(AliasError::ShellNotInstalled),
-    };
+    let name = shell.to_ascii_lowercase();
+    let (rc_path, _) = loader_target(&config, &paths, &name)?;
     Ok(rc_path.exists()
         && aliasmgr_core::shells::common::loader_position(&std::fs::read_to_string(rc_path)?)?
             == aliasmgr_core::shells::common::LoaderPosition::AtEnd)
@@ -579,6 +635,23 @@ pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError
     aliasmgr_core::uninstall::uninstall(&paths.root, mode, None)?;
     Ok(())
 }
+
+/// Detects manual edits to a generated file by recomputing its embedded
+/// `# file_checksum:` value. A missing checksum line is also treated as tampering.
+fn generated_checksum_finding(shell: &ShellKind, path: &Path) -> Option<String> {
+    // Lossy decoding keeps invalid UTF-8 edits detectable instead of skipping them.
+    let content = String::from_utf8_lossy(&std::fs::read(path).ok()?).into_owned();
+    let expected = content.lines().find_map(|line| {
+        line.trim_start_matches('\u{feff}')
+            .strip_prefix("# file_checksum: ")
+            .map(str::trim)
+    });
+    match expected {
+        Some(expected) if aliasmgr_core::sync::verify_file_checksum(&content, expected) => None,
+        _ => Some(format!("生成文件校验和不匹配（可能被手工修改）: {shell:?}")),
+    }
+}
+
 pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
     let database_path_exists = paths.root.join("aliases.db").exists();
@@ -593,17 +666,11 @@ pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
         ShellKind::PowerShell5,
         ShellKind::PowerShell7,
     ] {
-        if !paths
-            .generated_path(match shell {
-                ShellKind::Bash => "bash",
-                ShellKind::Zsh => "zsh",
-                ShellKind::PowerShell5 => "powershell5",
-                ShellKind::PowerShell7 => "powershell7",
-                _ => "unsupported",
-            })
-            .exists()
-        {
+        let generated = paths.generated_path(shell_cli_name(&shell));
+        if !generated.exists() {
             findings.push(format!("生成文件缺失: {shell:?}"));
+        } else if let Some(finding) = generated_checksum_finding(&shell, &generated) {
+            findings.push(finding);
         }
     }
     let revision = database
@@ -633,6 +700,81 @@ pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::ffi::OsString;
+
+    // Environment variables are process-global; these tests run in the library
+    // test binary, so serialize and always restore them.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn restore_env(saved: &[(&str, Option<OsString>)]) {
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    fn unique_home(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aliasmgr-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ))
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_windows_powershell_profile_defaults_from_userprofile() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = [("USERPROFILE", std::env::var_os("USERPROFILE"))];
+        let home = unique_home("profile-defaults-win");
+        std::env::set_var("USERPROFILE", &home);
+
+        assert_eq!(
+            default_powershell_profile_path("powershell5"),
+            Some(
+                home.join("Documents")
+                    .join("WindowsPowerShell")
+                    .join("Microsoft.PowerShell_profile.ps1")
+            )
+        );
+        // Resolution is path-only: it does not require Documents to exist.
+        std::fs::create_dir_all(home.join("Documents")).unwrap();
+        assert_eq!(
+            default_powershell_profile_path("powershell7"),
+            Some(
+                home.join("Documents")
+                    .join("PowerShell")
+                    .join("Microsoft.PowerShell_profile.ps1")
+            )
+        );
+        assert_eq!(default_powershell_profile_path("bash"), None);
+
+        restore_env(&saved);
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolves_unix_powershell_profile_defaults_from_home() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved = [("HOME", std::env::var_os("HOME"))];
+        let home = unique_home("profile-defaults-unix");
+        std::env::set_var("HOME", &home);
+
+        assert_eq!(
+            default_powershell_profile_path("powershell7"),
+            Some(home.join(".config").join("powershell").join("profile.ps1"))
+        );
+        assert_eq!(default_powershell_profile_path("powershell5"), None);
+
+        restore_env(&saved);
+    }
+
     #[test]
     fn dry_run_and_reload_are_non_mutating_helpers() {
         assert!(reload_print(Some("cfg"), "bash").contains("generated/bash.sh"));

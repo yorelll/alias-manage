@@ -59,6 +59,8 @@ fn cli_uninstall_removes_marked_loader_blocks_and_keeps_user_content_and_targets
         environment: vec![],
         tags: vec![],
         no_pass_args: false,
+        target_type: None,
+        path_mode: None,
     };
     commands::add(Some(&config_dir), &add).unwrap();
     commands::sync(Some(&config_dir), false).unwrap();

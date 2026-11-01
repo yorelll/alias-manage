@@ -30,6 +30,8 @@ fn environment_root_drives_add_sync_and_reload_without_local_fallback() {
             environment: vec![],
             tags: vec![],
             no_pass_args: false,
+            target_type: None,
+            path_mode: None,
         };
         commands::add(None, &add).unwrap();
         assert!(config_root.join("aliases.db").exists());
