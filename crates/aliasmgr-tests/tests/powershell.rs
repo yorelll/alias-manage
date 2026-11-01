@@ -1,5 +1,7 @@
 #[cfg(windows)]
 use aliasmgr_core::detection::installed_powershells;
+#[cfg(windows)]
+use aliasmgr_core::model::TargetType;
 use aliasmgr_core::{
     model::{AliasRecord, ManagedNameSet, ShellKind},
     shells::powershell,
@@ -60,6 +62,69 @@ fn unique_parser_root(label: &str) -> PathBuf {
             .map(|elapsed| elapsed.as_nanos())
             .unwrap_or_default()
     ))
+}
+
+#[cfg(windows)]
+fn assert_parser_accepts(script: &str, label: &str) {
+    let root = unique_parser_root(label);
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("generated.ps1");
+    fs::write(&path, script).unwrap();
+    let path_literal = path.to_string_lossy().replace('\'', "''");
+    let probe = format!("& {{ param($path) $tokens = $null; $errors = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$tokens, [ref]$errors); if ($errors.Count -gt 0) {{ exit 1 }} }} -path '{}'", path_literal);
+    let status = Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &probe])
+        .status()
+        .unwrap();
+    assert!(status.success(), "PowerShell parser rejected {label}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn powershell_parser_accepts_cwd_and_environment_function() {
+    let mut environment = std::collections::BTreeMap::new();
+    environment.insert("ALIASMGR_TEST_ENV".to_string(), "hello world".to_string());
+    let alias = AliasRecord {
+        name: "gsenv".into(),
+        executable: "git.exe".into(),
+        fixed_args: vec!["status".into()],
+        working_directory: Some("C:/work dir".into()),
+        environment,
+        ..Default::default()
+    };
+    let script = powershell::render(
+        &alias,
+        ShellKind::PowerShell5,
+        &ManagedNameSet {
+            current: vec![],
+            retired: vec![],
+        },
+    )
+    .unwrap();
+    assert_parser_accepts(&script, "cwd-env");
+}
+
+#[cfg(windows)]
+#[test]
+fn powershell_parser_accepts_change_directory_function() {
+    let alias = AliasRecord {
+        name: "jump".into(),
+        executable: ".".into(),
+        target_type: TargetType::ChangeDirectory,
+        working_directory: Some("C:/work dir".into()),
+        ..Default::default()
+    };
+    let script = powershell::render(
+        &alias,
+        ShellKind::PowerShell5,
+        &ManagedNameSet {
+            current: vec![],
+            retired: vec![],
+        },
+    )
+    .unwrap();
+    assert_parser_accepts(&script, "change-directory");
 }
 
 #[test]
