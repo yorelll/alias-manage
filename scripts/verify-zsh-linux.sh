@@ -288,14 +288,19 @@ test_zsh_argv "Z-005-c" "backslash in arg" "ztest_bs" \
 test_zsh_argv "Z-005-d" "hyphen in tag" "ztest_tag" \
   --exec "echo" --tag "my-tag" --shell "zsh"
 
+# Iterate over elements instead of indices: zsh treats ${!name[@]} as
+# variable indirection, not bash-style index enumeration.
 ARGV_CASES_JSON="["
-for i in "${!ARGV_CASES[@]}"; do
-  ARGV_CASES_JSON+="${ARGV_CASES[$i]}"
-  if [[ $i -lt $((${#ARGV_CASES[@]}-1)) ]]; then
-    ARGV_CASES_JSON+=","
+first=1
+for item in "${ARGV_CASES[@]}"; do
+  if [ "$first" -eq 1 ]; then
+    first=0
+  else
+    ARGV_CASES_JSON="${ARGV_CASES_JSON},"
   fi
+  ARGV_CASES_JSON="${ARGV_CASES_JSON}${item}"
 done
-ARGV_CASES_JSON+="]"
+ARGV_CASES_JSON="${ARGV_CASES_JSON}]"
 
 if [[ $ARGV_FAIL -eq 0 ]]; then
   record_result "Z-005" "zsh argv boundary" "PASS" \
@@ -404,14 +409,18 @@ else
   EXIT_CODE=0
 fi
 
+# Same portable element loop as above; do not use ${!RESULTS[@]} in zsh.
 RESULTS_JSON="["
-for i in "${!RESULTS[@]}"; do
-  RESULTS_JSON+="${RESULTS[$i]}"
-  if [[ $i -lt $((${#RESULTS[@]}-1)) ]]; then
-    RESULTS_JSON+=","
+first=1
+for item in "${RESULTS[@]}"; do
+  if [ "$first" -eq 1 ]; then
+    first=0
+  else
+    RESULTS_JSON="${RESULTS_JSON},"
   fi
+  RESULTS_JSON="${RESULTS_JSON}${item}"
 done
-RESULTS_JSON+="]"
+RESULTS_JSON="${RESULTS_JSON}]"
 
 cat > "$SUMMARY_JSON" <<JSON
 {
