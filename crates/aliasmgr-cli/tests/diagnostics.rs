@@ -8,8 +8,10 @@ fn doctor_reports_missing_configuration_and_reload_print_is_stable() {
     assert!(findings.iter().any(|finding| finding.contains("数据库")));
     assert!(commands::reload_print(Some(&root_string), "bash").contains("generated/bash.sh"));
     assert!(commands::reload_print(Some(&root_string), "zsh").contains("generated/zsh.sh"));
-    assert!(commands::reload_print(Some(&root_string), "powershell5").contains("generated/powershell5.ps1"));
-    assert!(commands::reload_print(Some(&root_string), "powershell7").contains("generated/powershell7.ps1"));
+    assert!(commands::reload_print(Some(&root_string), "powershell5")
+        .contains("generated/powershell5.ps1"));
+    assert!(commands::reload_print(Some(&root_string), "powershell7")
+        .contains("generated/powershell7.ps1"));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -21,7 +23,9 @@ fn shell_loader_install_and_uninstall_are_idempotent() {
     std::fs::write(&rc, "user\n").unwrap();
     let mut config = aliasmgr_core::config::AppConfig::default();
     config.shells.bash_rc_path = Some(rc.clone());
-    config.save(&aliasmgr_core::config::AppPaths { root: root.clone() }).unwrap();
+    config
+        .save(&aliasmgr_core::config::AppPaths { root: root.clone() })
+        .unwrap();
     assert!(commands::shell_install(Some(root.to_str().unwrap()), "bash").unwrap());
     assert!(!commands::shell_install(Some(root.to_str().unwrap()), "bash").unwrap());
     assert!(commands::shell_install_status(Some(root.to_str().unwrap()), "bash").unwrap());

@@ -39,8 +39,14 @@ fn environment_root_drives_add_sync_and_reload_without_local_fallback() {
         assert!(!sandbox.join(".alias-manager").exists());
 
         let reload = commands::reload_print(None, "bash");
-        assert!(reload.contains("generated/bash.sh"), "reload output: {reload}");
-        assert!(reload.contains(config_root.to_string_lossy().as_ref()), "reload output: {reload}");
+        assert!(
+            reload.contains("generated/bash.sh"),
+            "reload output: {reload}"
+        );
+        assert!(
+            reload.contains(config_root.to_string_lossy().as_ref()),
+            "reload output: {reload}"
+        );
     });
 
     std::env::set_current_dir(previous_dir).unwrap();

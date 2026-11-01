@@ -1,11 +1,11 @@
 use aliasmgr_core::{
     config::AppPaths,
     detection::{detect, DetectionContext},
-    model::{AliasRecord, PathOrigin, PathMode, ShellKind, TargetType},
-    validation::validate_alias,
+    model::{AliasRecord, PathMode, PathOrigin, ShellKind, TargetType},
     search::{SearchField, SearchQuery, SortField},
     service::AliasService,
     storage::Database,
+    validation::validate_alias,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -57,7 +57,11 @@ pub fn startup_status() -> StartupStatus {
         login_shell: None,
     };
     let detection = detect(&context);
-    let detected_shell = detection.selected.as_ref().map(shell_kind_to_str).map(str::to_owned);
+    let detected_shell = detection
+        .selected
+        .as_ref()
+        .map(shell_kind_to_str)
+        .map(str::to_owned);
     let detection_source = detection.source;
 
     let paths = AppPaths::discover(None);
@@ -175,11 +179,24 @@ fn path_origin_from_str(value: &str) -> Result<PathOrigin, String> {
 
 fn alias_to_dto(alias: &AliasRecord) -> AliasDto {
     AliasDto {
-        id: alias.id.to_string(), name: alias.name.clone(), description: alias.description.clone(),
-        executable: alias.executable.clone(), target_type: target_type_to_str(&alias.target_type).to_owned(),
-        fixed_args: alias.fixed_args.clone(), pass_args: alias.pass_args, working_directory: alias.working_directory.clone(),
-        environment: alias.environment.clone(), shells: alias.shells.iter().map(shell_kind_to_str).map(str::to_owned).collect(),
-        enabled: alias.enabled, tags: alias.tags.clone(), revision: alias.revision,
+        id: alias.id.to_string(),
+        name: alias.name.clone(),
+        description: alias.description.clone(),
+        executable: alias.executable.clone(),
+        target_type: target_type_to_str(&alias.target_type).to_owned(),
+        fixed_args: alias.fixed_args.clone(),
+        pass_args: alias.pass_args,
+        working_directory: alias.working_directory.clone(),
+        environment: alias.environment.clone(),
+        shells: alias
+            .shells
+            .iter()
+            .map(shell_kind_to_str)
+            .map(str::to_owned)
+            .collect(),
+        enabled: alias.enabled,
+        tags: alias.tags.clone(),
+        revision: alias.revision,
         path_mode: Some(path_mode_to_str(&alias.path_mode).to_owned()),
         path_origin: Some(path_origin_to_str(&alias.path_origin).to_owned()),
     }
@@ -193,20 +210,41 @@ fn database() -> Result<Database, String> {
 #[tauri::command]
 pub fn list_aliases() -> Result<Vec<AliasDto>, String> {
     let database = database()?;
-    AliasService::new(&database).list().map(|aliases| aliases.iter().map(alias_to_dto).collect()).map_err(|error| error.to_string())
+    AliasService::new(&database)
+        .list()
+        .map(|aliases| aliases.iter().map(alias_to_dto).collect())
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn search_aliases(request: SearchRequest) -> Result<Vec<AliasDto>, String> {
     let database = database()?;
-    let query = SearchQuery { query: request.query, fuzzy: request.fuzzy, limit: request.limit, tag_filter: request.tag_filter, field: SearchField::All, sort: SortField::Name, descending: false };
-    AliasService::new(&database).search(&query).map(|results| results.iter().map(|result| alias_to_dto(&result.alias)).collect()).map_err(|error| error.to_string())
+    let query = SearchQuery {
+        query: request.query,
+        fuzzy: request.fuzzy,
+        limit: request.limit,
+        tag_filter: request.tag_filter,
+        field: SearchField::All,
+        sort: SortField::Name,
+        descending: false,
+    };
+    AliasService::new(&database)
+        .search(&query)
+        .map(|results| {
+            results
+                .iter()
+                .map(|result| alias_to_dto(&result.alias))
+                .collect()
+        })
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn tag_counts() -> Result<BTreeMap<String, usize>, String> {
     let database = database()?;
-    AliasService::new(&database).tag_counts().map_err(|error| error.to_string())
+    AliasService::new(&database)
+        .tag_counts()
+        .map_err(|error| error.to_string())
 }
 
 fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
@@ -223,7 +261,11 @@ fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
     alias.tags = dto.tags;
     alias.revision = dto.revision;
     alias.target_type = target_type_from_str(&dto.target_type)?;
-    alias.shells = dto.shells.iter().map(|shell| shell_from_str(shell)).collect::<Result<_, _>>()?;
+    alias.shells = dto
+        .shells
+        .iter()
+        .map(|shell| shell_from_str(shell))
+        .collect::<Result<_, _>>()?;
     alias.path_mode = match dto.path_mode.as_deref() {
         Some(value) => path_mode_from_str(value)?,
         None => PathMode::Absolute,
@@ -240,46 +282,102 @@ fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
 pub fn create_alias(mut alias: AliasDto) -> Result<AliasDto, String> {
     let database = database()?;
     alias.id = uuid::Uuid::new_v4().to_string();
-    AliasService::new(&database).create(dto_to_alias(alias)?).map(|saved| alias_to_dto(&saved)).map_err(|error| error.to_string())
+    AliasService::new(&database)
+        .create(dto_to_alias(alias)?)
+        .map(|saved| alias_to_dto(&saved))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn update_alias(alias: AliasDto) -> Result<AliasDto, String> {
     let database = database()?;
-    AliasService::new(&database).update(dto_to_alias(alias)?).map(|saved| alias_to_dto(&saved)).map_err(|error| error.to_string())
+    AliasService::new(&database)
+        .update(dto_to_alias(alias)?)
+        .map(|saved| alias_to_dto(&saved))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub fn delete_alias(id: String) -> Result<bool, String> {
     let parsed = uuid::Uuid::parse_str(&id).map_err(|error| error.to_string())?;
     let database = database()?;
-    let Some(alias) = database.get_alias(parsed).map_err(|error| error.to_string())? else { return Ok(false) };
+    let Some(alias) = database
+        .get_alias(parsed)
+        .map_err(|error| error.to_string())?
+    else {
+        return Ok(false);
+    };
     for shell in &alias.shells {
-        database.retire_name(&alias.name, shell, alias.revision).map_err(|error| error.to_string())?;
+        database
+            .retire_name(&alias.name, shell, alias.revision)
+            .map_err(|error| error.to_string())?;
     }
-    database.delete_alias(parsed).map_err(|error| error.to_string())
+    database
+        .delete_alias(parsed)
+        .map_err(|error| error.to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DoctorFindingDto { pub shell: Option<String>, pub severity: String, pub code: String, pub message: String, pub action: Option<String> }
+pub struct DoctorFindingDto {
+    pub shell: Option<String>,
+    pub severity: String,
+    pub code: String,
+    pub message: String,
+    pub action: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ImportPreviewDto { pub imported: Vec<String>, pub skipped: Vec<String>, pub warnings: Vec<String>, pub unsupported: Vec<String> }
+pub struct ImportPreviewDto {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+    pub warnings: Vec<String>,
+    pub unsupported: Vec<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SettingsDto { pub config_directory: String, pub default_shell: String, pub backup_keep: usize, pub log_keep: usize, pub allow_relative_paths: bool }
+pub struct SettingsDto {
+    pub config_directory: String,
+    pub default_shell: String,
+    pub backup_keep: usize,
+    pub log_keep: usize,
+    pub allow_relative_paths: bool,
+}
 
 #[tauri::command]
 pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
     let paths = AppPaths::discover(None);
     let database = database()?;
     let mut findings = Vec::new();
-    if !paths.root.join("aliases.db").exists() { findings.push(DoctorFindingDto { shell: None, severity: "error".into(), code: "database_missing".into(), message: "数据库文件缺失".into(), action: Some("创建或选择配置目录".into()) }); }
+    if !paths.root.join("aliases.db").exists() {
+        findings.push(DoctorFindingDto {
+            shell: None,
+            severity: "error".into(),
+            code: "database_missing".into(),
+            message: "数据库文件缺失".into(),
+            action: Some("创建或选择配置目录".into()),
+        });
+    }
     for shell in ["bash", "zsh", "powershell5", "powershell7"] {
         let path = paths.generated_path(shell);
-        if !path.exists() { findings.push(DoctorFindingDto { shell: Some(shell.into()), severity: "warning".into(), code: "generated_missing".into(), message: format!("生成文件缺失: {shell}"), action: Some("执行同步".into()) }); }
+        if !path.exists() {
+            findings.push(DoctorFindingDto {
+                shell: Some(shell.into()),
+                severity: "warning".into(),
+                code: "generated_missing".into(),
+                message: format!("生成文件缺失: {shell}"),
+                action: Some("执行同步".into()),
+            });
+        }
     }
-    if let Some(error) = database.reliability_error() { findings.push(DoctorFindingDto { shell: None, severity: "warning".into(), code: "unreliable_filesystem".into(), message: error.to_string(), action: Some("改用本地配置目录".into()) }); }
+    if let Some(error) = database.reliability_error() {
+        findings.push(DoctorFindingDto {
+            shell: None,
+            severity: "warning".into(),
+            code: "unreliable_filesystem".into(),
+            message: error.to_string(),
+            action: Some("改用本地配置目录".into()),
+        });
+    }
     Ok(findings)
 }
 
@@ -293,26 +391,56 @@ pub fn generated_preview(shell: String) -> Result<String, String> {
 pub fn reload_command(shell: String) -> Result<String, String> {
     let paths = AppPaths::discover(None);
     let path = paths.generated_path(&shell);
-    Ok(match shell.as_str() { "zsh" => format!("source '{}'", path.display()), "powershell5" | "powershell7" => format!(". '{}'", path.display()), _ => format!(". '{}'", path.display()) })
+    Ok(match shell.as_str() {
+        "zsh" => format!("source '{}'", path.display()),
+        "powershell5" | "powershell7" => format!(". '{}'", path.display()),
+        _ => format!(". '{}'", path.display()),
+    })
 }
 
 fn import_path(path: &std::path::Path) -> Result<aliasmgr_core::transfer::ImportReport, String> {
     let database = database()?;
-    let existing = database.list_aliases().map_err(|error| error.to_string())?.into_iter().map(|alias| (alias.name.clone(), alias)).collect::<BTreeMap<_, _>>();
-    let aliases = if path.extension().and_then(|extension| extension.to_str()) == Some("toml") { aliasmgr_core::transfer::read_toml(path) } else { aliasmgr_core::transfer::read_json(path) }.map_err(|error| error.to_string())?;
-    aliasmgr_core::transfer::import_records(aliases, &existing, aliasmgr_core::transfer::ConflictStrategy::Ask).map_err(|error| error.to_string())
+    let existing = database
+        .list_aliases()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|alias| (alias.name.clone(), alias))
+        .collect::<BTreeMap<_, _>>();
+    let aliases = if path.extension().and_then(|extension| extension.to_str()) == Some("toml") {
+        aliasmgr_core::transfer::read_toml(path)
+    } else {
+        aliasmgr_core::transfer::read_json(path)
+    }
+    .map_err(|error| error.to_string())?;
+    aliasmgr_core::transfer::import_records(
+        aliases,
+        &existing,
+        aliasmgr_core::transfer::ConflictStrategy::Ask,
+    )
+    .map_err(|error| error.to_string())
 }
 
-fn import_dto(report: aliasmgr_core::transfer::ImportReport) -> ImportPreviewDto { ImportPreviewDto { imported: report.imported, skipped: report.skipped, warnings: report.warnings, unsupported: report.unsupported } }
+fn import_dto(report: aliasmgr_core::transfer::ImportReport) -> ImportPreviewDto {
+    ImportPreviewDto {
+        imported: report.imported,
+        skipped: report.skipped,
+        warnings: report.warnings,
+        unsupported: report.unsupported,
+    }
+}
 
 #[tauri::command]
-pub fn import_preview(file: String) -> Result<ImportPreviewDto, String> { import_path(std::path::Path::new(&file)).map(|report| import_dto(report.into_public())) }
+pub fn import_preview(file: String) -> Result<ImportPreviewDto, String> {
+    import_path(std::path::Path::new(&file)).map(|report| import_dto(report.into_public()))
+}
 
 #[tauri::command]
 pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
     let report = import_path(std::path::Path::new(&file))?;
     let database = database()?;
-    database.insert_aliases_atomic(&report.accepted_records).map_err(|error| error.to_string())?;
+    database
+        .insert_aliases_atomic(&report.accepted_records)
+        .map_err(|error| error.to_string())?;
     Ok(import_dto(report.into_public()))
 }
 
@@ -320,12 +448,24 @@ pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
 pub fn config_get() -> Result<SettingsDto, String> {
     let paths = AppPaths::discover(None);
     let config = paths.load_config().map_err(|error| error.to_string())?;
-    Ok(SettingsDto { config_directory: paths.root.to_string_lossy().into_owned(), default_shell: config.runtime.default_shell.clone().unwrap_or_else(|| "bash".into()), backup_keep: config.backups.rc_keep, log_keep: config.logs.keep_files, allow_relative_paths: config.runtime.allow_relative_paths })
+    Ok(SettingsDto {
+        config_directory: paths.root.to_string_lossy().into_owned(),
+        default_shell: config
+            .runtime
+            .default_shell
+            .clone()
+            .unwrap_or_else(|| "bash".into()),
+        backup_keep: config.backups.rc_keep,
+        log_keep: config.logs.keep_files,
+        allow_relative_paths: config.runtime.allow_relative_paths,
+    })
 }
 
 #[tauri::command]
 pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
-    let paths = AppPaths { root: std::path::PathBuf::from(&settings.config_directory) };
+    let paths = AppPaths {
+        root: std::path::PathBuf::from(&settings.config_directory),
+    };
     let mut config = paths.load_config().map_err(|error| error.to_string())?;
     config.backups.rc_keep = settings.backup_keep;
     config.logs.keep_files = settings.log_keep;
@@ -336,7 +476,13 @@ pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
 }
 
 #[tauri::command]
-pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> { Ok(if purge { vec!["将删除 Alias Manager 生成文件、数据库和标记加载块；引用目标文件保持不变".into()] } else { vec!["将移除加载块并保留生成别名；引用目标文件保持不变".into()] }) }
+pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> {
+    Ok(if purge {
+        vec!["将删除 Alias Manager 生成文件、数据库和标记加载块；引用目标文件保持不变".into()]
+    } else {
+        vec!["将移除加载块并保留生成别名；引用目标文件保持不变".into()]
+    })
+}
 
 #[tauri::command]
 pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
@@ -368,14 +514,22 @@ pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
         }
     }
 
-    let mode = if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases };
-    aliasmgr_core::uninstall::uninstall(&paths.root, mode, None).map_err(|error| error.to_string())?;
+    let mode = if purge {
+        aliasmgr_core::uninstall::UninstallMode::PurgeAliases
+    } else {
+        aliasmgr_core::uninstall::UninstallMode::RetainAliases
+    };
+    aliasmgr_core::uninstall::uninstall(&paths.root, mode, None)
+        .map_err(|error| error.to_string())?;
     Ok(vec!["卸载清理已完成；引用目标文件未处理".into()])
 }
 
 #[tauri::command]
-pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> { database()?.overridden_definitions().map_err(|error| error.to_string()) }
-
+pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> {
+    database()?
+        .overridden_definitions()
+        .map_err(|error| error.to_string())
+}
 
 #[cfg(test)]
 mod tests {
@@ -429,15 +583,38 @@ mod tests {
 
     #[test]
     fn target_type_names_round_trip_for_all_variants() {
-        for target in [TargetType::NativeExecutable, TargetType::PythonScript, TargetType::PowerShellScript, TargetType::Batch, TargetType::ShellScript, TargetType::JavaJar, TargetType::Cmdlet, TargetType::ChangeDirectory, TargetType::RawShellCommand] {
-            assert_eq!(target_type_from_str(target_type_to_str(&target)).unwrap(), target);
+        for target in [
+            TargetType::NativeExecutable,
+            TargetType::PythonScript,
+            TargetType::PowerShellScript,
+            TargetType::Batch,
+            TargetType::ShellScript,
+            TargetType::JavaJar,
+            TargetType::Cmdlet,
+            TargetType::ChangeDirectory,
+            TargetType::RawShellCommand,
+        ] {
+            assert_eq!(
+                target_type_from_str(target_type_to_str(&target)).unwrap(),
+                target
+            );
         }
-        assert_eq!(target_type_to_str(&TargetType::PowerShellScript), "powershell_script");
+        assert_eq!(
+            target_type_to_str(&TargetType::PowerShellScript),
+            "powershell_script"
+        );
     }
 
     #[test]
     fn shell_names_round_trip_for_all_variants() {
-        for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7, ShellKind::Fish, ShellKind::PosixSh] {
+        for shell in [
+            ShellKind::Bash,
+            ShellKind::Zsh,
+            ShellKind::PowerShell5,
+            ShellKind::PowerShell7,
+            ShellKind::Fish,
+            ShellKind::PosixSh,
+        ] {
             assert_eq!(shell_from_str(shell_kind_to_str(&shell)).unwrap(), shell);
         }
         assert_eq!(shell_kind_to_str(&ShellKind::PowerShell5), "powershell5");
@@ -447,13 +624,32 @@ mod tests {
     #[test]
     fn alias_dto_round_trip_preserves_target_type_and_shells() {
         let alias = AliasRecord {
-            name: "gs".into(), executable: "git".into(), target_type: TargetType::PowerShellScript,
-            shells: vec![ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7, ShellKind::Fish, ShellKind::PosixSh],
+            name: "gs".into(),
+            executable: "git".into(),
+            target_type: TargetType::PowerShellScript,
+            shells: vec![
+                ShellKind::Bash,
+                ShellKind::Zsh,
+                ShellKind::PowerShell5,
+                ShellKind::PowerShell7,
+                ShellKind::Fish,
+                ShellKind::PosixSh,
+            ],
             ..Default::default()
         };
         let dto = alias_to_dto(&alias);
         assert_eq!(dto.target_type, "powershell_script");
-        assert_eq!(dto.shells, vec!["bash", "zsh", "powershell5", "powershell7", "fish", "posix_sh"]);
+        assert_eq!(
+            dto.shells,
+            vec![
+                "bash",
+                "zsh",
+                "powershell5",
+                "powershell7",
+                "fish",
+                "posix_sh"
+            ]
+        );
         let restored = dto_to_alias(dto).unwrap();
         assert_eq!(restored.target_type, alias.target_type);
         assert_eq!(restored.shells, alias.shells);
@@ -461,12 +657,19 @@ mod tests {
 
     #[test]
     fn legacy_serde_spellings_are_accepted() {
-        let mut dto = alias_to_dto(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() });
+        let mut dto = alias_to_dto(&AliasRecord {
+            name: "gs".into(),
+            executable: "git".into(),
+            ..Default::default()
+        });
         dto.target_type = "power_shell_script".into();
         dto.shells = vec!["power_shell5".into(), "power_shell7".into()];
         let alias = dto_to_alias(dto).unwrap();
         assert_eq!(alias.target_type, TargetType::PowerShellScript);
-        assert_eq!(alias.shells, vec![ShellKind::PowerShell5, ShellKind::PowerShell7]);
+        assert_eq!(
+            alias.shells,
+            vec![ShellKind::PowerShell5, ShellKind::PowerShell7]
+        );
     }
 
     #[test]
@@ -485,7 +688,10 @@ mod tests {
             ..Default::default()
         };
         let dto = alias_to_dto(&alias);
-        assert_eq!(dto.path_mode.as_deref(), Some("relative_to_working_directory"));
+        assert_eq!(
+            dto.path_mode.as_deref(),
+            Some("relative_to_working_directory")
+        );
         assert_eq!(dto.path_origin.as_deref(), Some("import"));
         let restored = dto_to_alias(dto).unwrap();
         assert_eq!(restored.path_mode, PathMode::RelativeToWorkingDirectory);
@@ -494,7 +700,11 @@ mod tests {
 
     #[test]
     fn missing_path_fields_default_to_absolute_gui_picker() {
-        let mut dto = alias_to_dto(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() });
+        let mut dto = alias_to_dto(&AliasRecord {
+            name: "gs".into(),
+            executable: "git".into(),
+            ..Default::default()
+        });
         dto.path_mode = None;
         dto.path_origin = None;
         let restored = dto_to_alias(dto).unwrap();
@@ -504,7 +714,11 @@ mod tests {
 
     #[test]
     fn unknown_path_values_are_rejected() {
-        let mut dto = alias_to_dto(&AliasRecord { name: "gs".into(), executable: "git".into(), ..Default::default() });
+        let mut dto = alias_to_dto(&AliasRecord {
+            name: "gs".into(),
+            executable: "git".into(),
+            ..Default::default()
+        });
         dto.path_mode = Some("sideways".into());
         assert!(dto_to_alias(dto.clone()).is_err());
         dto.path_mode = Some("absolute".into());
@@ -516,11 +730,16 @@ mod tests {
 
     #[test]
     fn delete_alias_retires_name_before_removing_the_record() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let temp = std::env::temp_dir().join(format!(
             "aliasmgr-gui-delete-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let previous = std::env::var_os("ALIASMGR_CONFIG_DIR");
@@ -540,13 +759,18 @@ mod tests {
 
         let deleted = delete_alias(id.clone()).unwrap();
         let database = Database::open(temp.join("aliases.db")).unwrap();
-        let remaining = database.get_alias(uuid::Uuid::parse_str(&id).unwrap()).unwrap();
+        let remaining = database
+            .get_alias(uuid::Uuid::parse_str(&id).unwrap())
+            .unwrap();
         let bash_names = database.managed_name_set(&ShellKind::Bash).unwrap();
         let zsh_names = database.managed_name_set(&ShellKind::Zsh).unwrap();
         drop(database);
 
         // Restore the process-wide environment and temp directory before asserting.
-        match previous { Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value), None => std::env::remove_var("ALIASMGR_CONFIG_DIR") }
+        match previous {
+            Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value),
+            None => std::env::remove_var("ALIASMGR_CONFIG_DIR"),
+        }
         let _ = std::fs::remove_dir_all(&temp);
 
         assert!(deleted);
@@ -557,18 +781,32 @@ mod tests {
 
     #[test]
     fn config_save_then_config_get_round_trips_runtime_settings() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let temp = std::env::temp_dir().join(format!(
             "aliasmgr-gui-config-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default()
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
         ));
         std::fs::create_dir_all(&temp).unwrap();
         let previous = std::env::var_os("ALIASMGR_CONFIG_DIR");
         std::env::set_var("ALIASMGR_CONFIG_DIR", &temp);
-        let saved = config_save(SettingsDto { config_directory: temp.to_string_lossy().into_owned(), default_shell: "zsh".into(), backup_keep: 3, log_keep: 4, allow_relative_paths: true });
+        let saved = config_save(SettingsDto {
+            config_directory: temp.to_string_lossy().into_owned(),
+            default_shell: "zsh".into(),
+            backup_keep: 3,
+            log_keep: 4,
+            allow_relative_paths: true,
+        });
         let loaded = config_get();
-        match previous { Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value), None => std::env::remove_var("ALIASMGR_CONFIG_DIR") }
+        match previous {
+            Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value),
+            None => std::env::remove_var("ALIASMGR_CONFIG_DIR"),
+        }
         let _ = std::fs::remove_dir_all(&temp);
         let saved = saved.unwrap();
         let loaded = loaded.unwrap();

@@ -47,7 +47,9 @@ impl<'a> AliasService<'a> {
         if !self.database.update_alias(&alias)? {
             return Err(AliasError::Config("alias not found".into()));
         }
-        self.database.get_alias(alias.id)?.ok_or_else(|| AliasError::Config("alias not found".into()))
+        self.database
+            .get_alias(alias.id)?
+            .ok_or_else(|| AliasError::Config("alias not found".into()))
     }
 }
 
