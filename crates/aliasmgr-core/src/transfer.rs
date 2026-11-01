@@ -130,15 +130,14 @@ pub fn export_toml(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
     Ok(())
 }
 pub fn read_toml(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
-    let file: ExportFile = toml::from_str(&fs::read_to_string(path)?)
-        .map_err(|error| AliasError::Config(error.to_string()))?;
-    if file.format_version != FORMAT_VERSION {
-        return Err(AliasError::Config(format!(
-            "unsupported format_version: {}",
-            file.format_version
-        )));
-    }
-    Ok(file.aliases)
+    read_toml_str(&fs::read_to_string(path)?)
+}
+/// Parses an in-memory TOML export. Mirrors `read_toml` so content imports
+/// (GUI paste/drag-drop) honour the same `FORMAT_VERSION` check as files.
+pub fn read_toml_str(content: &str) -> Result<Vec<AliasRecord>, AliasError> {
+    let file: ExportFile =
+        toml::from_str(content).map_err(|error| AliasError::Config(error.to_string()))?;
+    export_file_records(file)
 }
 pub fn import_toml(
     path: &Path,
@@ -159,7 +158,16 @@ pub fn export_json(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
     Ok(())
 }
 pub fn read_json(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
-    let file: ExportFile = serde_json::from_str(&fs::read_to_string(path)?)?;
+    read_json_str(&fs::read_to_string(path)?)
+}
+/// Parses an in-memory JSON export. Mirrors `read_json` so content imports
+/// (GUI paste/drag-drop) honour the same `FORMAT_VERSION` check as files.
+pub fn read_json_str(content: &str) -> Result<Vec<AliasRecord>, AliasError> {
+    export_file_records(serde_json::from_str(content)?)
+}
+
+/// Shared `FORMAT_VERSION` gate for both file and in-memory readers.
+fn export_file_records(file: ExportFile) -> Result<Vec<AliasRecord>, AliasError> {
     if file.format_version != FORMAT_VERSION {
         return Err(AliasError::Config(format!(
             "unsupported format_version: {}",
@@ -335,6 +343,31 @@ mod tests {
         fs::write(&root, "{\"aliases\":[]}").unwrap();
         assert!(import_json(&root, &BTreeMap::new(), ConflictStrategy::Ask).is_err());
         let _ = fs::remove_file(root);
+    }
+
+    #[test]
+    fn string_readers_accept_in_memory_exports_and_honour_format_version() {
+        let file = ExportFile {
+            format_version: FORMAT_VERSION,
+            exported_at: "2026-11-01T00:00:00Z".into(),
+            exported_by_version: "0.1.0".into(),
+            aliases: vec![AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                ..Default::default()
+            }],
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        let toml_text = toml::to_string_pretty(&file).unwrap();
+        assert_eq!(read_json_str(&json).unwrap()[0].name, "gs");
+        assert_eq!(read_toml_str(&toml_text).unwrap()[0].name, "gs");
+
+        let unsupported = ExportFile {
+            format_version: FORMAT_VERSION + 1,
+            ..file
+        };
+        assert!(read_json_str(&serde_json::to_string(&unsupported).unwrap()).is_err());
+        assert!(read_toml_str(&toml::to_string_pretty(&unsupported).unwrap()).is_err());
     }
 
     fn unique_path(label: &str, extension: &str) -> std::path::PathBuf {
