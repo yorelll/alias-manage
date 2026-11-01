@@ -12,6 +12,7 @@ fn main() {
             commands::tag_counts,
             commands::create_alias,
             commands::update_alias,
+            commands::delete_alias,
             commands::doctor_status,
             commands::generated_preview,
             commands::reload_command,

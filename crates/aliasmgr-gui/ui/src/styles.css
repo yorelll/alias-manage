@@ -23,3 +23,18 @@ html, body, #root { margin: 0; min-height: 100%; font-family: system-ui, sans-se
 .status-label { color: #63708a; font-weight: 600; }
 .status-value { overflow-wrap: anywhere; }
 .status-unavailable { grid-column: 1 / -1; color: #a33; }
+.alias-toolbar { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 20px 0; }
+.search-bar { display: flex; gap: 8px; align-items: center; }
+.tag-facet { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag-facet button.selected { background: #3269d6; color: #fff; }
+.alias-table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; }
+.alias-table th, .alias-table td { padding: 10px 12px; border-bottom: 1px solid #edf0f5; text-align: left; vertical-align: top; }
+.alias-table th { color: #63708a; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+.alias-row-pending-delete { background: #fff4f2; }
+.alias-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn-danger { color: #a33; }
+.btn-danger:hover { background: #a33; color: #fff; }
+.panel { margin-top: 24px; padding: 20px; border-radius: 12px; background: #fff; }
+.alias-loading { color: #63708a; }
+.result-limit-notice { color: #63708a; font-size: 13px; }
+.alias-actions button:disabled { opacity: .5; cursor: not-allowed; }
