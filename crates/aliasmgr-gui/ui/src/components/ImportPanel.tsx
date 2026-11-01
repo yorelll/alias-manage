@@ -128,6 +128,7 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
         <span>Import file (.json or .toml)</span>
         <input
           ref={inputRef}
+          id="import-file-input"
           type="file"
           accept=".json,.toml"
           onChange={(event) => void selectFile(event)}

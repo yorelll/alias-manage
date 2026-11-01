@@ -6,7 +6,7 @@ import {
   normalizeDoctorFindings,
   normalizeOverriddenDefinitions,
   orderedSeverities,
-  overrideRecoveryText,
+  overrideMetadataText,
   overrideSummary,
   severityCounts,
   shellLabel,
@@ -23,6 +23,7 @@ export function DoctorPanel() {
   const [error, setError] = useState<string | null>(null);
   const [overrideError, setOverrideError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [overridesLoading, setOverridesLoading] = useState(false);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
@@ -34,7 +35,7 @@ export function DoctorPanel() {
 
     Promise.allSettled([
       tauriInvoke("doctor_status"),
-      tauriInvoke("overridden_definitions"),
+      tauriInvoke("scan_overrides"),
     ]).then(([doctorResult, overrideResult]) => {
       if (cancelled) return;
       if (doctorResult.status === "fulfilled") {
@@ -60,6 +61,20 @@ export function DoctorPanel() {
     } catch (reason) {
       setCopyNotice(null);
       setError(`Unable to copy ${label}: ${String(reason)}`);
+    }
+  }, []);
+
+  const scanOverrides = useCallback(async () => {
+    setOverridesLoading(true);
+    setOverrideError(null);
+    setCopyNotice(null);
+    try {
+      const value = await tauriInvoke("scan_overrides");
+      setOverrides(normalizeOverriddenDefinitions(value));
+    } catch (reason) {
+      setOverrideError(String(reason));
+    } finally {
+      setOverridesLoading(false);
     }
   }, []);
 
@@ -120,16 +135,22 @@ export function DoctorPanel() {
       </div>
 
       <section className="overridden-section" aria-labelledby="overridden-title">
-        <h2 id="overridden-title">Overridden definitions</h2>
+        <div className="panel-header">
+          <h2 id="overridden-title">Overridden definitions</h2>
+          <button type="button" onClick={() => void scanOverrides()} disabled={overridesLoading || loading}>
+            {overridesLoading ? "Scanning overrides…" : "Scan overrides"}
+          </button>
+        </div>
         <p className="hint">
-          These user definitions were shadowed by managed aliases. Recovery text is copied as data only and is never executed.
+          These user definitions were shadowed by managed aliases. Copying includes only desensitized metadata
+          (name, shell, recoverability); captured definition text is never copied or executed.
         </p>
-        {overrideError && <p className="form-error" role="alert">Unable to load overridden definitions: {overrideError}</p>}
+        {overrideError && <p className="form-error" role="alert">Unable to scan overridden definitions: {overrideError}</p>}
         {!overrideError && !loading && overrides.length === 0 && <p>No overridden definitions recorded.</p>}
         {overrides.length > 0 && (
           <ul className="override-list">
             {overrides.map((entry, index) => {
-              const recovery = overrideRecoveryText(entry);
+              const metadata = overrideMetadataText(entry);
               return (
                 <li className="override-item" key={`${entry.name}-${entry.shell}-${index}`}>
                   <div className="override-header">
@@ -141,16 +162,10 @@ export function DoctorPanel() {
                   <p className="hint">
                     {entry.definition_kind} · captured {entry.captured_at ?? "unknown time"}
                   </p>
-                  {recovery
-                    ? (
-                      <>
-                        <pre className="code-block">{recovery}</pre>
-                        <button type="button" onClick={() => void copy(recovery, "recovery text")}>
-                          Copy recovery text
-                        </button>
-                      </>
-                    )
-                    : <p className="hint">No recovery text was captured for this definition, so copying is unavailable.</p>}
+                  <pre className="code-block">{metadata}</pre>
+                  <button type="button" onClick={() => void copy(metadata, "override metadata")}>
+                    Copy metadata
+                  </button>
                 </li>
               );
             })}

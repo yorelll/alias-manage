@@ -300,7 +300,9 @@ export function App() {
   useEffect(() => {
     if (page === "sync" && focusSyncAfterNavigation.current) {
       focusSyncAfterNavigation.current = false;
-      syncPageRef.current?.focus();
+      const fileInput = document.getElementById("import-file-input") as HTMLInputElement | null;
+      if (fileInput && !fileInput.disabled) fileInput.focus();
+      else syncPageRef.current?.focus();
     }
   }, [page]);
 

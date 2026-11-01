@@ -25,8 +25,9 @@ import {
   normalizePreviewSnippets,
   normalizeSettings,
   normalizeShells,
+  normalizeShellValue,
   orderedSeverities,
-  overrideRecoveryText,
+  overrideMetadataText,
   overrideSummary,
   parseKeepCount,
   parseKeepCountInput,
@@ -123,8 +124,13 @@ test("display labels cover every shell, target type, and path mode", () => {
   assert.equal(shellLabel("powershell5"), "PowerShell 5.1");
   assert.equal(shellLabel("powershell7"), "PowerShell 7");
   assert.equal(shellLabel("power_shell7"), "PowerShell 7");
+  assert.equal(shellLabel('"bash"'), "Bash");
+  assert.equal(shellLabel('"power_shell5"'), "PowerShell 5.1");
   assert.equal(shellLabel("fish"), "Fish");
   assert.equal(shellLabel("custom"), "custom");
+  assert.equal(normalizeShellValue('"bash"'), "bash");
+  assert.equal(normalizeShellValue('"power_shell5"'), "power_shell5");
+  assert.equal(normalizeShellValue(42), "");
   assert.equal(targetTypeLabel("python_script"), "Python script");
   assert.equal(targetTypeLabel("unknown_type"), "unknown_type");
   assert.equal(pathModeLabel("relative_to_working_directory"), "Relative to working directory");
@@ -241,6 +247,28 @@ test("skipped import names are paired with inline or warning reasons", () => {
   ]);
 });
 
+test("import skip reasons parse backend prefixes without short-name collisions", () => {
+  const collision = normalizeImportReport({
+    skipped: ["gs", "gst"],
+    warnings: ["name conflict skipped: gst"],
+  });
+  assert.deepEqual(importSkipEntries(collision), [
+    { name: "gs", reason: null },
+    { name: "gst", reason: "name conflict" },
+  ]);
+  const prefixed = normalizeImportReport({
+    skipped: ["bad name", "chain"],
+    warnings: [
+      "invalid alias rejected: bad name (name is reserved)",
+      "relative path requires a selected base directory: chain",
+    ],
+  });
+  assert.deepEqual(importSkipEntries(prefixed), [
+    { name: "bad name", reason: "name is reserved" },
+    { name: "chain", reason: "relative path requires a selected base directory" },
+  ]);
+});
+
 // ── doctor helpers ────────────────────────────────────────────────
 
 test("doctor findings normalize severity, shell, action, and detail defensively", () => {
@@ -275,21 +303,32 @@ test("known doctor codes use local English copy and unknown codes fall back to b
   }
 });
 
-test("overridden definitions render defensively and expose recovery text without executing it", () => {
+test("overridden definitions keep metadata only and never expose captured definition text", () => {
   const entries = normalizeOverriddenDefinitions([
-    { name: "old", shell: "bash", definition_kind: "function", original_definition: "alias old='tool'", recoverable: true, captured_at: "2026-01-01" },
-    { name: "other", shell: "zsh", definition: "alias other='x'", recoverable: "true" },
-    { name: "none" },
+    { name: "old", shell: '"bash"', definition_kind: "function", original_definition: "alias old='tool'", recovery_text: "alias old='tool'", definition: "function old { tool }", recoverable: true, captured_at: "2026-01-01" },
+    { name: "other", shell: '"power_shell7"', definition: "alias other='x'", recoverable: "true" },
+    { name: "none", shell: 42 },
     null,
   ]);
   assert.equal(entries.length, 3);
-  assert.equal(overrideRecoveryText(entries[0]), "alias old='tool'");
-  assert.equal(overrideRecoveryText(entries[1]), "alias other='x'");
-  assert.equal(overrideRecoveryText(entries[2]), null);
+  assert.equal(entries[0].shell, "bash");
+  assert.equal(entries[1].shell, "power_shell7");
+  assert.equal(entries[2].shell, "");
+  assert.equal("original_definition" in entries[0], false);
+  assert.equal("recovery_text" in entries[0], false);
+  assert.equal("definition" in entries[0], false);
   assert.equal(entries[1].recoverable, true);
   assert.equal(entries[2].recoverable, false);
   assert.equal(overrideSummary(entries[0]), "old (Bash)");
   assert.equal(overrideSummary(entries[2]), "none (unknown shell)");
+  const metadata = overrideMetadataText(entries[0]);
+  assert.match(metadata, /name: old/);
+  assert.match(metadata, /shell: bash/);
+  assert.match(metadata, /kind: function/);
+  assert.match(metadata, /recoverable: true/);
+  assert.match(metadata, /captured_at: 2026-01-01/);
+  assert.doesNotMatch(metadata, /alias old='tool'/);
+  assert.doesNotMatch(metadata, /function old \{ tool \}/);
 });
 
 test("manual-only boundary is explicit about profile, policy, and shell restart limits", () => {
@@ -407,22 +446,25 @@ test("AliasTable renders every required column, tooltip, expansion, and action",
   }
 });
 
-test("DoctorPanel counts severities, expands findings, and copies recovery text without executing it", async () => {
+test("DoctorPanel scans overrides and copies desensitized metadata only", async () => {
   const doctor = await source("DoctorPanel");
   for (const fragment of [
-    "doctor_status", "overridden_definitions", "severityCounts", "orderedSeverities",
-    "navigator.clipboard.writeText", "Copy recovery text", "Copy suggestion",
-    "MANUAL_ONLY_BOUNDARY", "doctorFindingText", "text.message", "text.action", "finding.detail", "recoverable",
+    "doctor_status", "scan_overrides", "severityCounts", "orderedSeverities",
+    "navigator.clipboard.writeText", "Copy metadata", "Copy suggestion",
+    "MANUAL_ONLY_BOUNDARY", "doctorFindingText", "overrideMetadataText",
+    "text.message", "text.action", "finding.detail", "recoverable",
   ]) {
     assert.ok(doctor.includes(fragment), `doctor is missing ${fragment}`);
   }
+  assert.equal(doctor.includes("overridden_definitions"), false);
+  assert.equal(/original_definition|recovery_text|entry\.definition\b/.test(doctor), false);
   assert.equal(/eval\(|new Function|child_process/.test(doctor), false);
 });
 
 test("ImportPanel uses a real file picker and content commands without persistence before confirm", async () => {
   const importer = await source("ImportPanel");
   for (const fragment of [
-    'type="file"', 'accept=".json,.toml"', "selected.text()", "import_preview_content",
+    'type="file"', 'id="import-file-input"', 'accept=".json,.toml"', "selected.text()", "import_preview_content",
     "import_confirm_content", "importContentArgs", "importSkipEntries", "onImported",
     "Confirm import", "Preview only", "Cancel", "Imported", "Skipped", "Warnings", "Unsupported",
     'disabled={busy === "confirm"}', 'busy === "confirm" ? "Importing…"',
@@ -473,6 +515,8 @@ test("Sync page hosts ImportPanel and GeneratedFilePanel; navigation order is un
   assert.match(app, /Clear filters/);
   assert.match(app, /onOpenImport/);
   assert.match(app, /nextDataVersion/);
+  assert.match(app, /import-file-input/);
+  assert.match(app, /fileInput\.focus\(\)/);
 });
 
 test("TagInput has a real label, id, and accessible remove controls", async () => {

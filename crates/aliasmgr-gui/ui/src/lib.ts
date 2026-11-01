@@ -186,8 +186,25 @@ function textOrNull(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+/** Strip JSON quoting from persisted shell values such as `"bash"`. */
+export function normalizeShellValue(value: unknown): string {
+  if (typeof value !== "string") return "";
+  let trimmed = value.trim();
+  if (trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) {
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "string") return parsed.trim();
+    } catch {
+      // Fall through to a plain quote strip for malformed JSON strings.
+    }
+    trimmed = trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 export function shellLabel(shell: string): string {
-  switch (shell) {
+  const normalized = normalizeShellValue(shell);
+  switch (normalized.toLowerCase()) {
     case "bash": return "Bash";
     case "zsh": return "Zsh";
     case "powershell5":
@@ -196,7 +213,7 @@ export function shellLabel(shell: string): string {
     case "power_shell7": return "PowerShell 7";
     case "fish": return "Fish";
     case "posix_sh": return "POSIX sh";
-    default: return shell || "Unknown shell";
+    default: return normalized || "Unknown shell";
   }
 }
 
@@ -334,6 +351,28 @@ export interface ImportSkipEntry {
  * into the skipped item ("name: reason") and sometimes emit it separately in
  * `warnings`; support both without inventing a reason when none exists.
  */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Match a backend warning that names the record it belongs to. Comparing the
+ * whole prefix + name (instead of substring matching) prevents a short name
+ * such as `gs` from consuming a warning that belongs to `gst`.
+ */
+function importWarningReasonForName(warning: string, name: string): string | null {
+  const conflict = "name conflict skipped: ";
+  if (warning === `${conflict}${name}`) return "name conflict";
+  const invalid = "invalid alias rejected: ";
+  if (warning === `${invalid}${name}`) return "invalid alias";
+  if (warning.startsWith(`${invalid}${name} (`) && warning.endsWith(")")) {
+    return warning.slice(`${invalid}${name} (`.length, -1).trim() || "invalid alias";
+  }
+  const relative = "relative path requires a selected base directory: ";
+  if (warning === `${relative}${name}`) return "relative path requires a selected base directory";
+  return null;
+}
+
 export function importSkipEntries(report: ImportReport): ImportSkipEntry[] {
   const warnings = report.warnings.map((warning) => warning.trim()).filter(Boolean);
   const used = new Set<number>();
@@ -347,11 +386,16 @@ export function importSkipEntries(report: ImportReport): ImportSkipEntry[] {
       inlineReason = trimmed.slice(separator + 2).trim() || null;
     }
     if (inlineReason) return { name, reason: inlineReason };
-    const lowered = name.toLowerCase();
-    const index = warnings.findIndex((warning, position) => !used.has(position) && warning.toLowerCase().includes(lowered));
+    let index = warnings.findIndex((warning, position) => (
+      !used.has(position) && importWarningReasonForName(warning, name) !== null
+    ));
+    if (index < 0) {
+      const matcher = new RegExp(`(^|[^A-Za-z0-9_-])${escapeRegExp(name)}([^A-Za-z0-9_-]|$)`, "i");
+      index = warnings.findIndex((warning, position) => !used.has(position) && matcher.test(warning));
+    }
     if (index >= 0) {
       used.add(index);
-      return { name, reason: warnings[index] };
+      return { name, reason: importWarningReasonForName(warnings[index], name) ?? warnings[index] };
     }
     return { name, reason: null };
   });
@@ -470,30 +514,39 @@ export interface OverriddenDefinition {
   name: string;
   shell: string;
   definition_kind: string;
-  original_definition: string | null;
-  recovery_text: string | null;
-  definition: string | null;
   recoverable: boolean;
   captured_at: string | null;
 }
 
+/**
+ * Normalize override metadata into a privacy-safe shape. Captured definition
+ * text (`original_definition` / `recovery_text` / `definition`) is discarded
+ * and never reaches component state.
+ */
 export function normalizeOverriddenDefinitions(value: unknown): OverriddenDefinition[] {
   if (!Array.isArray(value)) return [];
   return value.filter(isRecord).map((entry) => ({
     name: typeof entry.name === "string" && entry.name ? entry.name : "(unnamed)",
-    shell: typeof entry.shell === "string" ? entry.shell : "",
+    shell: normalizeShellValue(entry.shell),
     definition_kind: typeof entry.definition_kind === "string" && entry.definition_kind ? entry.definition_kind : "function",
-    original_definition: textOrNull(entry.original_definition),
-    recovery_text: textOrNull(entry.recovery_text),
-    definition: textOrNull(entry.definition),
     recoverable: entry.recoverable === true || entry.recoverable === 1 || entry.recoverable === "true",
     captured_at: textOrNull(entry.captured_at),
   }));
 }
 
-/** Recovery text is data for the clipboard only. It is never executed by the UI. */
-export function overrideRecoveryText(entry: OverriddenDefinition): string | null {
-  return entry.recovery_text ?? entry.original_definition ?? entry.definition;
+/**
+ * Desensitized clipboard metadata for an overridden definition.
+ * Never include the captured definition/script body.
+ */
+export function overrideMetadataText(entry: OverriddenDefinition): string {
+  return [
+    "Alias Manager override metadata",
+    `name: ${entry.name}`,
+    `shell: ${entry.shell || "unknown"}`,
+    `kind: ${entry.definition_kind}`,
+    `recoverable: ${entry.recoverable ? "true" : "false"}`,
+    `captured_at: ${entry.captured_at ?? "unknown"}`,
+  ].join("\n");
 }
 
 export function overrideSummary(entry: OverriddenDefinition): string {
