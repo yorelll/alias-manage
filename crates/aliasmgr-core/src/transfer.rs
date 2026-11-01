@@ -130,15 +130,21 @@ pub fn export_toml(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
     Ok(())
 }
 pub fn read_toml(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
-    let file: ExportFile = toml::from_str(&fs::read_to_string(path)?)
-        .map_err(|error| AliasError::Config(error.to_string()))?;
-    if file.format_version != FORMAT_VERSION {
-        return Err(AliasError::Config(format!(
-            "unsupported format_version: {}",
-            file.format_version
-        )));
+    read_toml_str(&fs::read_to_string(path)?)
+}
+/// Parses an in-memory TOML export. Accepts either the `ExportFile` envelope
+/// or a bare array of records, like `read_json_str`, and honours the same
+/// `FORMAT_VERSION` gate as the file reader.
+///
+/// Parse errors are deliberately generic: `toml::de::Error` renders the
+/// offending source line, which would echo secret values from a malformed
+/// import straight into the UI.
+pub fn read_toml_str(content: &str) -> Result<Vec<AliasRecord>, AliasError> {
+    if let Ok(file) = toml::from_str::<ExportFile>(content) {
+        return export_file_records(file);
     }
-    Ok(file.aliases)
+    toml::from_str::<Vec<AliasRecord>>(content)
+        .map_err(|_| AliasError::Config("invalid TOML export".into()))
 }
 pub fn import_toml(
     path: &Path,
@@ -159,7 +165,20 @@ pub fn export_json(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
     Ok(())
 }
 pub fn read_json(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
-    let file: ExportFile = serde_json::from_str(&fs::read_to_string(path)?)?;
+    read_json_str(&fs::read_to_string(path)?)
+}
+/// Parses an in-memory JSON export. Accepts either the `ExportFile` envelope
+/// or a bare array of records (the GUI's manual sample uses a bare array) and
+/// honours the same `FORMAT_VERSION` gate as the file reader.
+pub fn read_json_str(content: &str) -> Result<Vec<AliasRecord>, AliasError> {
+    if let Ok(file) = serde_json::from_str::<ExportFile>(content) {
+        return export_file_records(file);
+    }
+    Ok(serde_json::from_str::<Vec<AliasRecord>>(content)?)
+}
+
+/// Shared `FORMAT_VERSION` gate for both file and in-memory readers.
+fn export_file_records(file: ExportFile) -> Result<Vec<AliasRecord>, AliasError> {
     if file.format_version != FORMAT_VERSION {
         return Err(AliasError::Config(format!(
             "unsupported format_version: {}",
@@ -243,6 +262,10 @@ pub fn import_records(
         if conflicts_with_existing(&alias.name, powershell, existing) {
             match strategy {
                 ConflictStrategy::Skip | ConflictStrategy::Ask => {
+                    report.warnings.push(format!(
+                        "name conflict skipped: {}",
+                        sanitized_name(&alias.name)
+                    ));
                     report.skipped.push(alias.name);
                     continue;
                 }
@@ -265,6 +288,10 @@ pub fn import_records(
             }
         }
         if conflicts_within_file(&alias.name, powershell, &accepted) {
+            report.warnings.push(format!(
+                "name conflict skipped: {}",
+                sanitized_name(&alias.name)
+            ));
             report.skipped.push(alias.name);
             continue;
         }
@@ -335,6 +362,110 @@ mod tests {
         fs::write(&root, "{\"aliases\":[]}").unwrap();
         assert!(import_json(&root, &BTreeMap::new(), ConflictStrategy::Ask).is_err());
         let _ = fs::remove_file(root);
+    }
+
+    #[test]
+    fn string_readers_accept_in_memory_exports_and_honour_format_version() {
+        let file = ExportFile {
+            format_version: FORMAT_VERSION,
+            exported_at: "2026-11-01T00:00:00Z".into(),
+            exported_by_version: "0.1.0".into(),
+            aliases: vec![AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                ..Default::default()
+            }],
+        };
+        let json = serde_json::to_string(&file).unwrap();
+        let toml_text = toml::to_string_pretty(&file).unwrap();
+        assert_eq!(read_json_str(&json).unwrap()[0].name, "gs");
+        assert_eq!(read_toml_str(&toml_text).unwrap()[0].name, "gs");
+
+        let unsupported = ExportFile {
+            format_version: FORMAT_VERSION + 1,
+            ..file
+        };
+        assert!(read_json_str(&serde_json::to_string(&unsupported).unwrap()).is_err());
+        assert!(read_toml_str(&toml::to_string_pretty(&unsupported).unwrap()).is_err());
+
+        // The GUI's manual sample is a bare array of records, not an envelope.
+        let bare = serde_json::to_string(&vec![AliasRecord {
+            name: "bare".into(),
+            executable: "git".into(),
+            ..Default::default()
+        }])
+        .unwrap();
+        assert_eq!(read_json_str(&bare).unwrap()[0].name, "bare");
+    }
+
+    #[test]
+    fn malformed_toml_errors_do_not_echo_source_lines() {
+        let content = "aliases = [\n  secret TOKEN=super-secret\n";
+        let error = read_toml_str(content).unwrap_err().to_string();
+        assert!(!error.contains("secret"), "error leaked source: {error}");
+        assert!(!error.contains("TOKEN"), "error leaked key: {error}");
+        assert!(error.contains("invalid TOML export"));
+    }
+
+    #[test]
+    fn conflict_skips_emit_sanitized_warnings() {
+        let existing_alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        let existing = BTreeMap::from([("gs".to_string(), existing_alias)]);
+        for strategy in [ConflictStrategy::Ask, ConflictStrategy::Skip] {
+            let report = import_records(
+                vec![AliasRecord {
+                    name: "gs".into(),
+                    executable: "git".into(),
+                    ..Default::default()
+                }],
+                &existing,
+                strategy,
+            )
+            .unwrap();
+            assert_eq!(report.skipped, vec!["gs"]);
+            assert!(
+                report
+                    .warnings
+                    .iter()
+                    .any(|warning| warning == "name conflict skipped: gs"),
+                "missing conflict warning: {:?}",
+                report.warnings
+            );
+        }
+
+        let name = "evil\u{1b}name".to_string();
+        let existing = BTreeMap::from([(
+            name.clone(),
+            AliasRecord {
+                name: name.clone(),
+                executable: "tool".into(),
+                ..Default::default()
+            },
+        )]);
+        let report = import_records(
+            vec![AliasRecord {
+                name,
+                executable: "tool".into(),
+                ..Default::default()
+            }],
+            &existing,
+            ConflictStrategy::Ask,
+        )
+        .unwrap();
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.contains("name conflict skipped"))
+            .expect("conflict must emit a warning");
+        assert!(
+            !warning.chars().any(char::is_control),
+            "conflict warning contains control characters: {warning:?}"
+        );
+        assert!(warning.contains("evilname"));
     }
 
     fn unique_path(label: &str, extension: &str) -> std::path::PathBuf {

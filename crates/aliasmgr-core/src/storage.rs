@@ -11,6 +11,16 @@ use std::{
 };
 use uuid::Uuid;
 
+/// One row produced by an override scan. Only metadata is stored; the raw
+/// profile line is deliberately not part of this type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverrideEntry {
+    pub name: String,
+    pub shell: crate::model::ShellKind,
+    pub definition_kind: String,
+    pub recoverable: bool,
+}
+
 pub struct Database {
     pub conn: Connection,
     /// Directory the database file lives in. `None` for in-memory and
@@ -312,15 +322,31 @@ impl Database {
         )?)
     }
 
-    pub fn overridden_definitions(&self) -> Result<Vec<serde_json::Value>, AliasError> {
+    fn ensure_overrides_table(&self) -> Result<(), AliasError> {
         self.conn.execute_batch("CREATE TABLE IF NOT EXISTS overridden_definitions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, shell TEXT NOT NULL, definition_kind TEXT NOT NULL, original_definition TEXT, recoverable INTEGER NOT NULL DEFAULT 0, captured_at TEXT NOT NULL)")?;
+        Ok(())
+    }
+
+    pub fn overridden_definitions(&self) -> Result<Vec<serde_json::Value>, AliasError> {
+        self.ensure_overrides_table()?;
         let mut statement = self.conn.prepare("SELECT name, shell, definition_kind, original_definition, recoverable, captured_at FROM overridden_definitions ORDER BY captured_at DESC")?;
         let rows = statement.query_map([], |row| {
+            // `shell` is stored as a JSON string for round-tripping; expose the
+            // plain shell name so the GUI never renders `"bash"` with quotes.
+            let stored_shell: String = row.get(1)?;
+            // Stored values are JSON strings whose serde spelling differs for
+            // PowerShell (`power_shell7`); expose the canonical shell name.
+            let shell = match serde_json::from_str::<crate::model::ShellKind>(&stored_shell) {
+                Ok(kind) => kind.as_str().to_owned(),
+                Err(_) => stored_shell.trim_matches('"').to_owned(),
+            };
+            // Read the raw column so the row shape stays aligned, but never
+            // expose definitions over IPC (defense in depth).
+            let _original_definition: Option<String> = row.get(3)?;
             Ok(serde_json::json!({
                 "name": row.get::<_, String>(0)?,
-                "shell": row.get::<_, String>(1)?,
+                "shell": shell,
                 "definition_kind": row.get::<_, String>(2)?,
-                "original_definition": row.get::<_, Option<String>>(3)?,
                 "recoverable": row.get::<_, i64>(4)? != 0,
                 "captured_at": row.get::<_, String>(5)?,
             }))
@@ -329,6 +355,10 @@ impl Database {
             .map_err(AliasError::from)
     }
 
+    /// Records (or replaces) the override for one `(name, shell)` pair.
+    ///
+    /// Repeated scans must not accumulate duplicate rows, so the existing row
+    /// is replaced inside a transaction.
     pub fn record_override(
         &self,
         name: &str,
@@ -336,11 +366,49 @@ impl Database {
         original_definition: Option<&str>,
         recoverable: bool,
     ) -> Result<(), AliasError> {
-        self.conn.execute_batch("CREATE TABLE IF NOT EXISTS overridden_definitions (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, shell TEXT NOT NULL, definition_kind TEXT NOT NULL, original_definition TEXT, recoverable INTEGER NOT NULL DEFAULT 0, captured_at TEXT NOT NULL)")?;
-        self.conn.execute(
-            "INSERT INTO overridden_definitions(name,shell,definition_kind,original_definition,recoverable,captured_at) VALUES (?1,?2,'function',?3,?4,datetime('now'))",
-            params![name, serde_json::to_string(shell)?, original_definition, recoverable],
+        self.record_override_kind(name, shell, "function", original_definition, recoverable)
+    }
+
+    /// Like [`Database::record_override`], but records the shape that produced
+    /// the match (`alias`, `function` or `set_alias`).
+    pub fn record_override_kind(
+        &self,
+        name: &str,
+        shell: &crate::model::ShellKind,
+        definition_kind: &str,
+        original_definition: Option<&str>,
+        recoverable: bool,
+    ) -> Result<(), AliasError> {
+        self.ensure_overrides_table()?;
+        let shell_json = serde_json::to_string(shell)?;
+        let transaction = self.conn.unchecked_transaction()?;
+        transaction.execute(
+            "DELETE FROM overridden_definitions WHERE name = ?1 AND shell = ?2",
+            params![name, shell_json],
         )?;
+        transaction.execute(
+            "INSERT INTO overridden_definitions(name,shell,definition_kind,original_definition,recoverable,captured_at) VALUES (?1,?2,?3,?4,?5,datetime('now'))",
+            params![name, shell_json, definition_kind, original_definition, recoverable],
+        )?;
+        transaction.commit()?;
+        Ok(())
+    }
+
+    /// Replaces every scan-produced override row atomically. Rows for aliases
+    /// whose profile definition disappeared are removed because the table is
+    /// cleared before the current findings are inserted.
+    pub fn replace_overrides(&self, entries: &[OverrideEntry]) -> Result<(), AliasError> {
+        self.ensure_overrides_table()?;
+        let transaction = self.conn.unchecked_transaction()?;
+        transaction.execute("DELETE FROM overridden_definitions", [])?;
+        for entry in entries {
+            let shell_json = serde_json::to_string(&entry.shell)?;
+            transaction.execute(
+                "INSERT INTO overridden_definitions(name,shell,definition_kind,original_definition,recoverable,captured_at) VALUES (?1,?2,?3,NULL,?4,datetime('now'))",
+                params![entry.name, shell_json, entry.definition_kind, entry.recoverable],
+            )?;
+        }
+        transaction.commit()?;
         Ok(())
     }
 
@@ -913,6 +981,85 @@ mod tests {
             .record_override("old", &crate::model::ShellKind::Bash, Some("fn"), true)
             .unwrap();
         assert_eq!(database.prune_retired_names(2).unwrap(), 1);
+    }
+
+    #[test]
+    fn record_override_is_idempotent_per_name_and_shell_and_normalizes_shell() {
+        use crate::model::ShellKind;
+
+        let database = Database::open_in_memory().unwrap();
+        database
+            .record_override("gs", &ShellKind::Bash, Some("alias gs='git'"), true)
+            .unwrap();
+        // A second scan replaces the row instead of appending a duplicate.
+        database
+            .record_override("gs", &ShellKind::Bash, Some("alias gs='git status'"), true)
+            .unwrap();
+        let rows = database.overridden_definitions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["shell"], "bash");
+        assert_eq!(rows[0]["definition_kind"], "function");
+        assert!(
+            rows[0].get("original_definition").is_none(),
+            "raw definitions must never cross the IPC boundary"
+        );
+
+        // A different shell is a distinct override.
+        database
+            .record_override("gs", &ShellKind::Zsh, None, false)
+            .unwrap();
+        let rows = database.overridden_definitions().unwrap();
+        assert_eq!(rows.len(), 2);
+        assert!(rows.iter().any(|row| row["shell"] == "zsh"));
+        assert!(rows
+            .iter()
+            .all(|row| !row["shell"].as_str().unwrap().contains('"')));
+        assert!(rows
+            .iter()
+            .all(|row| row.get("original_definition").is_none()));
+    }
+
+    #[test]
+    fn replace_overrides_drops_rows_without_current_definitions() {
+        use crate::model::ShellKind;
+
+        let database = Database::open_in_memory().unwrap();
+        let entries = vec![OverrideEntry {
+            name: "gs".into(),
+            shell: ShellKind::Bash,
+            definition_kind: "alias".into(),
+            recoverable: true,
+        }];
+        database.replace_overrides(&entries).unwrap();
+        // A second identical scan keeps exactly one metadata row.
+        database.replace_overrides(&entries).unwrap();
+        let rows = database.overridden_definitions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["definition_kind"], "alias");
+        assert_eq!(rows[0]["shell"], "bash");
+        assert!(rows[0].get("original_definition").is_none());
+
+        // The definition disappeared from the rc file: the row must go away.
+        database.replace_overrides(&[]).unwrap();
+        assert!(database.overridden_definitions().unwrap().is_empty());
+    }
+
+    #[test]
+    fn record_override_kind_round_trips_and_stays_unique() {
+        use crate::model::ShellKind;
+
+        let database = Database::open_in_memory().unwrap();
+        database
+            .record_override_kind("gs", &ShellKind::Bash, "alias", None, true)
+            .unwrap();
+        database
+            .record_override_kind("gs", &ShellKind::Bash, "function", None, false)
+            .unwrap();
+        let rows = database.overridden_definitions().unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["definition_kind"], "function");
+        assert_eq!(rows[0]["recoverable"], false);
+        assert!(rows[0].get("original_definition").is_none());
     }
 
     #[test]

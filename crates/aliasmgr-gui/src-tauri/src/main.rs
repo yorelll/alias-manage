@@ -10,6 +10,7 @@ fn main() {
             commands::list_aliases,
             commands::search_aliases,
             commands::tag_counts,
+            commands::preview_alias,
             commands::create_alias,
             commands::update_alias,
             commands::delete_alias,
@@ -18,11 +19,14 @@ fn main() {
             commands::reload_command,
             commands::import_preview,
             commands::import_confirm,
+            commands::import_preview_content,
+            commands::import_confirm_content,
             commands::config_get,
             commands::config_save,
             commands::uninstall_preview,
             commands::uninstall_confirm,
             commands::overridden_definitions,
+            commands::scan_overrides,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

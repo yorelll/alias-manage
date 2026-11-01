@@ -48,11 +48,33 @@ pub struct DetectionResult {
     pub installed: Vec<ShellKind>,
     pub source: String,
 }
+/// How an existing user definition was written, so the GUI can label it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DefinitionKind {
+    Alias,
+    Function,
+    SetAlias,
+}
+
+impl DefinitionKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            DefinitionKind::Alias => "alias",
+            DefinitionKind::Function => "function",
+            DefinitionKind::SetAlias => "set_alias",
+        }
+    }
+}
+
+/// A strict, metadata-only match. The raw source line is intentionally not
+/// returned: callers must not persist or display profile content.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefinitionSource {
     pub path: PathBuf,
     pub line: usize,
-    pub definition: String,
+    pub kind: DefinitionKind,
+    /// True only for a complete single-line definition.
+    pub recoverable: bool,
 }
 
 pub fn detect(context: &DetectionContext) -> DetectionResult {
@@ -154,6 +176,85 @@ pub fn conflicts(name: &str) -> Result<Vec<Conflict>, AliasError> {
     Ok(result)
 }
 
+/// Characters that may legally follow a definition name.
+fn name_boundary(rest: &str) -> bool {
+    match rest.chars().next() {
+        None => true,
+        Some(character) => {
+            character.is_whitespace() || matches!(character, '=' | '(' | '{' | ')' | ';' | ',')
+        }
+    }
+}
+
+/// Parses one line strictly. Only exact-name definitions match, comments are
+/// skipped, and `recoverable` is true only for a complete single-line shape.
+fn parse_definition(line: &str, name: &str) -> Option<(DefinitionKind, bool)> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return None;
+    }
+
+    // `alias <name>=<value>` (bash/zsh).
+    if let Some(rest) = trimmed.strip_prefix("alias ") {
+        if let Some(after) = rest
+            .strip_prefix(name)
+            .and_then(|rest| rest.strip_prefix('='))
+        {
+            let value = after.trim_start();
+            let recoverable = !value.is_empty() && !value.starts_with('#');
+            return Some((DefinitionKind::Alias, recoverable));
+        }
+    }
+
+    // `function <name>` / `function global:<name>` (bash, zsh, PowerShell).
+    if let Some(rest) = trimmed.strip_prefix("function ") {
+        let rest = rest.trim_start();
+        let rest = rest.strip_prefix("global:").unwrap_or(rest);
+        if let Some(after) = rest.strip_prefix(name) {
+            if name_boundary(after) {
+                return Some((DefinitionKind::Function, after.contains('}')));
+            }
+        }
+    }
+
+    // `<name>() { ... }` (bash/zsh shorthand).
+    if let Some(after) = trimmed
+        .strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix("()"))
+    {
+        let body = after.trim_start();
+        if body.starts_with('{') {
+            return Some((DefinitionKind::Function, body.contains('}')));
+        }
+    }
+
+    // `Set-Alias ... -Name <name> ...` (PowerShell, case-insensitive command).
+    let lower = trimmed.to_ascii_lowercase();
+    if let Some(after_command) = lower.strip_prefix("set-alias") {
+        if name_boundary(after_command) {
+            if let Some(index) = lower.find("-name") {
+                let rest = trimmed[index + "-name".len()..].trim_start();
+                if let Some(after) = rest.strip_prefix(name) {
+                    if name_boundary(after) {
+                        let after_lower = after.to_ascii_lowercase();
+                        let recoverable = after_lower
+                            .find("-value")
+                            .map(|value_index| {
+                                !after[value_index + "-value".len()..].trim().is_empty()
+                            })
+                            .unwrap_or(false);
+                        return Some((DefinitionKind::SetAlias, recoverable));
+                    }
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Finds an exact-name definition in the first matching file. Only reads files
+/// and never executes them.
 pub fn find_definition_source(
     paths: &[PathBuf],
     name: &str,
@@ -161,11 +262,12 @@ pub fn find_definition_source(
     for path in paths {
         if let Ok(content) = fs::read_to_string(path) {
             for (index, line) in content.lines().enumerate() {
-                if line.contains(name) && (line.contains("alias ") || line.contains("function ")) {
+                if let Some((kind, recoverable)) = parse_definition(line, name) {
                     return Ok(Some(DefinitionSource {
                         path: path.clone(),
                         line: index + 1,
-                        definition: line.into(),
+                        kind,
+                        recoverable,
                     }));
                 }
             }
@@ -266,6 +368,78 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(found.line, 2);
+        assert_eq!(found.kind, DefinitionKind::Alias);
+        assert!(found.recoverable);
+        let _ = fs::remove_file(path);
+    }
+
+    fn unique_rc(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aliasmgr-detection-{label}-{}-{}.rc",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ))
+    }
+
+    #[test]
+    fn exact_name_matching_ignores_substring_definitions() {
+        let path = unique_rc("exact");
+        fs::write(
+            &path,
+            "alias mygs='git'\nfunction myfoo {\nfunction global:myps {\nmybar() {\nSet-Alias -Name mysa -Value git\n",
+        )
+        .unwrap();
+        for name in ["gs", "foo", "ps", "bar", "sa"] {
+            assert!(
+                find_definition_source(std::slice::from_ref(&path), name)
+                    .unwrap()
+                    .is_none(),
+                "{name} must not match a longer name"
+            );
+        }
+        for name in ["mygs", "myfoo", "myps", "mybar", "mysa"] {
+            assert!(
+                find_definition_source(std::slice::from_ref(&path), name)
+                    .unwrap()
+                    .is_some(),
+                "{name} must match its exact definition"
+            );
+        }
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn definition_shapes_report_kind_and_recoverability() {
+        let path = unique_rc("shapes");
+        fs::write(
+            &path,
+            "alias ga='git add'\nalias gb=\nfunction fc { echo hi; }\nfunction fd {\nfunction global:pe { echo hi }\nfe() { echo hi; }\nff() {\nSet-Alias -Name sa -Value git\nSet-Alias -Name sb\n# alias gc='git commit'\n",
+        )
+        .unwrap();
+        let cases = [
+            ("ga", DefinitionKind::Alias, true),
+            ("gb", DefinitionKind::Alias, false),
+            ("fc", DefinitionKind::Function, true),
+            ("fd", DefinitionKind::Function, false),
+            ("pe", DefinitionKind::Function, true),
+            ("fe", DefinitionKind::Function, true),
+            ("ff", DefinitionKind::Function, false),
+            ("sa", DefinitionKind::SetAlias, true),
+            ("sb", DefinitionKind::SetAlias, false),
+        ];
+        for (name, kind, recoverable) in cases {
+            let found = find_definition_source(std::slice::from_ref(&path), name)
+                .unwrap()
+                .unwrap_or_else(|| panic!("{name} must match"));
+            assert_eq!(found.kind, kind, "{name} kind");
+            assert_eq!(found.recoverable, recoverable, "{name} recoverability");
+        }
+        assert!(find_definition_source(std::slice::from_ref(&path), "gc")
+            .unwrap()
+            .is_none());
         let _ = fs::remove_file(path);
     }
 }

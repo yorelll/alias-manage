@@ -272,7 +272,10 @@ impl SyncCoordinator {
         };
         self.config_dir.join("generated").join(name)
     }
-    fn render_shell(
+    /// Renders the generated body for `shell` without touching the filesystem.
+    /// Exposed so read-only diagnostics (Doctor) can compare a generated file
+    /// against what the current database would produce.
+    pub fn render_shell(
         &self,
         aliases: &[AliasRecord],
         shell: &ShellKind,
