@@ -55,7 +55,7 @@ These items describe committed workflow code, not a successful run of that code.
 
 Evidence is local source inspection, focused tests, and CLI spot checks against `target/debug/aliasmgr.exe` with isolated configuration roots. It is not a CI result.
 
-- [x] Source scan for `eval` / `Invoke-Expression` / `iex` over `crates/**/*.{rs,ts,tsx}`, excluding `target/` build artifacts, returned zero source hits.
+- [x] Source scan for `eval` / `Invoke-Expression` / `iex` over `crates/aliasmgr-core/src`, `crates/aliasmgr-cli/src`, and `crates/aliasmgr-gui/src-tauri/src` returned zero hits. Test fixtures and assertion strings (for example `script-contracts.test.ts`) were excluded from that scan because they intentionally mention the forbidden patterns.
 - [x] Advanced-mode rejection: `validation.rs` rejects `advanced_shell_mode` and `RawShellCommand` with `AdvancedModeUnsupported` (exit 5), with a unit test.
 - [x] Sensitive export filtering: a local export of an alias with `TOKEN=secret` and `MODE=test` omitted `TOKEN` and kept `MODE`; `transfer.rs` has matching tests.
 - [x] Configuration root precedence: `config_root.rs` passes; a local run confirmed `--config-dir` overrides `ALIASMGR_CONFIG_DIR`, and an empty environment variable falls back to the platform default.

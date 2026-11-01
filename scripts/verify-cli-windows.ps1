@@ -270,12 +270,12 @@ try {
             "tag AND filter verified: alias appears in tagged list" `
             "alias 'tag-test' with tag 'git-tools' visible via --tag filter" "stdout"
     } else {
-        Record-Result "W-006" "tag facet single/multi/clear" "EXPECTED-LIMITATION" `
+        Record-Result "W-006" "tag facet single/multi/clear" "FAIL" `
             "tag AND filter returns tagged entry" `
             "tag add output: $($TagAddOut.Trim()); list --tag: $($TagListOut.Trim())" "stdout"
     }
 } catch {
-    Record-Result "W-006" "tag facet single/multi/clear" "EXPECTED-LIMITATION" `
+    Record-Result "W-006" "tag facet single/multi/clear" "FAIL" `
         "tag AND filter and clear verified" `
         ("tag or list --tag unavailable or error: " + $_.Exception.Message) "stdout"
 }

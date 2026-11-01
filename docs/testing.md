@@ -12,7 +12,7 @@ export ALIASMGR_CONFIG_DIR="$PWD/target/tcfg"
 mkdir -p "$ALIASMGR_CONFIG_DIR"
 ```
 
-`rusqlite` uses the bundled SQLite build, so `gcc` must be on `PATH`. The isolated `ALIASMGR_CONFIG_DIR` is required: tests such as `cli_layers` and `config_root` must not touch a real user configuration directory.
+`rusqlite` uses the bundled SQLite build, so `gcc` must be on `PATH`. An injected `ALIASMGR_CONFIG_DIR` is required for `cli_layers`; `config_root.rs` sets its own isolated environment instead of relying on the ambient value.
 
 Local preflight commands:
 

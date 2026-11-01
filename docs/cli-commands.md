@@ -4,6 +4,8 @@ This document describes the current pre-GUI CLI surface. It is a command contrac
 
 ## Global options
 
+These are root-level clap options, not per-subcommand options. They must appear before the subcommand: `aliasmgr --format json list` works, while `aliasmgr list --format json` is rejected as a usage error (exit 2).
+
 - `--config-dir <PATH>`: explicit configuration root; takes precedence over `ALIASMGR_CONFIG_DIR`.
 - `--format table|json`: output selection for `list` and `find`. `get` always prints the record in Rust debug form, regardless of `--format`.
 - `--quiet`: suppresses successful command stdout. Errors are still written to stderr and keep their exit code.
