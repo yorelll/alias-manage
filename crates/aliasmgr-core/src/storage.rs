@@ -260,6 +260,14 @@ impl Database {
         Ok(crate::model::ManagedNameSet { current, retired })
     }
 
+    pub fn max_retired_revision(&self) -> Result<i64, AliasError> {
+        Ok(self.conn.query_row(
+            "SELECT COALESCE(MAX(retired_at_revision), 0) FROM retired_names",
+            [],
+            |row| row.get::<_, i64>(0),
+        )?)
+    }
+
     pub fn prune_retired_names(&self, minimum_revision: i64) -> Result<usize, AliasError> {
         Ok(self.conn.execute(
             "DELETE FROM retired_names WHERE retired_at_revision < ?1",

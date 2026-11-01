@@ -55,7 +55,7 @@ pub fn find_query(config_dir: Option<&str>, query: &str, fuzzy: bool, field: Opt
 pub fn remove(config_dir: Option<&str>, name: &str) -> Result<bool, AliasError> {
     let database = database(config_dir)?;
     let alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::NotFound(name.into()))?;
-    for shell in &alias.shells { database.retire_name(name, shell, alias.revision)?; }
+    for shell in &alias.shells { database.retire_name(name, shell, alias.revision.saturating_add(1))?; }
     database.delete_alias(alias.id)
 }
 pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(name)?.ok_or_else(|| AliasError::NotFound(name.into()))?; alias.enabled = enabled; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
@@ -73,13 +73,13 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
     if args.pass_args { alias.pass_args = true; }
     validate_alias(&alias)?;
     for shell in previous_shells.iter().filter(|shell| !alias.shells.contains(shell)) {
-        database.retire_name(&alias.name, shell, alias.revision)?;
+        database.retire_name(&alias.name, shell, alias.revision.saturating_add(1))?;
     }
     alias.record_checksum = record_checksum(&alias)?;
     database.update_alias(&alias)?;
-    Ok(alias)
+    database.get_alias(alias.id)?.ok_or_else(|| AliasError::NotFound(args.name.clone()))
 }
-pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::NotFound(old.into()))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision)?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
+pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> { let database = database(config_dir)?; let mut alias = database.get_alias_by_name(old)?.ok_or_else(|| AliasError::NotFound(old.into()))?; let shell = alias.shells.first().cloned().unwrap_or(ShellKind::Bash); database.retire_name(old, &shell, alias.revision.saturating_add(1))?; alias.name = new.into(); validate_alias(&alias)?; alias.record_checksum = record_checksum(&alias)?; database.update_alias(&alias) }
 #[allow(dead_code)] pub fn find(config_dir: Option<&str>, query: &str, fuzzy: bool, limit: Option<usize>, tags: Vec<String>) -> Result<Vec<AliasRecord>, AliasError> { find_query(config_dir, query, fuzzy, None, limit, tags) }
 #[allow(dead_code)] pub fn retired_names(config_dir: Option<&str>, shell: &str) -> Result<Vec<String>, AliasError> { let kind = match shell { "zsh" => ShellKind::Zsh, "powershell5" => ShellKind::PowerShell5, "powershell7" => ShellKind::PowerShell7, _ => ShellKind::Bash }; Ok(database(config_dir)?.managed_name_set(&kind)?.retired) }
 pub fn shell_detect() -> aliasmgr_core::detection::DetectionResult { aliasmgr_core::detection::detect(&aliasmgr_core::detection::DetectionContext { explicit: None, parent_shell: None, shell_env: std::env::var("SHELL").ok(), login_shell: None }) }
@@ -101,8 +101,8 @@ pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasErro
     }
     shells.sort();
     shells.dedup();
-    // Revisions are per-record and monotonically increase; the generated file carries the newest one.
-    let revision = aliases.iter().map(|alias| alias.revision).max().unwrap_or(1).max(1);
+    // Revisions must stay monotonic across deletes: tombstones advanced the counter too.
+    let revision = aliases.iter().map(|alias| alias.revision).max().unwrap_or(1).max(database.max_retired_revision()?).max(1);
     let coordinator = aliasmgr_core::sync::SyncCoordinator::new(AppPaths::discover(config_dir.map(Path::new)).root);
     let mut results = Vec::new();
     for shell in &shells {
@@ -180,7 +180,8 @@ pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<ImportRepo
 }
 pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError> {
     let paths = AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
+    // A broken config must not prevent purge and loader cleanup.
+    let config = paths.load_config().unwrap_or_default();
     let mut loaders = [
         config.shells.bash_rc_path,
         config.shells.zsh_rc_path,
@@ -197,9 +198,13 @@ pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError
     loaders.dedup();
     let mode = if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases };
     aliasmgr_core::uninstall::uninstall(&paths.root, mode, None)?;
-    // Loader blocks live in user profiles: only the marked block is removed, never the file.
+    // Loader blocks live in user profiles: only a changed profile is rewritten, with a backup.
     for loader in &loaders {
-        aliasmgr_core::uninstall::uninstall(&paths.root, aliasmgr_core::uninstall::UninstallMode::RetainAliases, Some(loader))?;
+        let content = std::fs::read_to_string(loader)?;
+        let cleaned = aliasmgr_core::shells::common::remove_loader(&content)?;
+        if cleaned != content {
+            aliasmgr_core::shells::common::write_profile_content(loader, &cleaned)?;
+        }
     }
     Ok(())
 }
@@ -212,7 +217,7 @@ pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
     for shell in [ShellKind::Bash, ShellKind::Zsh, ShellKind::PowerShell5, ShellKind::PowerShell7] {
         if !paths.generated_path(match shell { ShellKind::Bash => "bash", ShellKind::Zsh => "zsh", ShellKind::PowerShell5 => "powershell5", ShellKind::PowerShell7 => "powershell7", _ => "unsupported" }).exists() { findings.push(format!("生成文件缺失: {shell:?}")); }
     }
-    let revision = database.list_aliases()?.iter().map(|alias| alias.revision).max().unwrap_or(0);
+    let revision = database.list_aliases()?.iter().map(|alias| alias.revision).max().unwrap_or(0).max(database.max_retired_revision()?);
     for state in database.shell_states()? {
         if state.applied_revision < revision { findings.push(format!("Shell {:?} 生成文件过期", state.shell)); }
         if let Some(error) = state.last_error { findings.push(format!("Shell {:?} 同步失败: {error}", state.shell)); }

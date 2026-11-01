@@ -47,8 +47,8 @@ pub struct AppConfig { pub backups: BackupConfig, pub logs: LogConfig, pub retir
 #[derive(Debug, Clone)]
 pub struct AppPaths { pub root: PathBuf }
 
-fn non_empty_env(key: &str) -> Option<String> {
-    env::var(key).ok().filter(|value| !value.is_empty())
+fn non_empty_env(key: &str) -> Option<std::ffi::OsString> {
+    env::var_os(key).filter(|value| !value.is_empty())
 }
 
 fn platform_default_root() -> PathBuf {
