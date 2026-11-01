@@ -99,7 +99,7 @@ export function usesFilteredSearch(query: string, tagFilter: string[]): boolean 
 }
 
 export function searchAliasesArgs(query: string, fuzzy: boolean, limit: number, tagFilter: string[]) {
-  return { request: { query, fuzzy, limit, tag_filter: tagFilter } };
+  return { request: { query: query.trim(), fuzzy, limit, tag_filter: tagFilter } };
 }
 
 export let tauriInvoke: (command: string, args?: Record<string, unknown>) => Promise<unknown> = (command, args) => {

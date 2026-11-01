@@ -35,3 +35,6 @@ html, body, #root { margin: 0; min-height: 100%; font-family: system-ui, sans-se
 .btn-danger { color: #a33; }
 .btn-danger:hover { background: #a33; color: #fff; }
 .panel { margin-top: 24px; padding: 20px; border-radius: 12px; background: #fff; }
+.alias-loading { color: #63708a; }
+.result-limit-notice { color: #63708a; font-size: 13px; }
+.alias-actions button:disabled { opacity: .5; cursor: not-allowed; }

@@ -7,9 +7,10 @@ interface AliasTableProps {
   onDelete?: (alias: AliasDto) => void;
   onCancelDelete?: () => void;
   pendingDeleteId?: string | null;
+  confirmDeleteDisabled?: boolean;
 }
 
-export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete, pendingDeleteId }: AliasTableProps) {
+export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete, pendingDeleteId, confirmDeleteDisabled }: AliasTableProps) {
   return (
     <table className="alias-table">
       <thead>
@@ -35,7 +36,7 @@ export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete
                 {onEdit && <button onClick={() => onEdit(alias)}>Edit</button>}
                 {onDelete && (pending ? (
                   <>
-                    <button className="btn-danger" onClick={() => onDelete(alias)}>Confirm delete</button>
+                    <button className="btn-danger" disabled={confirmDeleteDisabled} onClick={() => onDelete(alias)}>Confirm delete</button>
                     {onCancelDelete && <button onClick={onCancelDelete}>Cancel</button>}
                   </>
                 ) : (

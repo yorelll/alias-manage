@@ -8,10 +8,17 @@ export function GeneratedFilePanel() {
   const [output, setOutput] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const changeShell = (value: string) => {
+    setShell(value);
+    setOutput("");
+    setError(null);
+  };
+
   const run = async (command: "generated_preview" | "reload_command") => {
+    setOutput("");
+    setError(null);
     try {
       setOutput(String(await tauriInvoke(command, { shell })));
-      setError(null);
     } catch (reason) {
       setError(String(reason));
     }
@@ -21,7 +28,7 @@ export function GeneratedFilePanel() {
     <section className="panel">
       <h2>Generated file</h2>
       <label>Shell
-        <select value={shell} onChange={(event) => setShell(event.target.value)}>
+        <select value={shell} onChange={(event) => changeShell(event.target.value)}>
           {SHELLS.map((value) => <option key={value} value={value}>{value}</option>)}
         </select>
       </label>

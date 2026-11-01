@@ -340,10 +340,10 @@ pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> { Ok(if pur
 
 #[tauri::command]
 pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
-    use aliasmgr_core::uninstall::{uninstall, UninstallMode};
+    use aliasmgr_core::shells::common::{remove_loader, write_profile_content};
 
     let paths = AppPaths::discover(None);
-    let config = paths.load_config().map_err(|error| error.to_string())?;
+    let config = paths.load_config().unwrap_or_default();
     let mut loaders: Vec<std::path::PathBuf> = [
         config.shells.bash_rc_path,
         config.shells.zsh_rc_path,
@@ -358,11 +358,18 @@ pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
     loaders.sort();
     loaders.dedup();
 
-    let mode = if purge { UninstallMode::PurgeAliases } else { UninstallMode::RetainAliases };
-    uninstall(&paths.root, mode, None).map_err(|error| error.to_string())?;
+    // Remove loader blocks before any destructive cleanup so a loader error
+    // aborts while the generated files and database are still intact.
     for loader in loaders.iter().filter(|path| path.exists()) {
-        uninstall(&paths.root, UninstallMode::RetainAliases, Some(loader)).map_err(|error| error.to_string())?;
+        let content = std::fs::read_to_string(loader).map_err(|error| error.to_string())?;
+        let cleaned = remove_loader(&content).map_err(|error| error.to_string())?;
+        if cleaned != content {
+            write_profile_content(loader, &cleaned).map_err(|error| error.to_string())?;
+        }
     }
+
+    let mode = if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases };
+    aliasmgr_core::uninstall::uninstall(&paths.root, mode, None).map_err(|error| error.to_string())?;
     Ok(vec!["卸载清理已完成；引用目标文件未处理".into()])
 }
 
@@ -373,6 +380,9 @@ pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> { data
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Serializes tests that mutate the process-wide `ALIASMGR_CONFIG_DIR`.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn startup_status_serializes_to_json() {
@@ -505,7 +515,49 @@ mod tests {
     }
 
     #[test]
+    fn delete_alias_retires_name_before_removing_the_record() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = std::env::temp_dir().join(format!(
+            "aliasmgr-gui-delete-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|elapsed| elapsed.as_nanos()).unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&temp).unwrap();
+        let previous = std::env::var_os("ALIASMGR_CONFIG_DIR");
+        std::env::set_var("ALIASMGR_CONFIG_DIR", &temp);
+
+        let database = database().unwrap();
+        let alias = AliasService::new(&database)
+            .create(AliasRecord {
+                name: "gsdel".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        let id = alias.id.to_string();
+
+        let deleted = delete_alias(id.clone()).unwrap();
+        let database = Database::open(temp.join("aliases.db")).unwrap();
+        let remaining = database.get_alias(uuid::Uuid::parse_str(&id).unwrap()).unwrap();
+        let bash_names = database.managed_name_set(&ShellKind::Bash).unwrap();
+        let zsh_names = database.managed_name_set(&ShellKind::Zsh).unwrap();
+        drop(database);
+
+        // Restore the process-wide environment and temp directory before asserting.
+        match previous { Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value), None => std::env::remove_var("ALIASMGR_CONFIG_DIR") }
+        let _ = std::fs::remove_dir_all(&temp);
+
+        assert!(deleted);
+        assert!(remaining.is_none());
+        assert!(bash_names.retired.contains(&"gsdel".to_string()));
+        assert!(zsh_names.retired.contains(&"gsdel".to_string()));
+    }
+
+    #[test]
     fn config_save_then_config_get_round_trips_runtime_settings() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let temp = std::env::temp_dir().join(format!(
             "aliasmgr-gui-config-{}-{}",
             std::process::id(),

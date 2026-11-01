@@ -94,6 +94,12 @@ test("search args match the Tauri request envelope", () => {
   });
 });
 
+test("search args trim surrounding whitespace", () => {
+  assert.deepEqual(searchAliasesArgs("  git  ", false, 25, []), {
+    request: { query: "git", fuzzy: false, limit: 25, tag_filter: [] },
+  });
+});
+
 test("filtered search is only used when a query or tag filter is present", () => {
   assert.equal(usesFilteredSearch("", []), false);
   assert.equal(usesFilteredSearch("   ", []), false);

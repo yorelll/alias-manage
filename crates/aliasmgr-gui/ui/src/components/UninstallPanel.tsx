@@ -4,32 +4,37 @@ import { tauriInvoke } from "../lib";
 export function UninstallPanel() {
   const [purge, setPurge] = useState(false);
   const [preview, setPreview] = useState<string[]>([]);
-  const [confirmed, setConfirmed] = useState(false);
+  const [armed, setArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const loadPreview = async (value: boolean) => {
+
+  const selectMode = (value: boolean) => {
     setPurge(value);
-    setConfirmed(false);
-    try {
-      setPreview(await tauriInvoke("uninstall_preview", { purge: value }) as string[]);
-      setError(null);
-    } catch (reason) {
-      setError(String(reason));
-    }
+    setArmed(false);
+    setPreview([]);
+    setError(null);
   };
+
   const execute = async () => {
-    if (purge && !confirmed) {
-      setConfirmed(true);
+    if (!armed) {
+      try {
+        setPreview(await tauriInvoke("uninstall_preview", { purge }) as string[]);
+        setArmed(true);
+        setError(null);
+      } catch (reason) {
+        setError(String(reason));
+      }
       return;
     }
     try {
       setPreview(await tauriInvoke("uninstall_confirm", { purge }) as string[]);
-      setConfirmed(false);
+      setArmed(false);
       setError(null);
     } catch (reason) {
       setError(String(reason));
     }
   };
-  return <section className="panel"><h1>Uninstall</h1><label><input type="radio" checked={!purge} onChange={() => loadPreview(false)} /> Retain aliases</label><label><input type="radio" checked={purge} onChange={() => loadPreview(true)} /> Purge aliases</label><p>{purge ? "Generated files, database, and journal will be removed. Referenced target files are protected." : "Generated definitions and target files remain; the loader is removed."}</p>{preview.map((item) => <p key={item}>{item}</p>)}{confirmed && <p role="alert">Confirm purge to continue.</p>}{error && <p role="alert">{error}</p>}<button onClick={execute}>{purge && !confirmed ? "Review purge" : "Confirm uninstall"}</button></section>;
+
+  return <section className="panel"><h1>Uninstall</h1><label><input type="radio" checked={!purge} onChange={() => selectMode(false)} /> Retain aliases</label><label><input type="radio" checked={purge} onChange={() => selectMode(true)} /> Purge aliases</label><p>{purge ? "Generated files, database, and journal will be removed. Referenced target files are protected." : "Generated definitions and target files remain; the loader is removed."}</p>{armed && <p role="alert">{purge ? "Confirm purge to continue." : "Confirm uninstall to continue."}</p>}{preview.map((item) => <p key={item}>{item}</p>)}{error && <p role="alert">{error}</p>}<button onClick={execute}>{armed ? "Confirm uninstall" : purge ? "Review purge" : "Review uninstall"}</button></section>;
 }
 
 export default UninstallPanel;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import "./styles.css";
 import { AliasTable } from "./components/AliasTable";
 import { SearchBar } from "./components/SearchBar";
@@ -28,6 +28,8 @@ export { NAV_ITEMS, statusSummaryText };
 export { tauriInvoke, setTauriInvoke } from "./lib";
 
 const SEARCH_LIMIT = 200;
+/** Grace period before "Confirm delete" can fire, so a double-click cannot delete. */
+const DELETE_ARM_DELAY_MS = 450;
 
 interface StatusDrawerProps {
   status: StartupStatus | null;
@@ -88,11 +90,19 @@ export function AliasesPage() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [wizard, setWizard] = useState<WizardState | null>(null);
   const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => {
+    if (deleteTimer.current) clearTimeout(deleteTimer.current);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     const load = async () => {
       try {
         const result = usesFilteredSearch(query, selectedTags)
@@ -104,6 +114,8 @@ export function AliasesPage() {
         }
       } catch (reason) {
         if (!cancelled) setError(String(reason));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     };
     void load();
@@ -120,6 +132,41 @@ export function AliasesPage() {
 
   const refresh = () => setReloadToken((value) => value + 1);
 
+  const cancelDelete = () => {
+    if (deleteTimer.current) {
+      clearTimeout(deleteTimer.current);
+      deleteTimer.current = null;
+    }
+    setPendingDeleteId(null);
+    setDeleteArmed(false);
+  };
+
+  const executeDelete = async (alias: AliasDto) => {
+    try {
+      await tauriInvoke("delete_alias", { id: alias.id });
+      cancelDelete();
+      setError(null);
+      refresh();
+    } catch (reason) {
+      setError(String(reason));
+    }
+  };
+
+  const requestDelete = (alias: AliasDto) => {
+    if (pendingDeleteId !== alias.id) {
+      if (deleteTimer.current) clearTimeout(deleteTimer.current);
+      setPendingDeleteId(alias.id);
+      setDeleteArmed(false);
+      deleteTimer.current = setTimeout(() => {
+        setDeleteArmed(true);
+        deleteTimer.current = null;
+      }, DELETE_ARM_DELAY_MS);
+      return;
+    }
+    if (!deleteArmed) return;
+    void executeDelete(alias);
+  };
+
   const saveAlias = async (draft: AliasDto): Promise<string | null> => {
     try {
       if (wizard?.mode === "edit") {
@@ -127,8 +174,8 @@ export function AliasesPage() {
       } else {
         await tauriInvoke("create_alias", { alias: createAliasPayload(draft) });
       }
+      cancelDelete();
       setWizard(null);
-      setPendingDeleteId(null);
       setError(null);
       refresh();
       return null;
@@ -142,7 +189,7 @@ export function AliasesPage() {
   const toggleEnabled = async (alias: AliasDto) => {
     try {
       await tauriInvoke("update_alias", { alias: toggleAliasEnabled(alias) });
-      setPendingDeleteId(null);
+      cancelDelete();
       setError(null);
       refresh();
     } catch (reason) {
@@ -150,26 +197,13 @@ export function AliasesPage() {
     }
   };
 
-  const requestDelete = async (alias: AliasDto) => {
-    if (pendingDeleteId !== alias.id) {
-      setPendingDeleteId(alias.id);
-      return;
-    }
-    try {
-      await tauriInvoke("delete_alias", { id: alias.id });
-      setPendingDeleteId(null);
-      setError(null);
-      refresh();
-    } catch (reason) {
-      setError(String(reason));
-    }
-  };
+  const filtered = usesFilteredSearch(query, selectedTags);
 
   return (
     <div data-testid="aliases-page">
       <div className="page-header">
         <h1 className="page-title">Aliases</h1>
-        <button className="btn-add-alias" onClick={() => { setPendingDeleteId(null); setWizard({ mode: "create" }); }}>+ Add alias</button>
+        <button className="btn-add-alias" onClick={() => { cancelDelete(); setWizard({ mode: "create" }); }}>+ Add alias</button>
       </div>
       {error && <p role="alert">{error}</p>}
       <div className="alias-toolbar">
@@ -183,23 +217,37 @@ export function AliasesPage() {
       </div>
       {wizard && (
         <AliasWizard
+          key={wizard.mode === "edit" ? wizard.alias.id : "create"}
           initial={wizard.mode === "edit" ? wizard.alias : undefined}
           tags={Object.keys(tagCounts)}
           onCancel={() => setWizard(null)}
           onSave={saveAlias}
         />
       )}
-      {aliases.length === 0 ? (
-        <ul className="alias-list"><li className="alias-list-empty"><span aria-hidden="true">☰</span><span>No aliases yet. Create your first alias to get started.</span></li></ul>
-      ) : null}
-      <AliasTable
-        aliases={aliases}
-        onEdit={(alias) => { setPendingDeleteId(null); setWizard({ mode: "edit", alias }); }}
-        onToggle={toggleEnabled}
-        onDelete={requestDelete}
-        onCancelDelete={() => setPendingDeleteId(null)}
-        pendingDeleteId={pendingDeleteId}
-      />
+      {loading ? (
+        <p className="alias-loading" role="status">Loading aliases…</p>
+      ) : aliases.length === 0 ? (
+        filtered ? (
+          <ul className="alias-list"><li className="alias-list-empty"><span>No matches for current filters.</span></li></ul>
+        ) : (
+          <ul className="alias-list"><li className="alias-list-empty"><span aria-hidden="true">☰</span><span>No aliases yet. Create your first alias to get started.</span></li></ul>
+        )
+      ) : (
+        <>
+          <AliasTable
+            aliases={aliases}
+            onEdit={(alias) => { cancelDelete(); setWizard({ mode: "edit", alias }); }}
+            onToggle={toggleEnabled}
+            onDelete={requestDelete}
+            onCancelDelete={cancelDelete}
+            pendingDeleteId={pendingDeleteId}
+            confirmDeleteDisabled={!deleteArmed}
+          />
+          {aliases.length === SEARCH_LIMIT && (
+            <p className="result-limit-notice" role="status">Showing first {SEARCH_LIMIT} results. Refine your search to see more.</p>
+          )}
+        </>
+      )}
     </div>
   );
 }
