@@ -15,7 +15,27 @@ fn confirmed_cli_import_persists_new_records_but_preview_does_not_write() {
     assert!(!config.join("aliases.db").exists());
     let confirmed = commands::import_confirm(Some(config.to_str().unwrap()), file.to_str().unwrap()).unwrap();
     assert_eq!(confirmed.imported, vec!["imported"]);
-    assert_eq!(commands::get(Some(config.to_str().unwrap()), "imported").unwrap().unwrap().name, "imported");
+    assert_eq!(commands::get(Some(config.to_str().unwrap()), "imported").unwrap().name, "imported");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn cli_import_preview_does_not_write_and_yes_persists() {
+    let root = std::env::temp_dir().join(format!("aliasmgr-cli-import-yes-{}", std::process::id()));
+    let config = root.join("config");
+    let file = root.join("aliases.json");
+    let alias = AliasRecord { name: "imported-yes".into(), executable: "git".into(), ..Default::default() };
+    std::fs::create_dir_all(&root).unwrap();
+    export_json(&file, std::slice::from_ref(&alias)).unwrap();
+
+    let preview = commands::import_file(Some(config.to_str().unwrap()), file.to_str().unwrap(), false).unwrap();
+    assert_eq!(preview.imported, vec!["imported-yes"]);
+    assert!(!config.join("aliases.db").exists());
+    assert!(commands::get(Some(config.to_str().unwrap()), "imported-yes").is_err());
+
+    let confirmed = commands::import_file(Some(config.to_str().unwrap()), file.to_str().unwrap(), true).unwrap();
+    assert_eq!(confirmed.imported, vec!["imported-yes"]);
+    assert_eq!(commands::get(Some(config.to_str().unwrap()), "imported-yes").unwrap().name, "imported-yes");
     let _ = std::fs::remove_dir_all(root);
 }
 

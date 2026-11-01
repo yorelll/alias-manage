@@ -20,6 +20,10 @@ pub enum AliasError {
     NameReserved,
     #[error("target is missing: {0}")]
     TargetMissing(String),
+    #[error("alias not found: {0}")]
+    NotFound(String),
+    #[error("confirmation required: this operation needs interactive confirmation")]
+    ConfirmationRequired,
     #[error("database schema is newer than this program")]
     SchemaTooNew,
     #[error("lock acquisition timed out")]

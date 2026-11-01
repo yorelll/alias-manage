@@ -7,6 +7,9 @@ fn doctor_reports_missing_configuration_and_reload_print_is_stable() {
     let findings = commands::doctor(Some(&root_string)).unwrap();
     assert!(findings.iter().any(|finding| finding.contains("数据库")));
     assert!(commands::reload_print(Some(&root_string), "bash").contains("generated/bash.sh"));
+    assert!(commands::reload_print(Some(&root_string), "zsh").contains("generated/zsh.sh"));
+    assert!(commands::reload_print(Some(&root_string), "powershell5").contains("generated/powershell5.ps1"));
+    assert!(commands::reload_print(Some(&root_string), "powershell7").contains("generated/powershell7.ps1"));
     let _ = std::fs::remove_dir_all(root);
 }
 
