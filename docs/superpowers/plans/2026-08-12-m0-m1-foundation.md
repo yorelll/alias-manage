@@ -102,13 +102,6 @@
 - [x] **Step 7: Wait for the newest run with `"D:/Program Files/GitHub CLI/gh.exe" run watch <run-id> --exit-status`.**
 - [x] **Step 8: If CI fails, inspect only failure logs with `"D:/Program Files/GitHub CLI/gh.exe" run view <run-id> --log-failed`, fix the concrete cause, create a new semantic commit, push, and repeat. Stop after three failures with the same root cause and report the blocker.**
 - [x] **Step 9: Record the successful run ID and job result in the final report.**
-- [ ] **Step 3: Add CI documentation describing that local Cargo is prohibited by the project plan, that tests use isolated temporary directories, and that remote checks use the absolute GitHub CLI path.**
-- [ ] **Step 4: Confirm the remote repository target with `git remote -v`; do not rewrite remotes or change repository settings without user authorization.**
-- [ ] **Step 5: Push the feature branch with `git push -u origin feature/alias-manager-mvp`.** This is explicitly authorized by the user for this iteration.
-- [ ] **Step 6: Find the run with `"D:/Program Files/GitHub CLI/gh.exe" run list --branch feature/alias-manager-mvp --limit 5`.**
-- [ ] **Step 7: Wait for the newest run with `"D:/Program Files/GitHub CLI/gh.exe" run watch <run-id> --exit-status`.**
-- [ ] **Step 8: If CI fails, inspect only failure logs with `"D:/Program Files/GitHub CLI/gh.exe" run view <run-id> --log-failed`, fix the concrete cause, create a new semantic commit, push, and repeat. Stop after three failures with the same root cause and report the blocker.**
-- [ ] **Step 9: Record the successful run ID and job result in the final report.**
 
 ## Verification boundary
 
