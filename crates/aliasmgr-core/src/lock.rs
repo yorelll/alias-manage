@@ -1,20 +1,39 @@
 use crate::error::AliasError;
 use fs4::fs_std::FileExt;
-use std::{fs::{self, File, OpenOptions}, path::{Path, PathBuf}, thread, time::{Duration, Instant}};
+use std::{
+    fs::{self, File, OpenOptions},
+    path::{Path, PathBuf},
+    thread,
+    time::{Duration, Instant},
+};
 
-pub struct FileLock { file: File, path: PathBuf }
+pub struct FileLock {
+    file: File,
+    path: PathBuf,
+}
 
 impl FileLock {
     pub fn acquire(path: impl AsRef<Path>, timeout: Duration) -> Result<Self, AliasError> {
         let path = path.as_ref().to_path_buf();
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-        let file = OpenOptions::new().create(true).truncate(false).read(true).write(true).open(&path)?;
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&path)?;
         let started = Instant::now();
         loop {
             match file.try_lock_exclusive() {
                 Ok(true) => {
                     file.set_len(0)?;
-                    let owner = format!("pid={}\nstarted_at={}\n", std::process::id(), chrono::Utc::now().to_rfc3339());
+                    let owner = format!(
+                        "pid={}\nstarted_at={}\n",
+                        std::process::id(),
+                        chrono::Utc::now().to_rfc3339()
+                    );
                     std::io::Write::write_all(&mut &file, owner.as_bytes())?;
                     file.sync_all()?;
                     return Ok(Self { file, path });
@@ -48,7 +67,10 @@ mod tests {
         std::io::Seek::seek(&mut file, std::io::SeekFrom::Start(0)).unwrap();
         std::io::Read::read_to_string(&mut file, &mut content).unwrap();
         assert!(content.contains("pid="));
-        assert!(matches!(FileLock::acquire(&path, Duration::from_millis(25)), Err(AliasError::LockTimeout)));
+        assert!(matches!(
+            FileLock::acquire(&path, Duration::from_millis(25)),
+            Err(AliasError::LockTimeout)
+        ));
         drop(first);
         assert!(!path.exists());
     }

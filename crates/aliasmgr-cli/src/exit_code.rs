@@ -2,16 +2,25 @@ use aliasmgr_core::error::AliasError;
 
 pub fn exit_code(error: &AliasError) -> i32 {
     match error {
-        AliasError::AliasConflict(_) | AliasError::ExactNameConflict(_) | AliasError::CaseFoldConflict(_) | AliasError::NameReserved => 3,
+        AliasError::AliasConflict(_)
+        | AliasError::ExactNameConflict(_)
+        | AliasError::CaseFoldConflict(_)
+        | AliasError::NameReserved => 3,
         AliasError::NotFound(_) => 4,
         AliasError::TargetMissing(_) | AliasError::UnsafePath => 6,
-        AliasError::InvalidAliasName | AliasError::InvalidArgTemplate | AliasError::AdvancedModeUnsupported => 5,
+        AliasError::InvalidAliasName
+        | AliasError::InvalidArgTemplate
+        | AliasError::AdvancedModeUnsupported => 5,
         AliasError::PermissionDenied => 7,
         AliasError::LockTimeout => 8,
         AliasError::SyntaxCheck(_) => 9,
         AliasError::PartialSync(_) => 10,
         AliasError::SchemaTooNew | AliasError::ShellNotInstalled => 12,
-        AliasError::ChecksumMismatch | AliasError::Database(_) | AliasError::Serialization(_) | AliasError::Io(_) | AliasError::UnreliableFilesystem => 13,
+        AliasError::ChecksumMismatch
+        | AliasError::Database(_)
+        | AliasError::Serialization(_)
+        | AliasError::Io(_)
+        | AliasError::UnreliableFilesystem => 13,
         AliasError::ConfirmationRequired => 14,
         AliasError::Config(_) => 1,
     }
@@ -40,6 +49,9 @@ mod tests {
 
     #[test]
     fn not_found_display_matches_contract() {
-        assert_eq!(AliasError::NotFound("gs".into()).to_string(), "alias not found: gs");
+        assert_eq!(
+            AliasError::NotFound("gs".into()).to_string(),
+            "alias not found: gs"
+        );
     }
 }

@@ -1,4 +1,7 @@
-use crate::{error::AliasError, model::{AliasRecord, ShellKind, TargetType}};
+use crate::{
+    error::AliasError,
+    model::{AliasRecord, ShellKind, TargetType},
+};
 
 pub fn validate_alias_name(name: &str) -> Result<(), AliasError> {
     if name.is_empty() || name.chars().count() > 64 {
@@ -10,13 +13,19 @@ pub fn validate_alias_name(name: &str) -> Result<(), AliasError> {
         } else {
             character.is_ascii_alphanumeric() || character == '_' || character == '-'
         };
-        if !valid { return Err(AliasError::InvalidAliasName); }
+        if !valid {
+            return Err(AliasError::InvalidAliasName);
+        }
     }
     Ok(())
 }
 
 pub fn validate_arg_template(alias: &AliasRecord) -> Result<(), AliasError> {
-    let placeholder_count = alias.fixed_args.iter().filter(|arg| arg.as_str() == "{{args}}").count();
+    let placeholder_count = alias
+        .fixed_args
+        .iter()
+        .filter(|arg| arg.as_str() == "{{args}}")
+        .count();
     if placeholder_count > 1 || (placeholder_count == 1 && !alias.pass_args) {
         return Err(AliasError::InvalidArgTemplate);
     }
@@ -25,7 +34,10 @@ pub fn validate_arg_template(alias: &AliasRecord) -> Result<(), AliasError> {
 
 pub fn validate_powershell_name(name: &str) -> Result<(), AliasError> {
     const RESERVED: &[&str] = &["ls", "cp", "mv", "rm", "cat", "gc"];
-    if RESERVED.iter().any(|reserved| reserved.eq_ignore_ascii_case(name)) {
+    if RESERVED
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    {
         return Err(AliasError::NameReserved);
     }
     Ok(())
@@ -40,7 +52,11 @@ pub fn validate_alias(alias: &AliasRecord) -> Result<(), AliasError> {
         return Err(AliasError::AdvancedModeUnsupported);
     }
     validate_arg_template(alias)?;
-    if alias.shells.iter().any(|shell| matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7)) {
+    if alias
+        .shells
+        .iter()
+        .any(|shell| matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7))
+    {
         validate_powershell_name(&alias.name)?;
     }
     Ok(())
@@ -51,13 +67,21 @@ mod tests {
     use super::*;
 
     fn alias(name: &str) -> AliasRecord {
-        AliasRecord { name: name.into(), executable: "tool".into(), ..Default::default() }
+        AliasRecord {
+            name: name.into(),
+            executable: "tool".into(),
+            ..Default::default()
+        }
     }
 
     #[test]
     fn accepts_valid_names_and_rejects_invalid_names() {
-        for name in ["cm", "copy-mv", "build_cam", "g1"] { assert!(validate_alias_name(name).is_ok()); }
-        for name in ["my alias", "a=b", "hello;world", "$cmd", ""] { assert!(validate_alias_name(name).is_err()); }
+        for name in ["cm", "copy-mv", "build_cam", "g1"] {
+            assert!(validate_alias_name(name).is_ok());
+        }
+        for name in ["my alias", "a=b", "hello;world", "$cmd", ""] {
+            assert!(validate_alias_name(name).is_err());
+        }
         assert!(validate_alias_name(&"a".repeat(65)).is_err());
     }
 
@@ -67,10 +91,16 @@ mod tests {
         value.fixed_args = vec!["build".into(), "{{args}}".into()];
         assert!(validate_alias(&value).is_ok());
         value.pass_args = false;
-        assert!(matches!(validate_alias(&value), Err(AliasError::InvalidArgTemplate)));
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidArgTemplate)
+        ));
         value.pass_args = true;
         value.fixed_args.push("{{args}}".into());
-        assert!(matches!(validate_alias(&value), Err(AliasError::InvalidArgTemplate)));
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidArgTemplate)
+        ));
         value.fixed_args = vec!["{{{{args}}}}".into()];
         assert!(validate_alias(&value).is_ok());
     }
@@ -79,10 +109,16 @@ mod tests {
     fn rejects_advanced_mode_and_reserved_powershell_names() {
         let mut value = alias("cm");
         value.advanced_shell_mode = true;
-        assert!(matches!(validate_alias(&value), Err(AliasError::AdvancedModeUnsupported)));
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::AdvancedModeUnsupported)
+        ));
         value.advanced_shell_mode = false;
         value.name = "ls".into();
         value.shells = vec![ShellKind::PowerShell7];
-        assert!(matches!(validate_alias(&value), Err(AliasError::NameReserved)));
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::NameReserved)
+        ));
     }
 }

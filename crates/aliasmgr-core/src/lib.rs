@@ -1,20 +1,20 @@
-pub mod error;
-pub mod migrations;
-pub mod search;
 pub mod config;
+pub mod detection;
+pub mod error;
 pub mod executor;
 pub mod lock;
+pub mod migrations;
+pub mod model;
 pub mod rotation;
+pub mod search;
+pub mod service;
 pub mod shells;
-pub mod syntax;
+pub mod storage;
 pub mod sync;
-pub mod detection;
+pub mod syntax;
 pub mod transfer;
 pub mod uninstall;
-pub mod model;
-pub mod storage;
 pub mod validation;
-pub mod service;
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
