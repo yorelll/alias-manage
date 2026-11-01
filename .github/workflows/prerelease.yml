@@ -913,18 +913,19 @@ jobs:
         env:
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_SOURCE_REF: ${{ inputs.source_ref }}
-      - name: Bundle task21-2 manuals and terminal scripts
+      - name: Bundle terminal scripts and user documentation
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p dist-bundle/docs/task21-2 dist-bundle/scripts
-          # Copy Chinese acceptance manuals
-          cp -r docs/task21-2/. dist-bundle/docs/task21-2/
-          # Copy terminal verification scripts
+          mkdir -p dist-bundle/docs dist-bundle/scripts
+          cp README.md dist-bundle/
+          for doc in docs/*.md; do
+            [ -f "$doc" ] && cp "$doc" dist-bundle/docs/ || true
+          done
           for script in scripts/verify-*.sh scripts/verify-*.ps1; do
             [ -f "$script" ] && cp "$script" dist-bundle/scripts/ || true
           done
-          echo "Manuals and scripts bundled."
+          echo "Scripts and user documentation bundled."
       - name: Copy CLI binaries into bundle (required)
         shell: bash
         run: |
@@ -1109,7 +1110,7 @@ jobs:
           ### How to test
           - Download the CLI binary for your platform and verify the SHA256 checksum.
           - Run the terminal verification script: \`bash scripts/verify-cli-linux.sh\` (Linux) or \`pwsh scripts/verify-powershell7.ps1\` (Windows).
-          - Follow the Chinese acceptance manuals in \`docs/task21-2/\`.
+          - See \`README.md\` and \`docs/cli-commands.md\` for usage and build instructions.
           - PowerShell 5.1 and 7 are independent. Linux Bash/Zsh are formal supported shells.
           - Windows Git Bash is exploratory only (NOT-APPLICABLE / EXPECTED-LIMITATION).
 
@@ -1119,7 +1120,7 @@ jobs:
           - No production promotion or merge.
 
           ### Feedback
-          Return sanitized result logs, screenshots, and feedback using the Chinese template in \`docs/task21-2/feedback-template.md\`.
+          Open an issue with sanitized logs, reproduction steps, and the artifact SHA256. Do not paste secrets or full environment dumps.
 
           **No automatic promotion. Release approval requires explicit user authorization.**"
 

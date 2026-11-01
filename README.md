@@ -1,52 +1,95 @@
 # Alias Manager
 
-跨平台命令别名管理器，目标平台为 Linux 与 Windows，共享 Rust 核心库，支持 Bash、Zsh、PowerShell 5.1 和 PowerShell 7。
+跨平台命令别名管理器，目标平台为 Linux 与 Windows，支持 Bash、Zsh、PowerShell 5.1 和 PowerShell 7。
 
-## 项目状态
+SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文件。普通路径使用结构化参数数组，不执行整行字符串求值；用户 RC/Profile 只写入一个带标记的 loader 块。
 
-当前 pre-GUI CLI MVP 已完成可由 CI 验证的核心范围：Rust workspace、领域模型与校验、SQLite 迁移/CRUD、结构化执行器、Bash/Zsh/PowerShell 适配器、同步与 prepared-journal 恢复、CLI 生命周期、搜索/tag facet、导入导出安全报告和卸载保护。SQLite 是配置事实来源，Shell 生成文件是可重建的派生文件；普通模式使用结构化参数，不执行整行字符串求值。
+## 功能
 
-本地最新基线（2026-11-01）：workspace 172 个测试通过，GUI Tauri crate 14 个测试通过，GUI 前端 223 个测试（含 `task20.test.ts`）及 typecheck/build 通过；`cargo fmt --check` 与 `cargo clippy -D warnings` 也已本地通过。当前分支尚未推送触发 CI；跨平台 Shell、打包与发布结论仍以 GitHub Actions 为准。最新状态见 `docs/final-release-status.md`。
+- 别名增删改查、启用/禁用、重命名、精确/模糊搜索、标签过滤与排序
+- Bash、Zsh、PowerShell 5.1、PowerShell 7 适配器；简单别名使用原生 `alias`/`Set-Alias`，其余生成函数包装器
+- 结构化 argv 透传、工作目录、环境变量、`{{args}}` 占位符
+- 同步锁、备份与轮转、operation journal、崩溃恢复、生成文件 checksum 与语法检查
+- 导入/导出（JSON/TOML），敏感环境变量过滤，预览与确认分离
+- 保留/清除式卸载；从不删除用户引用的目标文件
+- Tauri 2 GUI（预发布）
 
-这不是完整 GUI MVP 或安装器发布声明。GUI 视觉/交互、真实用户 Profile/ExecutionPolicy、oh-my-zsh 顺序、Windows symlink、package hook/MSI 和干净机器安装验收仍需单独人工或后续 CI 阶段。完整边界见 `docs/release-checklist.md`，Task 1–17 证据对账见 `docs/phase4-reconciliation.md`。先前的设计草稿仍保留在 `plan.md`，阶段执行清单在 `docs/superpowers/plans/`。
+## 构建要求
 
-### 当前 CLI 命令
+- Rust stable（版本见 `rust-toolchain.toml`）
+- Windows：需要 MinGW-w64 `gcc` 在 `PATH` 上（`rusqlite` 使用 bundled SQLite）。Git Bash 示例：
+  ```bash
+  export PATH="/d/mingw64/bin:$PATH"
+  ```
+- Node.js 18+：仅构建 GUI 前端时需要
+- Linux GUI 构建还需要 `webkit2gtk-4.1`、`libgtk-3-dev` 等 Tauri 原生依赖；仅构建 CLI 不需要
+- SQLite 由 `rusqlite` 的 `bundled` feature 提供，不依赖系统 SQLite
+
+## 构建 CLI
+
+```bash
+cargo build --release -p aliasmgr-cli
+```
+
+产物：Linux 为 `target/release/aliasmgr`，Windows 为 `target/release/aliasmgr.exe`。
+
+## 快速开始
+
+```bash
+aliasmgr add gs --exec git --arg status --shell bash --tag git
+aliasmgr list
+aliasmgr sync
+aliasmgr reload --print --shell bash
+aliasmgr doctor
+```
+
+配置根优先级：
+
+1. `--config-dir <PATH>`
+2. `ALIASMGR_CONFIG_DIR`（空值视为未设置）
+3. 平台默认：
+   - Windows：`%LOCALAPPDATA%\alias-manager`，其次 `%APPDATA%\alias-manager`
+   - Linux：`$XDG_CONFIG_HOME/alias-manager`，其次 `$HOME/.config/alias-manager`
+
+已打开的父 Shell 不会被 CLI 子进程自动更新；执行 `reload --print` 输出的命令（或重新打开 Shell）后生效。
+
+## 构建 GUI（预发布）
+
+```bash
+cd crates/aliasmgr-gui/ui
+npm ci
+npm run build
+cd ../..
+cargo build --release --manifest-path crates/aliasmgr-gui/src-tauri/Cargo.toml
+```
+
+Windows 需要 WebView2 Runtime；Linux 需要 WebKitGTK 4.1 等原生依赖。GUI 的真实窗口、视觉与交互验收仍属预发布阶段，不在当前 CLI 发布门禁内。
+
+## 命令
 
 `add`、`remove`、`update`、`rename`、`get`、`find`、`list`、`enable`、`disable`、`sync`、`reload`、`doctor`、`shell detect`、`shell install`、`shell uninstall`、`import`、`export`、`uninstall`。
 
-所有 CI 验证使用隔离的临时配置目录；已打开的父 Shell 不会由子进程自动更新，执行生成文件前请使用 `reload --print` 输出的命令。
+完整参数与退出码见 [docs/cli-commands.md](docs/cli-commands.md) 和 [docs/exit-codes.md](docs/exit-codes.md)。
 
-### 重要文档
+## 安全边界
 
-- `docs/testing.md`：本地 Rust/前端预检命令与 CI 跨平台验证边界
-- `docs/ci-workflow.md`：workflow、隔离和 gh 迭代规则
-- `docs/security.md`：结构化参数和导入/卸载安全边界
-- `docs/limitations.md`：PowerShell、Batch/CMD、交互式 Shell 限制
-- `docs/release-checklist.md`：pre-GUI 发布清单与人工验收边界
-- `docs/phase4-reconciliation.md`：Tasks 1–17 证据状态
-- `docs/uninstall.md`：retain/purge 和 package hook/MSI 边界
+- 普通生成路径不使用 `eval`、`Invoke-Expression` 或整行字符串求值；参数以数组形式传递
+- 高级 Shell 模式与 `RawShellCommand` 被拒绝
+- loader 只操作 `# >>> Alias Manager >>>` / `# <<< Alias Manager <<<` 之间的内容；标记不成对时报错
+- 导入/导出过滤 `PASSWORD`、`TOKEN`、`SECRET`、`API_KEY` 等敏感环境变量
+- 卸载不会删除被引用的 EXE/BAT/CMD/PY/PS1/SH/JAR 目标文件
 
-> Windows/Linux GUI 和安装包仍不属于当前 pre-GUI CLI gate。
+详见 [docs/security.md](docs/security.md)。
 
-## 开发验证
+## 文档
 
-本机已有完整 Rust 工具链（cargo/rustc + MinGW gcc）和 Node/npm，编码阶段可在本地做快速预检。Git Bash 下先设置：
+- [docs/cli-commands.md](docs/cli-commands.md)：CLI 命令契约
+- [docs/exit-codes.md](docs/exit-codes.md)：退出码
+- [docs/limitations.md](docs/limitations.md)：已知限制
+- [docs/security.md](docs/security.md)：安全边界
+- [docs/uninstall.md](docs/uninstall.md)：卸载语义
+- [docs/architecture.md](docs/architecture.md)：架构说明
 
-```bash
-export PATH="/d/mingw64/bin:/d/Program Files/nodejs:$PATH"
-export ALIASMGR_CONFIG_DIR="$PWD/target/tcfg"
-mkdir -p "$ALIASMGR_CONFIG_DIR"
-```
+## 许可
 
-然后运行 `cargo check --workspace --all-targets`、`cargo test --workspace --no-fail-fast`、`cargo clippy --workspace --all-targets -- -D warnings`、`cargo fmt --all -- --check`；GUI 前端在 `crates/aliasmgr-gui/ui` 下运行 `npm ci && npm run typecheck && npm test && npm run build`。
-
-本地通过只是预检，不是发布证据。跨平台 Shell 行为、集成测试、打包和 release 结论仍以 GitHub Actions 为准；未推送的分支不得声称 CI 通过。完整命令与边界见 `docs/testing.md`。
-
-## 重要限制
-
-- Bash、Zsh、Fish 和 PowerShell 是 Shell/命令解释器，不是终端类型。
-- 别名只保证交互式 Shell 生效，已打开的父 Shell 需要用户显式 reload。
-- MVP 拒绝高级 Shell 模式与 RawShellCommand。
-- 不支持别名递归解析，不自动修改父 Shell 状态。
-
-详见 `docs/architecture.md`、`plan.md` 和后续安全、测试、限制文档。
+MIT，见 [LICENSE](LICENSE)。

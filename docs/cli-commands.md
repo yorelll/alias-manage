@@ -88,6 +88,6 @@ Package-manager hooks and MSI integration are documented in `docs/uninstall.md` 
 
 ## Related documentation
 
-See `README.md`, `docs/security.md`, `docs/testing.md`, `docs/limitations.md`, `docs/exit-codes.md`, `docs/ci-workflow.md`, `docs/release-checklist.md`, and `docs/phase4-reconciliation.md`.
+See `README.md`, `docs/security.md`, `docs/limitations.md`, `docs/exit-codes.md`, `docs/uninstall.md`, and `docs/architecture.md`.
 
 GUI commands, visual acceptance, and installer workflows are outside this pre-GUI CLI document.
