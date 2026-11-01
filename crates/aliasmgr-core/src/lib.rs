@@ -6,6 +6,7 @@ pub mod executor;
 pub mod lock;
 pub mod rotation;
 pub mod shells;
+pub mod syntax;
 pub mod sync;
 pub mod detection;
 pub mod transfer;

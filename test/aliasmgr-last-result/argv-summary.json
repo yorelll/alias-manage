@@ -1,0 +1,7 @@
+{
+  "summary": "argv boundary test results",
+  "pass": 5,
+  "fail": 0,
+  "sensitive_data_redacted": true,
+  "cases": [{"id":"L-004-a","input":"multi-word fixed args","result":"PASS"},{"id":"L-004-b","input":"CJK character in arg","result":"PASS"},{"id":"L-004-c","input":"backslash in arg","result":"PASS"},{"id":"L-004-d","input":"hyphen in alias name","result":"PASS"},{"id":"L-004-e","input":"wildcard in arg","result":"PASS"}]
+}

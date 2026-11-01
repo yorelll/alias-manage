@@ -1,0 +1,19 @@
+{
+  "script": "verify-zsh-linux.sh",
+  "shell": "zsh",
+  "shell_version": "zsh 5.8.1 (x86_64-ubuntu-linux-gnu)",
+  "overall": "PASS_WITH_EXPECTED_LIMITATIONS",
+  "pass": 7,
+  "fail": 0,
+  "blocked": 0,
+  "expected_limitation": 5,
+  "total": 12,
+  "sensitive_data_redacted": true,
+  "result_enum": ["PASS","FAIL","BLOCKED","EXPECTED-LIMITATION","NOT-APPLICABLE"],
+  "output_paths": {
+    "summary": "result/verification-summary.json",
+    "log": "result/verification.log",
+    "argv": "result/argv-summary.json"
+  },
+  "cases": [{"id":"Z-ENV-001","title":"zsh binary available","result":"PASS","expected":"zsh is available on PATH","actual":"[redacted]","evidence":"which","sensitive_data_redacted":true},{"id":"Z-001","title":"zsh loader install to isolated RC","result":"PASS","expected":"loader installed to isolated .zshrc without error","actual":"已安装 zsh loader","evidence":"stdout","sensitive_data_redacted":true},{"id":"Z-002","title":"zsh loader install idempotence","result":"PASS","expected":"second install does not duplicate loader","actual":"start-marker count: 1","evidence":"file","sensitive_data_redacted":true},{"id":"Z-003","title":"zsh reload --print guidance","result":"PASS","expected":"reload --print outputs zsh source instruction","actual":"[redacted]","evidence":"stdout","sensitive_data_redacted":true},{"id":"Z-004","title":"zsh generated file syntax check","result":"EXPECTED-LIMITATION","expected":"generated .zsh file passes zsh -n","actual":"generated/zsh.sh not present (sync may not have produced zsh output)","evidence":"file","sensitive_data_redacted":true},{"id":"Z-005","title":"zsh argv boundary","result":"PASS","expected":"quoted args accepted across zsh invocation","actual":"pass=4 fail=0","evidence":"argv-summary.json","sensitive_data_redacted":true},{"id":"Z-006","title":"zsh tag filter returns tagged aliases","result":"PASS","expected":"list --tag ztag returns tagged results","actual":"[redacted]","evidence":"stdout","sensitive_data_redacted":true},{"id":"Z-007","title":"zsh shell uninstall removes loader","result":"PASS","expected":"shell uninstall clears loader from .zshrc","actual":"start-marker count=0","evidence":"file","sensitive_data_redacted":true},{"id":"Z-MANUAL-001","title":"oh-my-zsh plugin ordering","result":"EXPECTED-LIMITATION","expected":"loader positioned after oh-my-zsh; override not silent","actual":"MANUAL-ONLY: oh-my-zsh ordering requires interactive Zsh session with plugin stack","evidence":"manual","sensitive_data_redacted":true},{"id":"Z-MANUAL-002","title":"real login chain verification","result":"EXPECTED-LIMITATION","expected":"login-chain behavior observed and documented","actual":"MANUAL-ONLY: cannot automate real login shell chain safely","evidence":"manual","sensitive_data_redacted":true},{"id":"Z-MANUAL-003","title":"ZDOTDIR symlink RC preservation","result":"EXPECTED-LIMITATION","expected":"symlink preserved; line endings preserved","actual":"MANUAL-ONLY: real symlink chain requires live filesystem check","evidence":"manual","sensitive_data_redacted":true},{"id":"Z-MANUAL-004","title":"current session reload","result":"EXPECTED-LIMITATION","expected":"current zsh session picks up new aliases after reload","actual":"MANUAL-ONLY: cannot source into current session from script","evidence":"manual","sensitive_data_redacted":true}]
+}

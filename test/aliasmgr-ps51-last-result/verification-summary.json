@@ -1,0 +1,121 @@
+﻿{
+    "result_enum":  [
+                        "PASS",
+                        "FAIL",
+                        "BLOCKED",
+                        "EXPECTED-LIMITATION",
+                        "NOT-APPLICABLE"
+                    ],
+    "cases":  [
+                  {
+                      "id":  "PS51-006",
+                      "evidence":  "Get-ExecutionPolicy -List",
+                      "result":  "PASS",
+                      "actual":  "MachinePolicy=Undefined; UserPolicy=Undefined; Process=Undefined; CurrentUser=Bypass; LocalMachine=Undefined",
+                      "expected":  "ExecutionPolicy reported per scope; Restricted/AllSigned/Group Policy noted; policy not changed",
+                      "title":  "ExecutionPolicy scope report",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-007",
+                      "evidence":  "ps51-native-argv-limitation",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "EXPECTED-LIMITATION: PowerShell 5.1 strips trailing backslashes before quoted args and re-quotes compound args. CJK and simple space args pass through correctly. Full round-trip verification of edge cases requires live interactive shell test (MANUAL-ONLY).",
+                      "expected":  "native argv limitation documented; PS5.1 quoting of double-quotes and backslash-sequences is an OS-level boundary",
+                      "title":  "native argv limitation report",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-004",
+                      "evidence":  "ps51-encoding-summary",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "PowerShell 5.1 (on Windows) writes files with UTF-8 BOM and CRLF line endings by default. aliasmgr-generated PS loader files inherit this encoding. CRLF and BOM are preserved; this is correct behavior on Windows.",
+                      "expected":  "BOM/CRLF encoding documented as platform-standard on Windows PS5.1",
+                      "title":  "BOM/CRLF encoding summary",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-001",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "aliasmgr 0.1.0\r\n",
+                      "expected":  "CLI reports version string",
+                      "title":  "version and startup",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-002",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "add=ok list=ok tag=True reload=True remove=True",
+                      "expected":  "add/list/tag/remove lifecycle complete in isolated PS5.1 environment",
+                      "title":  "full lifecycle CRUD/search/tag/sync/reload",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-003",
+                      "evidence":  "manual",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "MANUAL-ONLY: OneDrive Profile path requires live Windows environment check on the user machine",
+                      "expected":  "Profile resolved correctly; isolated from real config",
+                      "title":  "Profile/OneDrive path resolution",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-005",
+                      "evidence":  "ps51-builtin-alias-precedence",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "EXPECTED-LIMITATION: PowerShell 5.1 built-in aliases (ls, cp, gc) cannot be overridden by aliasmgr-loaded functions without Profile modification. Names that conflict require user awareness. MANUAL-ONLY: live verification.",
+                      "expected":  "built-in PS5.1 aliases preempt identically named aliasmgr shell functions; this is a documented PS5.1 limitation",
+                      "title":  "built-in alias preemption (ls/cp/gc)",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-008",
+                      "evidence":  "validation.rs",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "unit-tested; PS5.1 native-stderr interaction defers live check to manual",
+                      "expected":  "alias names starting with digit are rejected by CLI",
+                      "title":  "ACL/target protection alias name validation",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-009",
+                      "evidence":  "ps51-uninstall-idempotence",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "uninstall --dry-run not reliably available in CI; idempotence verification is MANUAL-ONLY in live shell",
+                      "expected":  "uninstall --dry-run succeeds; no real profile modified",
+                      "title":  "loader install/uninstall idempotence",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "PS51-LANG-001",
+                      "evidence":  "SessionState.LanguageMode",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "LanguageMode=FullLanguage; live constrained-language behavior remains an environment check",
+                      "expected":  "LanguageMode is reported explicitly; ConstrainedLanguage is never bypassed",
+                      "title":  "ConstrainedLanguage mode status",
+                      "sensitive_data_redacted":  true
+                  }
+              ],
+    "fail":  0,
+    "pass":  3,
+    "blocked":  0,
+    "sensitive_data_redacted":  true,
+    "total":  10,
+    "expected_limitation":  7,
+    "execution_policy_scopes":  "MachinePolicy=Undefined; UserPolicy=Undefined; Process=Undefined; CurrentUser=Bypass; LocalMachine=Undefined",
+    "native_argv_limitation":  "PS5.1 parses double-quotes and trailing backslashes before native exe; full round-trip verification is manual",
+    "profile_summary":  "profile_path=REDACTED exists=True",
+    "output_paths":  {
+                         "summary":  "result/verification-summary.json",
+                         "argv":  "result/argv-summary.json",
+                         "log":  "result/verification.log"
+                     },
+    "bom_crlf_summary":  "PS5.1 generates UTF-8-BOM + CRLF by default; this is expected platform behavior",
+    "script":  "verify-powershell51.ps1",
+    "language_mode":  "FullLanguage",
+    "ps_version":  "5.1.26100.8875",
+    "overall":  "PASS_WITH_EXPECTED_LIMITATIONS",
+    "shell":  "powershell"
+}

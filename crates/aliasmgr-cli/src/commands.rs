@@ -1,7 +1,7 @@
 use crate::cli::{AddArgs, Command, UpdateArgs};
 use crate::messages::NON_INTERACTIVE;
 use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
-use aliasmgr_core::{config::AppPaths, error::AliasError, model::{record_checksum, AliasRecord, ShellKind}, storage::Database, validation::validate_alias};
+use aliasmgr_core::{config::AppPaths, error::AliasError, model::{record_checksum, AliasRecord, ShellKind, ShellStatus}, storage::Database, validation::validate_alias};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -110,6 +110,8 @@ pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasErro
         let shell_aliases = aliases.iter().filter(|alias| alias.shells.contains(shell)).cloned().collect::<Vec<_>>();
         results.extend(coordinator.apply_with_managed_names(&shell_aliases, std::slice::from_ref(shell), revision, &names)?.results);
     }
+    let failures = results.iter().filter(|result| result.status == ShellStatus::Failed).map(|result| format!("{:?}: {}", result.shell, result.error.as_deref().unwrap_or("unknown error"))).collect::<Vec<_>>();
+    if !failures.is_empty() { return Err(AliasError::PartialSync(failures.join("; "))); }
     Ok(format!("synced {} shell results", results.len()))
 }
 pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String {
@@ -125,7 +127,7 @@ pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, Alia
     let loader = aliasmgr_core::shells::common::render_loader(&generated);
     let before = std::fs::read_to_string(&rc_path).unwrap_or_default();
     if aliasmgr_core::shells::common::install_loader(&before, &loader)? == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_loader_file(&rc_path, &before, &loader)?;
+    aliasmgr_core::shells::common::write_loader_file_with_keep(&rc_path, &before, &loader, config.backups.rc_keep)?;
     Ok(true)
 }
 
@@ -137,7 +139,7 @@ pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, Al
     let before = std::fs::read_to_string(&rc_path)?;
     let cleaned = aliasmgr_core::shells::common::remove_loader(&before)?;
     if cleaned == before { return Ok(false); }
-    aliasmgr_core::shells::common::write_profile_content(&rc_path, &cleaned)?;
+    aliasmgr_core::shells::common::write_profile_content_with_keep(&rc_path, &cleaned, config.backups.rc_keep)?;
     Ok(true)
 }
 
@@ -196,16 +198,17 @@ pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError
     loaders.retain(|path| path.exists());
     loaders.sort();
     loaders.dedup();
-    let mode = if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases };
-    aliasmgr_core::uninstall::uninstall(&paths.root, mode, None)?;
     // Loader blocks live in user profiles: only a changed profile is rewritten, with a backup.
+    // Do this before the destructive purge so a malformed profile aborts without data loss.
     for loader in &loaders {
         let content = std::fs::read_to_string(loader)?;
         let cleaned = aliasmgr_core::shells::common::remove_loader(&content)?;
         if cleaned != content {
-            aliasmgr_core::shells::common::write_profile_content(loader, &cleaned)?;
+            aliasmgr_core::shells::common::write_profile_content_with_keep(loader, &cleaned, config.backups.rc_keep)?;
         }
     }
+    let mode = if purge { aliasmgr_core::uninstall::UninstallMode::PurgeAliases } else { aliasmgr_core::uninstall::UninstallMode::RetainAliases };
+    aliasmgr_core::uninstall::uninstall(&paths.root, mode, None)?;
     Ok(())
 }
 pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {

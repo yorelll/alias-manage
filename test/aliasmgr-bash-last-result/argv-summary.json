@@ -1,0 +1,7 @@
+{
+  "summary": "bash argv boundary test results",
+  "pass": 4,
+  "fail": 0,
+  "sensitive_data_redacted": true,
+  "cases": [{"id":"B-004-a","input":"multi-word fixed arg","result":"PASS"},{"id":"B-004-b","input":"CJK in arg","result":"PASS"},{"id":"B-004-c","input":"backslash in arg","result":"PASS"},{"id":"B-004-d","input":"tag with spaces","result":"PASS"}]
+}

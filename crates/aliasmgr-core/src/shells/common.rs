@@ -14,14 +14,30 @@ pub const END_MARKER: &str = "# <<< Alias Manager <<<";
 pub enum LoaderPosition { Missing, AtEnd, NotAtEnd }
 pub fn loader_position(content: &str) -> Result<LoaderPosition, AliasError> { let start = content.matches(START_MARKER).count(); let end = content.matches(END_MARKER).count(); if start > 1 || end > 1 || start != end { return Err(AliasError::UnsafePath); } if start == 0 { return Ok(LoaderPosition::Missing); } let end_index = content.rfind(END_MARKER).unwrap() + END_MARKER.len(); Ok(if content[end_index..].trim().is_empty() { LoaderPosition::AtEnd } else { LoaderPosition::NotAtEnd }) }
 
-pub fn write_loader_file(path: &Path, _content: &str, loader: &str) -> Result<(), AliasError> { let original = if path.exists() { fs::read_to_string(path)? } else { String::new() }; write_profile_content(path, &install_loader(&original, loader)?) }
-pub fn write_profile_content(path: &Path, content: &str) -> Result<(), AliasError> { if path.exists() { let backup_dir = path.parent().unwrap_or_else(|| Path::new(".")).join("backups/rc"); fs::create_dir_all(&backup_dir)?; let backup = backup_dir.join(format!("rc-{}.bak", chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default())); fs::copy(path, backup)?; } fs::write(path, content)?; Ok(()) }
+pub fn write_loader_file(path: &Path, content: &str, loader: &str) -> Result<(), AliasError> { write_loader_file_with_keep(path, content, loader, crate::config::BackupConfig::default().rc_keep) }
+pub fn write_loader_file_with_keep(path: &Path, _content: &str, loader: &str, keep: usize) -> Result<(), AliasError> { let original = if path.exists() { fs::read_to_string(path)? } else { String::new() }; write_profile_content_with_keep(path, &install_loader(&original, loader)?, keep) }
+pub fn write_profile_content(path: &Path, content: &str) -> Result<(), AliasError> { write_profile_content_with_keep(path, content, crate::config::BackupConfig::default().rc_keep) }
+pub fn write_profile_content_with_keep(path: &Path, content: &str, keep: usize) -> Result<(), AliasError> {
+    if path.exists() {
+        let backup_dir = path.parent().unwrap_or_else(|| Path::new(".")).join("backups/rc");
+        fs::create_dir_all(&backup_dir)?;
+        let backup = backup_dir.join(format!("rc-{}.bak", chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()));
+        fs::copy(path, &backup)?;
+        // The freshly created backup is protected and counts toward the retention budget,
+        // so at most `keep` files remain (a keep of 0 still protects this write's backup).
+        let _ = crate::rotation::prune_oldest(&backup_dir, keep.saturating_sub(1), std::slice::from_ref(&backup));
+    }
+    fs::write(path, content)?;
+    Ok(())
+}
 pub fn _filesystem_exists(path: &Path) -> bool { path.exists() }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test] fn fingerprint_marker_is_stable_and_embedded_in_managed_definition() { assert_eq!(fingerprint_marker("cm"), fingerprint_marker("cm")); assert_ne!(fingerprint_marker("cm"), fingerprint_marker("other")); assert!(managed_definition("cm", "cm() { true; }").contains("aliasmgr fingerprint:")); }
+    #[test] fn rc_backups_are_rotated_to_the_configured_limit() { let root = std::env::temp_dir().join(format!("aliasmgr-rc-rotation-{}", std::process::id())); fs::create_dir_all(&root).unwrap(); let profile = root.join("profile.rc"); for index in 0..12 { fs::write(&profile, format!("content {index}")).unwrap(); write_profile_content(&profile, "updated").unwrap(); } let backups = fs::read_dir(root.join("backups/rc")).unwrap().count(); assert!(backups <= crate::config::BackupConfig::default().rc_keep, "retained {backups} backups"); let _ = fs::remove_dir_all(root); }
+    #[test] fn configured_rc_keep_is_honored() { let root = std::env::temp_dir().join(format!("aliasmgr-rc-configured-{}", std::process::id())); fs::create_dir_all(&root).unwrap(); let paths = crate::config::AppPaths { root: root.clone() }; let mut config = crate::config::AppConfig::default(); config.backups.rc_keep = 3; config.save(&paths).unwrap(); let config = paths.load_config().unwrap(); assert_eq!(config.backups.rc_keep, 3); let profile = root.join("profile.rc"); for index in 0..13 { fs::write(&profile, format!("content {index}")).unwrap(); write_profile_content_with_keep(&profile, "updated", config.backups.rc_keep).unwrap(); std::thread::sleep(std::time::Duration::from_millis(1)); } let backups = fs::read_dir(root.join("backups/rc")).unwrap().count(); assert_eq!(backups, 3, "retained {backups} backups"); let _ = fs::remove_dir_all(root); }
     #[test] fn loader_install_is_idempotent_and_appends() { let loader = render_loader(Path::new("/tmp/generated.sh")); let once = install_loader("user\n", &loader).unwrap(); assert_eq!(install_loader(&once, &loader).unwrap(), once); assert_eq!(loader_position(&once).unwrap(), LoaderPosition::AtEnd); }
     #[test] fn loader_removal_preserves_user_content_and_rejects_unpaired_markers() { let loader = render_loader(Path::new("/tmp/generated.sh")); let content = install_loader("before\n", &loader).unwrap() + "after\n"; assert!(remove_loader(&content).unwrap().contains("before")); assert!(remove_loader("# >>> Alias Manager >>>\n").is_err()); }
     #[test] fn loader_install_preserves_crlf_line_endings() { let loader = render_loader(Path::new("C:\\generated.sh")); let installed = install_loader("before\r\n", &loader).unwrap(); assert!(installed.contains("before\r\n")); assert!(installed.contains("# >>> Alias Manager >>>\r\n")); assert!(installed.contains("# <<< Alias Manager <<<\r\n")); }

@@ -1,0 +1,38 @@
+[2026-08-20T02:25:55Z] === verify-cli-linux.sh starting ===
+[2026-08-20T02:25:55Z] artifact: [redacted path]
+[2026-08-20T02:25:55Z] temp_root: [redacted path]
+[2026-08-20T02:25:55Z] [PASS] L-001 version and startup
+[2026-08-20T02:25:55Z] [PASS] L-002 add native alias
+[2026-08-20T02:25:55Z] [PASS] L-002b list aliases contains added entry
+[2026-08-20T02:25:55Z] [PASS] L-003 get alias by name
+[2026-08-20T02:25:56Z] [PASS] L-003b disable/enable cycle
+[2026-08-20T02:25:56Z] [PASS] L-003c rename alias
+[2026-08-20T02:25:56Z] [PASS] L-003d update alias
+[2026-08-20T02:25:57Z] [PASS] L-004 argv space/quote/CJK/backslash/wildcard
+[2026-08-20T02:25:58Z] [PASS] L-004-ENV working-dir/env isolation marker
+[2026-08-20T02:25:58Z] [PASS] L-005 {{args}} tail position valid
+[2026-08-20T02:25:58Z] [PASS] L-005b duplicate {{args}} rejected
+[2026-08-20T02:25:58Z] [PASS] L-005c {{args}} with --no-pass-args rejected
+[2026-08-20T02:25:59Z] [PASS] L-006 sync generates shell files
+[2026-08-20T02:25:59Z] [PASS] L-007 list --limit 5
+[2026-08-20T02:25:59Z] [PASS] L-007b find query by name
+[2026-08-20T02:25:59Z] [PASS] L-007c find --fuzzy
+[2026-08-20T02:25:59Z] [PASS] L-008 tag filter single
+[2026-08-20T02:25:59Z] [PASS] L-008b tag filter multi (AND)
+[2026-08-20T02:26:00Z] [PASS] L-009 shell detect
+[2026-08-20T02:26:00Z] [PASS] L-010 doctor command
+[2026-08-20T02:26:00Z] [PASS] L-011 reload --print shows generated path
+[2026-08-20T02:26:00Z] [PASS] L-012 export JSON file
+[2026-08-20T02:26:00Z] [PASS] L-012b export TOML file
+[2026-08-20T02:26:00Z] [PASS] L-013 import JSON file
+[2026-08-20T02:26:00Z] [PASS] L-014 import TOML file
+[2026-08-20T02:26:00Z] [PASS] L-015 sync --dry-run non-mutating
+[2026-08-20T02:26:00Z] [PASS] L-016 invalid alias name rejected
+[2026-08-20T02:26:00Z] [PASS] L-016b name starting with digit rejected
+[2026-08-20T02:26:00Z] [PASS] L-016c empty executable rejected
+[2026-08-20T02:26:00Z] [PASS] L-017 remove alias with --yes
+[2026-08-20T02:26:00Z] [PASS] L-017b removed alias absent from list
+[2026-08-20T02:26:00Z] [PASS] L-018 shell install bash to isolated RC
+[2026-08-20T02:26:00Z] [PASS] L-019 loader install idempotence
+[2026-08-20T02:26:00Z] === overall: PASS (pass=33 fail=0 blocked=0 limitation=0) ===
+[2026-08-20T02:26:00Z] summary written to result/verification-summary.json

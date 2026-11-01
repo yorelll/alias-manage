@@ -1,0 +1,27 @@
+﻿{
+    "summary":  "windows CLI argv boundary test results",
+    "cases":  [
+                  {
+                      "case":  "CJK-in-arg",
+                      "result":  "PASS",
+                      "note":  "CJK characters accepted in alias --arg field"
+                  },
+                  {
+                      "case":  "space-in-arg",
+                      "result":  "PASS",
+                      "note":  "space in alias --arg field accepted"
+                  },
+                  {
+                      "case":  "backslash-in-arg",
+                      "result":  "PASS",
+                      "note":  "backslash in alias --arg field accepted"
+                  },
+                  {
+                      "case":  "native-argv-boundary",
+                      "result":  "EXPECTED-LIMITATION",
+                      "note":  "PowerShell native argv quoting boundary is a known limitation; full round-trip requires real shell execution"
+                  }
+              ],
+    "note":  "argv boundary matrix tested for CJK, space, backslash in --arg; native argv round-trip is EXPECTED-LIMITATION requiring live shell",
+    "sensitive_data_redacted":  true
+}

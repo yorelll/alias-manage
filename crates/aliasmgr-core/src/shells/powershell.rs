@@ -5,9 +5,9 @@ pub fn is_simple_alias(alias: &AliasRecord) -> bool { alias.fixed_args.is_empty(
 pub fn render_preemption(name: &str) -> String { format!("Remove-Item -LiteralPath Alias:\\{} -Force -ErrorAction SilentlyContinue\nRemove-Item -LiteralPath Function:\\{} -Force -ErrorAction SilentlyContinue\n", name, name) }
 pub fn render_cleanup(names: &ManagedNameSet) -> String { names.current.iter().chain(names.retired.iter()).map(|name| format!("Remove-Item -LiteralPath Alias:\\{} -Force -ErrorAction SilentlyContinue\nRemove-Item -LiteralPath Function:\\{} -Force -ErrorAction SilentlyContinue\n", name, name)).collect() }
 
-pub fn render(alias: &AliasRecord, shell: ShellKind, names: &ManagedNameSet) -> Result<String, AliasError> {
+pub fn render(alias: &AliasRecord, shell: ShellKind, _names: &ManagedNameSet) -> Result<String, AliasError> {
     if !matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7) { return Err(AliasError::ShellNotInstalled); }
-    let mut output = render_cleanup(names);
+    let mut output = String::new();
     output.push_str(&render_preemption(&alias.name));
     if is_simple_alias(alias) { output.push_str(&format!("{}\n", crate::shells::common::managed_definition(&alias.name, &format!("Set-Alias -Name {} -Value {} -Scope Global -Force", alias.name, quote(&alias.executable))))); return Ok(output); }
     let argv = render_argv(alias, &[])?;
@@ -36,7 +36,8 @@ mod tests {
     fn renders_cleanup_for_tombstones_and_escapes_literals() {
         let alias = AliasRecord { name: "q".into(), executable: "it's".into(), ..Default::default() };
         let names = ManagedNameSet { current: vec!["q".into()], retired: vec!["old".into()] };
+        assert!(render_cleanup(&names).contains("Alias:\\old"));
         let text = render(&alias, ShellKind::PowerShell7, &names).unwrap();
-        assert!(text.contains("Alias:\\old")); assert!(text.contains("it''s"));
+        assert!(text.contains("it''s"));
     }
 }

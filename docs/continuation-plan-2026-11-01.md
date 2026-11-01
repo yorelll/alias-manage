@@ -23,6 +23,16 @@
 | WS6 | CI 与门槛：去掉 fmt 前置写盘、clippy 修复、GUI Rust 编译检查、`task20.test.ts` 修复并纳入 | §4.5/§4.9/§4.11 | 本地 `fmt --check`、`clippy -D warnings` 通过 |
 | WS7 | 文档与验收材料：修正过时说明、退出码/CLI 契约、误标完成项、Windows 验证脚本 bug | §5.5/§8.5 | 文档与实现一致；脚本不再产生假的 EXPECTED-LIMITATION |
 
+## 执行状态（滚动更新）
+
+- WS1 已合并：GUI Rust 语法损坏、依赖、workspace exclude、DTO 词表、`created_at` 不可变 checksum 修复；GUI crate `cargo check` 与 10 个单元测试通过。
+- WS2 已合并：`update` 全字段非破坏、`--env`、`--arg` 连字符、`reload --shell`、NotFound=4、ConfirmationRequired=14、`import --yes` 原子落盘与敏感变量过滤、`--quiet`、`uninstall --yes`。
+- 新增 `crates/aliasmgr-gui/src-tauri/icons/` 与 Tauri crate `Cargo.lock`，使 GUI 可编译。
+- 合并后主分支测试：133 pass / 1 fail（唯一失败为本机未安装 PowerShell 7 的环境性发现测试，WS4b 将改为可跳过）。
+
+- WS4b 已合并：文件系统可靠性接线、数据库备份轮转、导出脱敏、PowerShell 大小写折叠预览、PowerShell 测试隔离与 PS7 环境跳过。合并后工作区测试 147 pass / 0 fail。
+- WS3/WS4a/WS5 已通过复审并进入最终修正/合并队列。
+
 ## 合并顺序
 
 1. WS1 + WS2 并行（worktree）→ review → 修复 → 合并。

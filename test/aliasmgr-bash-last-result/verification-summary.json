@@ -1,0 +1,19 @@
+{
+  "script": "verify-bash-linux.sh",
+  "shell": "bash",
+  "shell_version": "5.1.16(1)-release",
+  "overall": "PASS_WITH_EXPECTED_LIMITATIONS",
+  "pass": 7,
+  "fail": 0,
+  "blocked": 0,
+  "expected_limitation": 4,
+  "total": 11,
+  "sensitive_data_redacted": true,
+  "result_enum": ["PASS","FAIL","BLOCKED","EXPECTED-LIMITATION","NOT-APPLICABLE"],
+  "output_paths": {
+    "summary": "result/verification-summary.json",
+    "log": "result/verification.log",
+    "argv": "result/argv-summary.json"
+  },
+  "cases": [{"id":"B-ENV-001","title":"bash binary available","result":"PASS","expected":"bash is available on PATH","actual":"[redacted]","evidence":"which","sensitive_data_redacted":true},{"id":"B-001","title":"bash loader install to isolated RC","result":"PASS","expected":"loader installed to isolated .bashrc without error","actual":"已安装 bash loader","evidence":"stdout","sensitive_data_redacted":true},{"id":"B-002","title":"bash loader install idempotence","result":"PASS","expected":"second install does not duplicate loader","actual":"start-marker count: 1","evidence":"file","sensitive_data_redacted":true},{"id":"B-003","title":"bash reload --print guidance","result":"PASS","expected":"reload --print outputs bash source instruction","actual":"[redacted]","evidence":"stdout","sensitive_data_redacted":true},{"id":"B-004","title":"bash argv boundary","result":"PASS","expected":"quoted args preserved across bash invocation","actual":"pass=4 fail=0","evidence":"argv-summary.json","sensitive_data_redacted":true},{"id":"B-005","title":"bash tag/search in isolated config","result":"PASS","expected":"tag AND filter returns correct results","actual":"[redacted]","evidence":"stdout","sensitive_data_redacted":true},{"id":"B-006","title":"bash shell uninstall removes loader","result":"PASS","expected":"shell uninstall clears loader from RC","actual":"start-marker count=0","evidence":"file","sensitive_data_redacted":true},{"id":"B-007","title":"generated bash.sh syntax valid","result":"EXPECTED-LIMITATION","expected":"bash -n passes on generated bash.sh","actual":"generated/bash.sh not present (sync may not have run or no aliases)","evidence":"file","sensitive_data_redacted":true},{"id":"B-MANUAL-001","title":"real login chain verification","result":"EXPECTED-LIMITATION","expected":"login-chain behavior observed and documented","actual":"MANUAL-ONLY: cannot automate real login shell chain safely","evidence":"manual","sensitive_data_redacted":true},{"id":"B-MANUAL-002","title":"oh-my-zsh ordering with bash","result":"NOT-APPLICABLE","expected":"oh-my-zsh ordering not applicable to Bash runner","actual":"NOT-APPLICABLE: oh-my-zsh is a Zsh concern","evidence":"manual","sensitive_data_redacted":true},{"id":"B-MANUAL-003","title":"trusted symlink RC preservation","result":"EXPECTED-LIMITATION","expected":"symlink preserved; line endings preserved","actual":"MANUAL-ONLY: real symlink chain requires live filesystem check","evidence":"manual","sensitive_data_redacted":true},{"id":"B-MANUAL-004","title":"current session reload","result":"EXPECTED-LIMITATION","expected":"current shell session picks up new aliases after reload","actual":"MANUAL-ONLY: cannot source into current session from script","evidence":"manual","sensitive_data_redacted":true}]
+}

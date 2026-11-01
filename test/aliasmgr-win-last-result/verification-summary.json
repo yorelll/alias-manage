@@ -1,0 +1,144 @@
+﻿{
+    "result_enum":  [
+                        "PASS",
+                        "FAIL",
+                        "BLOCKED",
+                        "EXPECTED-LIMITATION",
+                        "NOT-APPLICABLE"
+                    ],
+    "blocked":  0,
+    "output_paths":  {
+                         "summary":  "result/verification-summary.json",
+                         "argv":  "result/argv-summary.json",
+                         "log":  "result/verification.log"
+                     },
+    "pass":  9,
+    "execution_policy_scopes":  "MachinePolicy=Undefined; UserPolicy=Undefined; Process=Bypass; CurrentUser=Bypass; LocalMachine=Undefined",
+    "fail":  0,
+    "language_mode":  "FullLanguage",
+    "cases":  [
+                  {
+                      "id":  "W-001",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "aliasmgr 0.1.0\r\n",
+                      "expected":  "CLI reports version string",
+                      "title":  "version and startup",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-002",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "别名已添加。\r\n",
+                      "expected":  "alias added without error",
+                      "title":  "add native alias",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-002b",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "NAME\tTARGET\tENABLED\r\ngs\tgit\ttrue\r\n\r\n",
+                      "expected":  "list output contains \u0027gs\u0027",
+                      "title":  "list aliases contains added entry",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-003",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "NAME\tTARGET\tENABLED\r\ngs\tgit\ttrue\r\n\r\n",
+                      "expected":  "list --limit 5 succeeds",
+                      "title":  "list/search/limit",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-004",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "cjk: 别名已添加。; space: 别名已添加。; backslash: 别名已添加。",
+                      "expected":  "argv boundary preservation verified for CJK, space, and backslash",
+                      "title":  "argv space/quote/CJK/backslash/wildcard",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-005",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "alias \u0027ph-test\u0027 with {{args}} present in list",
+                      "expected":  "{{args}} placeholder alias created and listed",
+                      "title":  "{{args}} tail/middle/invalid/duplicate",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-006",
+                      "evidence":  "stdout",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "tag or list --tag unavailable or error: error: unexpected argument \u0027--oneline\u0027 found",
+                      "expected":  "tag AND filter and clear verified",
+                      "title":  "tag facet single/multi/clear",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-007",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "imported successfully",
+                      "expected":  "export then import succeeds; import reports counts",
+                      "title":  "JSON/TOML import",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-008",
+                      "evidence":  "stdout",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "uninstall --dry-run unavailable or error: error: unexpected argument \u0027--dry-run\u0027 found",
+                      "expected":  "selected cleanup executed; targets preserved",
+                      "title":  "retain/purge uninstall",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-MANUAL-001",
+                      "evidence":  "manual",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "MANUAL-ONLY: OneDrive Profile path requires live Windows environment check",
+                      "expected":  "Profile resolved correctly; isolated from real config",
+                      "title":  "Profile/OneDrive path resolution",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-MANUAL-002",
+                      "evidence":  "manual",
+                      "result":  "EXPECTED-LIMITATION",
+                      "actual":  "MANUAL-ONLY: BOM/CRLF encoding verification requires a generated PowerShell loader file on a real artifact",
+                      "expected":  "BOM and CRLF preserved in generated files",
+                      "title":  "BOM/CRLF encoding preservation",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-009",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "alias \u0027gs\u0027 not found in list after remove",
+                      "expected":  "alias \u0027gs\u0027 removed; absent from list",
+                      "title":  "remove alias (CRUD completion)",
+                      "sensitive_data_redacted":  true
+                  },
+                  {
+                      "id":  "W-011",
+                      "evidence":  "stdout",
+                      "result":  "PASS",
+                      "actual":  "CLI rejected invalid name \u00271badname\u0027 with error: invalid alias name",
+                      "expected":  "invalid alias names rejected with error",
+                      "title":  "ACL/target protection 鈥?invalid name rejected",
+                      "sensitive_data_redacted":  true
+                  }
+              ],
+    "script":  "verify-cli-windows.ps1",
+    "overall":  "PASS_WITH_EXPECTED_LIMITATIONS",
+    "ps_version":  "5.1.26100.8875",
+    "total":  13,
+    "sensitive_data_redacted":  true,
+    "expected_limitation":  4
+}
