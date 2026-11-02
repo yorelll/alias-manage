@@ -926,37 +926,65 @@ mod tests {
     /// Serializes tests that mutate the process-wide `ALIASMGR_CONFIG_DIR`.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// Owns a temporary config directory and the process-wide
-    /// `ALIASMGR_CONFIG_DIR` override for the duration of a test.
+    /// Owns a temporary config directory, an isolated home directory, and the
+    /// process-wide overrides for the duration of a test.
+    ///
+    /// `USERPROFILE`/`HOME` are redirected so default PowerShell loader paths
+    /// can never resolve to (or rewrite) the developer's real profiles.
     struct TempConfig {
         root: std::path::PathBuf,
-        previous: Option<std::ffi::OsString>,
+        home: std::path::PathBuf,
+        previous_config: Option<std::ffi::OsString>,
+        previous_userprofile: Option<std::ffi::OsString>,
+        previous_home: Option<std::ffi::OsString>,
     }
 
     impl TempConfig {
         fn new(label: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
+            let unique = format!(
                 "aliasmgr-gui-{label}-{}-{}",
                 std::process::id(),
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|elapsed| elapsed.as_nanos())
                     .unwrap_or_default()
-            ));
+            );
+            let root = std::env::temp_dir().join(&unique);
+            let home = std::env::temp_dir().join(format!("{unique}-home"));
             std::fs::create_dir_all(&root).unwrap();
-            let previous = std::env::var_os("ALIASMGR_CONFIG_DIR");
+            std::fs::create_dir_all(&home).unwrap();
+            let previous_config = std::env::var_os("ALIASMGR_CONFIG_DIR");
+            let previous_userprofile = std::env::var_os("USERPROFILE");
+            let previous_home = std::env::var_os("HOME");
             std::env::set_var("ALIASMGR_CONFIG_DIR", &root);
-            Self { root, previous }
+            std::env::set_var("USERPROFILE", &home);
+            std::env::set_var("HOME", &home);
+            Self {
+                root,
+                home,
+                previous_config,
+                previous_userprofile,
+                previous_home,
+            }
         }
     }
 
     impl Drop for TempConfig {
         fn drop(&mut self) {
-            match self.previous.take() {
+            match self.previous_config.take() {
                 Some(value) => std::env::set_var("ALIASMGR_CONFIG_DIR", value),
                 None => std::env::remove_var("ALIASMGR_CONFIG_DIR"),
             }
+            match self.previous_userprofile.take() {
+                Some(value) => std::env::set_var("USERPROFILE", value),
+                None => std::env::remove_var("USERPROFILE"),
+            }
+            match self.previous_home.take() {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
             let _ = std::fs::remove_dir_all(&self.root);
+            let _ = std::fs::remove_dir_all(&self.home);
         }
     }
 
@@ -1607,29 +1635,24 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
     #[test]
     fn uninstall_removes_a_loader_installed_at_the_default_powershell_profile() {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let home = std::env::temp_dir().join(format!(
-            "aliasmgr-gui-uninstall-home-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|elapsed| elapsed.as_nanos())
-                .unwrap_or_default()
-        ));
-        std::fs::create_dir_all(&home).unwrap();
-        let previous = std::env::var_os("USERPROFILE");
-        std::env::set_var("USERPROFILE", &home);
-
-        let _config = TempConfig::new("uninstall-default-profile");
+        let config = TempConfig::new("uninstall-default-profile");
         // No configured profile path: install and uninstall must agree on the
-        // platform default.
+        // platform default, resolved against the isolated temp home.
         let outcome = shell_install("powershell7".into()).unwrap();
+        let expected = aliasmgr_core::integration::default_powershell_profile_path("powershell7")
+            .expect("PowerShell 7 has a default profile on this platform");
         let profile = PathBuf::from(&outcome.target);
+        assert_eq!(profile, expected);
+        assert!(
+            profile.starts_with(&config.home),
+            "default loader must stay inside the isolated home: {}",
+            profile.display()
+        );
         assert!(profile.exists());
         assert!(std::fs::read_to_string(&profile)
             .unwrap()
@@ -1641,12 +1664,6 @@ mod tests {
             !content.contains(aliasmgr_core::shells::common::START_MARKER),
             "GUI uninstall must remove the default-profile loader: {content}"
         );
-
-        match previous {
-            Some(value) => std::env::set_var("USERPROFILE", value),
-            None => std::env::remove_var("USERPROFILE"),
-        }
-        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
