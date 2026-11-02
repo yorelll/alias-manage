@@ -6,6 +6,8 @@ The current pre-GUI CLI boundary targets Bash, Zsh, PowerShell 5.1 and PowerShel
 
 SQLite with the bundled feature is the configuration source of truth. Shell files are rebuildable derived artifacts.
 
+CLI, the Tauri GUI, and the future TUI resolve the configuration root through the same `AppPaths::discover` and open the same `<config-root>/aliases.db`. No frontend keeps its own database or a second copy of record state; there is exactly one SQLite file per configuration root.
+
 ## Data model and storage
 
 `AliasRecord` carries `description`, `tags`, and an optional `restriction` (`PathRestriction { mode: whitelist|blacklist, paths }`) in addition to the execution fields. The SQLite `aliases` table stores `description` and `tags_json` directly; `restriction_json` stores the serialized restriction or the literal JSON `null`. `serde` treats `restriction` as optional (`#[serde(default)]`, skipped when `None`), so records written before the field existed keep their `record_checksum` unchanged and still import.

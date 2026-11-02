@@ -2,7 +2,7 @@
 
 跨平台命令别名管理器，目标平台为 Linux 与 Windows，支持 Bash、Zsh、PowerShell 5.1 和 PowerShell 7。
 
-SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文件。普通路径使用结构化参数数组，不执行整行字符串求值；用户 RC/Profile 只写入一个带标记的 loader 块。
+SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文件。CLI、TUI（后续）与 GUI 通过同一配置根读写同一个 `<config-root>/aliases.db`，不维护多份数据库。普通路径使用结构化参数数组，不执行整行字符串求值；用户 RC/Profile 只写入一个带标记的 loader 块。
 
 ## 功能
 
