@@ -6,11 +6,10 @@ use aliasmgr_core::{
     model::{AliasRecord, ManagedNameSet, ShellKind},
     shells::powershell,
 };
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::{Command, Output},
-};
+use std::{fs, path::PathBuf, process::Command};
+
+#[cfg(windows)]
+use std::{path::Path, process::Output};
 
 #[cfg(windows)]
 #[test]

@@ -265,6 +265,7 @@ fn run_with_shell(shell: &str, directory: &Path, script: &Path) -> std::process:
         .unwrap()
 }
 
+#[cfg(windows)]
 fn quote_sh(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
