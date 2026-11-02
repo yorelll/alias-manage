@@ -4,6 +4,7 @@ import {
   SHELLS,
   copyToClipboard,
   generatedPreviewErrorMessage,
+  loaderErrorMessage,
   normalizeSyncRun,
   reloadCommandExplanation,
   reloadCommandLabel,
@@ -185,7 +186,15 @@ export function GeneratedFilePanel() {
                     </button>
                   </>
                 )}
-                {!result.loader_installed && <p className="hint warning">{t("generated.loaderMissing")}</p>}
+                {!result.loader_installed && (
+                  <p className="hint warning">
+                    {result.loader_error_code
+                      ? t("generated.loaderError", {
+                          error: loaderErrorMessage(result.loader_error_code, language),
+                        })
+                      : t("generated.loaderMissing")}
+                  </p>
+                )}
               </li>
             ))}
           </ul>

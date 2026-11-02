@@ -387,6 +387,10 @@ pub struct ShellSyncOutcome {
     pub error_code: Option<String>,
     pub generated_path: PathBuf,
     pub loader_installed: bool,
+    /// Stable `loader_*` code when the loader could not be verified (unsafe
+    /// markers, unreadable profile, unsupported shell). `None` when the probe
+    /// succeeded or the shell has no loader target.
+    pub loader_error_code: Option<String>,
 }
 
 /// Stable code for an I/O failure that can be attributed to one shell.
@@ -502,9 +506,14 @@ fn sync_with_database_mode(
             .filter(|alias| alias.shells.contains(&shell))
             .cloned()
             .collect::<Vec<_>>();
-        let loader_installed = crate::integration::loader_status(&paths, shell.as_str())
-            .map(|outcome| outcome.installed)
-            .unwrap_or(false);
+        let (loader_installed, loader_error_code) =
+            match crate::integration::loader_status(&paths, shell.as_str()) {
+                Ok(outcome) => (outcome.installed, None),
+                Err(error) => (
+                    false,
+                    Some(crate::integration::loader_error_code(&error).to_string()),
+                ),
+            };
         let generated_path = paths.generated_path(shell.as_str());
         let receipt = match coordinator.apply_with_managed_names(
             &shell_aliases,
@@ -539,6 +548,7 @@ fn sync_with_database_mode(
                     error_code: Some(code.to_string()),
                     generated_path,
                     loader_installed,
+                    loader_error_code: loader_error_code.clone(),
                 });
                 continue;
             }
@@ -554,6 +564,7 @@ fn sync_with_database_mode(
                 error_code,
                 generated_path,
                 loader_installed,
+                loader_error_code: loader_error_code.clone(),
             });
         }
     }

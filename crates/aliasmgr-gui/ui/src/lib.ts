@@ -214,6 +214,22 @@ function looksLikePath(executable: string): boolean {
   return /[\\/]/.test(executable);
 }
 
+const EXECUTABLE_SUFFIX = /\.(exe|cmd|bat|ps1|py|sh|jar)$/i;
+
+const KNOWN_INTERPRETERS: ReadonlySet<string> = new Set([
+  "python",
+  "python3",
+  "py",
+  "pwsh",
+  "powershell",
+  "bash",
+  "sh",
+  "zsh",
+  "java",
+  "node",
+  "cmd",
+]);
+
 /**
  * Warn when a target contains whitespace that probably belongs in fixed
  * arguments. This is advisory only: the draft is never rewritten.
@@ -234,10 +250,17 @@ export function targetExecutableWarning(draft: AliasDto, language: Language = DE
   const hasFlagTail = rest.some((token) => token.startsWith("-"));
   const restLooksLikePath = rest.some((token) => looksLikePath(token));
   const bareProgram = !looksLikePath(parts[0]);
-  // A path first token with non-path trailing text is still a program plus
-  // arguments (`/usr/bin/python test.py`); trailing path text is more likely a
-  // directory name containing spaces.
-  const suspicious = bareProgram || hasFlagTail || !restLooksLikePath;
+  const firstBase = parts[0].split(/[\\/]/).pop()?.toLowerCase().replace(/\.exe$/, "") ?? "";
+  const interpreterTail = rest.length > 0 && KNOWN_INTERPRETERS.has(firstBase);
+  const executableIndex = parts.findIndex((token) => EXECUTABLE_SUFFIX.test(token));
+  const executableWithFollowing = executableIndex >= 0 && executableIndex < parts.length - 1;
+  // A path whose only internal spaces are directory names and whose final
+  // token is the executable is one path, not a command line.
+  const singlePathWithSpaces =
+    !bareProgram && !hasFlagTail && !interpreterTail && !executableWithFollowing;
+  if (singlePathWithSpaces) return null;
+  const suspicious =
+    bareProgram || hasFlagTail || interpreterTail || executableWithFollowing || !restLooksLikePath;
   if (!suspicious) return null;
   if (draft.target_type === "native_executable") {
     return t(language, "wizard.targetWhitespaceNative", {
@@ -325,6 +348,7 @@ export interface SyncShellResult {
   generated_path: string;
   reload_command: string;
   loader_installed: boolean;
+  loader_error_code: string | null;
 }
 
 export interface SyncRun {
@@ -345,6 +369,7 @@ export function normalizeSyncRun(value: unknown): SyncRun {
         generated_path: typeof entry.generated_path === "string" ? entry.generated_path : "",
         reload_command: typeof entry.reload_command === "string" ? entry.reload_command : "",
         loader_installed: entry.loader_installed === true,
+        loader_error_code: textOrNull(entry.loader_error_code),
       }))
     : [];
   return {
@@ -445,6 +470,15 @@ export function loaderErrorMessage(reason: unknown, language: Language = DEFAULT
     case "loader_config": return t(language, "loader.error.config");
     default: return t(language, "loader.error.failed");
   }
+}
+
+/**
+ * Uninstall failures may be loader-code failures or other backend errors.
+ * Localize the loader codes and leave other messages visible.
+ */
+export function uninstallErrorMessage(reason: unknown, language: Language = DEFAULT_LANGUAGE): string {
+  const text = typeof reason === "string" ? reason : String(reason);
+  return text.startsWith("loader_") ? loaderErrorMessage(text, language) : text;
 }
 
 /** Copy-paste command that points a new process at another config directory. */export function configDirExampleCommand(platform: PathPlatform = detectPathPlatform()): string {

@@ -108,6 +108,8 @@ test("explanations for reload, target types, doctor, and the config directory ex
       "doctor.code.loader_io.title",
       "doctor.code.loader_unsafe.title",
       "doctor.code.config_invalid.title",
+      "doctor.code.loader_shared_path.title",
+      "generated.loaderError",
       "doctor.installAlreadyPresent",
       "doctor.installIncomplete",
     ] as const) {

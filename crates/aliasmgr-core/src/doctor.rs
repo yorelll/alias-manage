@@ -301,11 +301,13 @@ pub fn diagnose(
                         }
                     }
                     Ok(position) => {
+                        let matching = expected
+                            .iter()
+                            .filter(|loader| integration::block_matches(&content, loader))
+                            .count();
                         let installed = path.exists()
                             && position == common::LoaderPosition::AtEnd
-                            && expected
-                                .iter()
-                                .any(|loader| integration::block_matches(&content, loader));
+                            && matching > 0;
                         if !installed {
                             for shell in &shells {
                                 let mut value = finding(
@@ -318,6 +320,31 @@ pub fn diagnose(
                                 value.detail = Some(format!("profile: {}", path.display()));
                                 findings.push(value);
                             }
+                        } else if shells.len() > 1 && matching < expected.len() {
+                            // One block can only source one generated file. A
+                            // shared profile therefore cannot load every
+                            // shell's aliases; surface that instead of calling
+                            // all shells healthy (and without an install button
+                            // that would just replace the other shell's block).
+                            let names = shells
+                                .iter()
+                                .map(shell_label)
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            let mut value = finding(
+                                None,
+                                "warning",
+                                "loader_shared_path",
+                                format!(
+                                    "Shell 配置路径被多个 Shell 共享，只能加载部分生成文件: {names}"
+                                ),
+                            );
+                            value.detail = Some(format!(
+                                "profile: {}; matched {matching} of {} expected loaders",
+                                path.display(),
+                                expected.len()
+                            ));
+                            findings.push(value);
                         }
                     }
                 }
@@ -365,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn shared_profile_counts_as_installed_for_every_shell_using_it() {
+    fn shared_profile_that_only_covers_one_shell_is_reported() {
         let root = temp_root("shared");
         std::fs::create_dir_all(&root).unwrap();
         let paths = AppPaths { root: root.clone() };
@@ -384,13 +411,24 @@ mod tests {
             })
             .unwrap();
 
-        // Install the bash loader; the shared path now has one valid block.
+        // Install the bash loader; the shared path now sources bash.sh only,
+        // so a zsh-only alias would never load.
         integration::install_loader(&paths, "bash").unwrap();
         let aliases = database.list_aliases().unwrap();
         let findings = diagnose(&root, true, &database, &aliases).unwrap();
         assert!(
+            finding_code(&findings, "loader_shared_path").is_some(),
+            "a shared profile covering only one shell must be reported: {findings:?}"
+        );
+        assert!(
             finding_code(&findings, "loader_missing").is_none(),
-            "a block matching any expected loader for a shared path must satisfy both shells: {findings:?}"
+            "the shared block itself is not missing: {findings:?}"
+        );
+        let shared_finding = finding_code(&findings, "loader_shared_path").unwrap();
+        assert_eq!(shared_finding.severity, "warning");
+        assert!(
+            shared_finding.action.is_none(),
+            "no install button for shared paths"
         );
         let _ = std::fs::remove_dir_all(root);
     }

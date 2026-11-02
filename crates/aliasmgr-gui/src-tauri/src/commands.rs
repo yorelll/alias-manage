@@ -434,7 +434,6 @@ pub struct SettingsDto {
     pub language: String,
 }
 
-
 /// Tauri command: return read-only diagnostics from the shared core helper.
 ///
 /// Target shells, the revision floor, generated-file checks, and loader probes
@@ -484,8 +483,7 @@ pub fn generated_preview(shell: String) -> Result<String, String> {
     }
     let path = AppPaths::discover(None).generated_path(shell_kind_to_str(&kind));
     match std::fs::read(&path) {
-        Ok(bytes) => String::from_utf8(bytes)
-            .map_err(|_| format!("generated_unreadable:{shell}")),
+        Ok(bytes) => String::from_utf8(bytes).map_err(|_| format!("generated_unreadable:{shell}")),
         Err(error) => {
             // Return a stable code instead of the raw OS error ("os error 3").
             // The UI maps the code to localized, actionable copy.
@@ -521,21 +519,9 @@ fn sync_error_code(error: &aliasmgr_core::error::AliasError) -> String {
     code.to_string()
 }
 
-/// Stable code for a loader install failure.
+/// Stable code for a loader install/uninstall failure.
 fn loader_error_code(error: &aliasmgr_core::error::AliasError) -> String {
-    use aliasmgr_core::error::AliasError;
-    let code = match error {
-        AliasError::Io(io) => match io.kind() {
-            std::io::ErrorKind::NotFound => "loader_missing",
-            std::io::ErrorKind::PermissionDenied => "loader_permission",
-            _ => "loader_io",
-        },
-        AliasError::ShellNotInstalled => "loader_unsupported",
-        AliasError::UnsafePath => "loader_unsafe",
-        AliasError::Config(_) => "loader_config",
-        _ => "loader_failed",
-    };
-    code.to_string()
+    aliasmgr_core::integration::loader_error_code(error).to_string()
 }
 
 /// Serializable per-shell sync outcome for the Sync page.
@@ -548,6 +534,8 @@ pub struct SyncShellResultDto {
     pub generated_path: String,
     pub reload_command: String,
     pub loader_installed: bool,
+    /// Stable `loader_*` code when the loader could not be verified.
+    pub loader_error_code: Option<String>,
 }
 
 /// Serializable result of a full sync triggered from the GUI.
@@ -593,6 +581,7 @@ pub fn sync_aliases() -> Result<SyncRunDto, String> {
                 generated_path: result.generated_path.to_string_lossy().into_owned(),
                 reload_command: aliasmgr_core::sync::reload_command(&paths.root, &result.shell),
                 loader_installed: result.loader_installed,
+                loader_error_code: result.loader_error_code.clone(),
             })
             .collect(),
     })
@@ -819,10 +808,11 @@ pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
     // Remove loader blocks before any destructive cleanup so a loader error
     // aborts while the generated files and database are still intact.
     for loader in loaders.iter().filter(|path| path.exists()) {
-        let content = std::fs::read_to_string(loader).map_err(|error| error.to_string())?;
-        let cleaned = remove_loader(&content).map_err(|error| error.to_string())?;
+        let content = std::fs::read_to_string(loader)
+            .map_err(|error| loader_error_code(&aliasmgr_core::error::AliasError::Io(error)))?;
+        let cleaned = remove_loader(&content).map_err(|error| loader_error_code(&error))?;
         if cleaned != content {
-            write_profile_content(loader, &cleaned).map_err(|error| error.to_string())?;
+            write_profile_content(loader, &cleaned).map_err(|error| loader_error_code(&error))?;
         }
     }
 
@@ -2164,7 +2154,11 @@ mod tests {
             );
             assert!(result.reload_command.contains(&format!(
                 "powershell{}.ps1",
-                if result.shell == "powershell5" { "5" } else { "7" }
+                if result.shell == "powershell5" {
+                    "5"
+                } else {
+                    "7"
+                }
             )));
             assert!(!result.loader_installed, "no loader was installed yet");
         }
@@ -2240,7 +2234,11 @@ mod tests {
         assert_eq!(bash.error_code, None);
         assert_eq!(zsh.status, "failed");
         assert_eq!(zsh.error_code.as_deref(), Some("sync_failed"));
-        assert!(zsh.error.as_deref().unwrap_or_default().contains("advanced"));
+        assert!(zsh
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("advanced"));
         assert!(PathBuf::from(&bash.generated_path).exists());
     }
 
@@ -2310,10 +2308,7 @@ mod tests {
             "sync_io"
         );
         assert_eq!(sync_error_code(&AliasError::UnsafePath), "sync_unsafe");
-        assert_eq!(
-            sync_error_code(&AliasError::LockTimeout),
-            "sync_locked"
-        );
+        assert_eq!(sync_error_code(&AliasError::LockTimeout), "sync_locked");
 
         assert_eq!(
             loader_error_code(&AliasError::Io(Error::from(ErrorKind::PermissionDenied))),
@@ -2329,7 +2324,10 @@ mod tests {
     #[test]
     fn generated_read_error_codes_distinguish_failure_kinds() {
         use std::io::ErrorKind;
-        assert_eq!(generated_read_error_code(ErrorKind::NotFound), "generated_missing");
+        assert_eq!(
+            generated_read_error_code(ErrorKind::NotFound),
+            "generated_missing"
+        );
         assert_eq!(
             generated_read_error_code(ErrorKind::PermissionDenied),
             "generated_permission"
@@ -2341,6 +2339,113 @@ mod tests {
         assert_eq!(
             generated_read_error_code(ErrorKind::Other),
             "generated_read_error"
+        );
+    }
+
+    #[test]
+    fn sync_reports_loader_errors_instead_of_pointing_to_install() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-loader-unsafe");
+        configure_powershell_profiles(&config.root);
+        let profile = config.root.join("bashrc");
+        std::fs::write(
+            &profile,
+            format!(
+                "{}\nuser middle\n{}\n",
+                aliasmgr_core::shells::common::END_MARKER,
+                aliasmgr_core::shells::common::START_MARKER
+            ),
+        )
+        .unwrap();
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_aliases().unwrap();
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == "bash")
+            .unwrap();
+        assert!(!bash.loader_installed);
+        assert_eq!(
+            bash.loader_error_code.as_deref(),
+            Some("loader_unsafe"),
+            "sync must report the real loader problem, not a generic install hint"
+        );
+    }
+
+    #[test]
+    fn sync_reports_unreadable_loader_profiles_with_a_code() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-loader-unreadable");
+        configure_powershell_profiles(&config.root);
+        let directory = config.root.join("bashrc-is-a-directory");
+        std::fs::create_dir_all(&directory).unwrap();
+        let paths = AppPaths {
+            root: config.root.clone(),
+        };
+        let mut app_config = paths.load_config().unwrap();
+        app_config.shells.bash_rc_path = Some(directory);
+        app_config.save(&paths).unwrap();
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_aliases().unwrap();
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == "bash")
+            .unwrap();
+        let code = bash.loader_error_code.as_deref().unwrap_or_default();
+        assert!(code.starts_with("loader_"), "unexpected code: {code}");
+        assert!(!code.contains("os error"));
+        assert!(!bash.loader_installed);
+    }
+
+    #[test]
+    fn uninstall_returns_a_stable_loader_code_for_unsafe_markers() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("uninstall-loader-unsafe");
+        configure_powershell_profiles(&config.root);
+        let profile = config.root.join("bashrc");
+        std::fs::write(
+            &profile,
+            format!(
+                "{}\nuser middle\n{}\n",
+                aliasmgr_core::shells::common::END_MARKER,
+                aliasmgr_core::shells::common::START_MARKER
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(uninstall_confirm(false).unwrap_err(), "loader_unsafe");
+        assert!(
+            std::fs::read_to_string(&profile)
+                .unwrap()
+                .contains("user middle"),
+            "uninstall must not rewrite the malformed profile"
         );
     }
 
@@ -2391,7 +2496,10 @@ mod tests {
                 || error.starts_with("generated_permission:"),
             "{error}"
         );
-        assert!(!error.contains("os error"), "raw OS text must not leak: {error}");
+        assert!(
+            !error.contains("os error"),
+            "raw OS text must not leak: {error}"
+        );
     }
 
     #[test]
@@ -2401,8 +2509,12 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let _config = TempConfig::new("reload-command");
 
-        assert!(reload_command("bash".into()).unwrap().starts_with("source '"));
-        assert!(reload_command("zsh".into()).unwrap().starts_with("source '"));
+        assert!(reload_command("bash".into())
+            .unwrap()
+            .starts_with("source '"));
+        assert!(reload_command("zsh".into())
+            .unwrap()
+            .starts_with("source '"));
         assert!(reload_command("powershell5".into())
             .unwrap()
             .starts_with(". '"));

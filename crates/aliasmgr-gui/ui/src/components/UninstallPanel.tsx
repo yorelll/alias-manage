@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   tauriInvoke,
+  uninstallErrorMessage,
   uninstallOutcomeText,
   uninstallRiskSummary,
 } from "../lib";
@@ -16,6 +17,9 @@ export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }
   const [busy, setBusy] = useState(false);
   const requestToken = useRef(0);
   const risk = uninstallRiskSummary(purge, language);
+
+  // Localized loader errors must not survive a language switch.
+  useEffect(() => { setError(null); }, [language]);
 
   const reset = () => {
     requestToken.current += 1;
@@ -39,7 +43,7 @@ export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }
       if (requestToken.current !== token) return;
       setStage("reviewed");
     } catch (reason) {
-      if (requestToken.current === token) setError(String(reason));
+      if (requestToken.current === token) setError(uninstallErrorMessage(reason, language));
     } finally {
       if (requestToken.current === token) setBusy(false);
     }
@@ -57,7 +61,7 @@ export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }
       setStage("done");
       onUninstalled?.();
     } catch (reason) {
-      if (requestToken.current === token) setError(String(reason));
+      if (requestToken.current === token) setError(uninstallErrorMessage(reason, language));
     } finally {
       if (requestToken.current === token) setBusy(false);
     }

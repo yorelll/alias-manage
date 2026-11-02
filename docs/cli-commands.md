@@ -116,10 +116,19 @@ Paths are single-quoted for the target shell, so spaces and non-ASCII directory
 names survive. PowerShell doubles embedded single quotes; POSIX shells use
 `'\''`.
 
-- `doctor`: reports missing database, missing generated files, stale generated files (recorded `applied_revision` behind the current revision), recorded sync errors, missing loader blocks, and a filesystem-reliability finding when one is available. It also recomputes each generated file's embedded `# file_checksum:` and reports `生成文件校验和不匹配（可能被手工修改）` for a file edited by hand or missing its checksum line. It does not repair anything.
-  - Doctor inspects database presence, generated files and checksums, staleness, sync errors, loader installation, and filesystem reliability. It is read-only.
-  - Loader checks probe the actual profile at the resolved path and compare the managed block against the expected loader for the current config root. A missing, relocated, or mismatched block is reported as missing; an unreadable profile is reported separately.
-  - The GUI Doctor page adds an action button to actionable findings: **Sync now** for `generated_missing`, `stale`, `sync_failed`, `generated_unreadable`, `generated_modified`, and `render_failed`; **Install shell integration** for `loader_missing`. Actions run the same core operations as `sync` and `shell install`, then rescan automatically. The CLI has no action buttons: run `aliasmgr sync` or `aliasmgr shell install <SHELL>` yourself.
+- `doctor`: reports missing database, generated-file and checksum problems, staleness, recorded sync errors, loader problems, and a filesystem-reliability finding when one is available. It does not repair anything. Exit codes and command syntax are unchanged from earlier releases; the findings below are additive.
+  - Doctor inspects database presence, generated files and checksums, staleness, sync errors, loader installation, and filesystem reliability. It is read-only and shares its implementation between CLI and GUI.
+  - Generated-file checks cover every shell referenced by an alias or tombstone, plus any leftover generated file that still exists (leftover files are validated but unreferenced shells are not reported as missing). It recomputes each file's embedded `# file_checksum:` and reports `生成文件校验和不匹配（可能被手工修改）` for a hand-edited file or a missing checksum line.
+  - Target shells and the expected revision come from the same core helpers as `sync`, so a revision-0 record cannot create a permanent unfixable stale finding.
+  - Loader checks probe the actual profile at the resolved path (configured path or platform fallback) and compare the managed block against the expected loader for the current config root. Findings use stable codes:
+    - `loader_missing`: no expected block (or a mismatched/relocated block).
+    - `loader_shared_path`: multiple shells resolve to one profile path, but the installed block sources only a subset of their generated files. This finding has no install button; give each shell a distinct profile path.
+    - `loader_permission` / `loader_io` / `loader_unreadable`: the profile could not be read (permission, filesystem, or encoding).
+    - `loader_unsafe`: the profile has missing, duplicated, inverted, or otherwise unpaired Alias Manager markers.
+    - `config_invalid`: `config.toml` cannot be parsed, so loader paths cannot be resolved.
+  - Other codes: `database_missing`, `generated_missing`, `generated_unreadable`, `generated_modified`, `render_failed`, `stale`, `sync_failed`, `unreliable_filesystem`.
+  - Loader and generated-file details (paths, checksum mismatches, parse errors) are reported as diagnostic detail and never auto-repaired.
+  - The GUI Doctor page adds an action button to actionable findings: **Sync now** for `generated_missing`, `stale`, `sync_failed`, `generated_unreadable`, `generated_modified`, and `render_failed`; **Install shell integration** for `loader_missing`. `loader_shared_path`, marker, permission, I/O, encoding, and config findings have no install button. Actions run the same core operations as `sync` and `shell install`, then rescan automatically. The CLI has no action buttons: run `aliasmgr sync` or `aliasmgr shell install <SHELL>` yourself.
 - `shell detect`: reports the detected Shell.
 - `shell install <SHELL>` / `shell uninstall <SHELL>`: installs or removes the marked loader block for `bash`, `zsh`, `powershell5`, or `powershell7`. Other Shell names return `ShellNotInstalled` (exit 12).
   - The loader path comes from `config.toml` (`shells.bash_rc_path`, `shells.zsh_rc_path`, `shells.powershell5_profile_path`, `shells.powershell7_profile_path`).
@@ -129,7 +138,7 @@ names survive. PowerShell doubles embedded single quotes; POSIX shells use
   - Default paths are derived from `%USERPROFILE%` / `~`; OneDrive-redirected Documents folders are not detected through the Windows known-folder API, so set the corresponding `shells.powershell*_profile_path` explicitly in that case.
   - The PowerShell block dot-sources the generated `.ps1` only when it exists and then removes its temporary variable; a missing generated file cannot break profile startup. Profile writes create a backup and respect the configured RC retention limit.
   - `shell install` is idempotent only when the existing block points at the *current* config root and sits at the end of the profile. A block pointing at another `ALIASMGR_CONFIG_DIR`, a relocated block, or a hand-edited block is replaced with the expected one.
-  - `uninstall` resolves all four loader targets through the same helper as install, including the platform-default PowerShell profiles, so a loader installed without an explicit `shells.*_profile_path` is still removed.
+  - `uninstall` uses the shared `integration` loader resolution: every configured path plus its built-in fallback candidate (config-root RC for Bash/Zsh, platform-default profile for PowerShell) is visited, so a loader installed without an explicit `shells.*_profile_path` is still removed.
 
 ## Transfer
 

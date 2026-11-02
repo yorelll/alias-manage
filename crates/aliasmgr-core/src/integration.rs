@@ -219,6 +219,23 @@ pub(crate) fn block_matches(content: &str, loader: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Stable error code for a loader/profile failure, shared by sync results and
+/// the GUI action/uninstall handlers.
+pub fn loader_error_code(error: &AliasError) -> &'static str {
+    match error {
+        AliasError::Io(io) => match io.kind() {
+            std::io::ErrorKind::NotFound => "loader_missing",
+            std::io::ErrorKind::PermissionDenied => "loader_permission",
+            std::io::ErrorKind::InvalidData => "loader_unreadable",
+            _ => "loader_io",
+        },
+        AliasError::ShellNotInstalled => "loader_unsupported",
+        AliasError::UnsafePath => "loader_unsafe",
+        AliasError::Config(_) => "loader_config",
+        _ => "loader_failed",
+    }
+}
+
 /// Reports whether the expected loader block is installed for `shell` without
 /// writing.
 ///

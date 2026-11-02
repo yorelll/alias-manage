@@ -68,6 +68,7 @@ import {
   targetTypeLabel,
   toggleShell,
   toStringList,
+  uninstallErrorMessage,
   uninstallOutcomeText,
   uninstallRiskSummary,
   validateAliasDraft,
@@ -615,6 +616,7 @@ test("UninstallPanel requires review then confirmation for both modes", async ()
     "uninstall_preview", "uninstall_confirm", 'stage !== "reviewed"', "uninstall.confirmPurge",
     "uninstall.confirmUninstall", "uninstall.reviewPurge", "uninstall.reviewUninstall", "uninstallRiskSummary", "uninstallOutcomeText",
     "onUninstalled", "uninstall.kept", "uninstall.removed",
+    "uninstallErrorMessage",
   ]) {
     assert.ok(uninstall.includes(fragment), `uninstall panel is missing ${fragment}`);
   }
@@ -761,6 +763,8 @@ test("doctor finding codes map to exactly one actionable button", () => {
   assert.equal(doctorActionFor(doctorFinding("database_missing", null)), null);
   assert.equal(doctorActionFor(doctorFinding("unreliable_filesystem", null)), null);
   assert.equal(doctorActionFor(doctorFinding("loader_unreadable", "bash")), null);
+  assert.equal(doctorActionFor(doctorFinding("loader_shared_path", null)), null);
+  assert.equal(doctorActionFor(doctorFinding("config_invalid", null)), null);
   assert.equal(doctorActionFor(doctorFinding("unknown_code")), null);
 
   assert.equal(doctorActionLabel("sync", "en"), "Sync now");
@@ -789,6 +793,7 @@ test("sync responses are normalized defensively", () => {
         generated_path: "C:\\cfg\\generated\\powershell7.ps1",
         reload_command: ". 'C:\\cfg\\generated\\powershell7.ps1'",
         loader_installed: false,
+        loader_error_code: "loader_unsafe",
       },
       { shell: "bash", status: "ok" },
     ],
@@ -799,9 +804,11 @@ test("sync responses are normalized defensively", () => {
   assert.equal(run.results[0].error, "boom");
   assert.equal(run.results[0].error_code, "sync_permission");
   assert.equal(run.results[0].loader_installed, false);
+  assert.equal(run.results[0].loader_error_code, "loader_unsafe");
   assert.equal(run.results[1].generated_path, "");
   assert.equal(run.results[1].error_code, null);
   assert.equal(run.results[1].loader_installed, false);
+  assert.equal(run.results[1].loader_error_code, null);
 });
 
 test("generated preview errors become localized, actionable copy", () => {
@@ -853,6 +860,13 @@ test("sync and loader failure codes become localized, non-raw messages", () => {
   assert.match(loaderErrorMessage("loader_unsupported", "en"), /no loadable profile/);
   assert.match(loaderErrorMessage("loader_io", "zh"), /无法读取或写入/);
   assert.doesNotMatch(loaderErrorMessage("loader_io", "en"), /os error/);
+  assert.match(uninstallErrorMessage("loader_unsafe", "en"), /unpaired Alias Manager markers/);
+  assert.match(uninstallErrorMessage("loader_unsafe", "zh"), /标记不成对/);
+  assert.equal(
+    uninstallErrorMessage("database is locked", "en"),
+    "database is locked",
+    "non-loader failures stay visible",
+  );
 });
 
 test("reload copy explains dot-sourcing, when to reload, and that the database is untouched", () => {
@@ -954,6 +968,19 @@ test("target type copy explains metadata semantics and warns without rewriting",
     ),
     null,
     "a script-type path with spaces is not a command line",
+  );
+  assert.equal(
+    targetExecutableWarning({ ...nativeDraft, executable: "C:\\Tools\\My Tool.exe" }, "en"),
+    null,
+    "a real path with a space in the directory name is not a command line",
+  );
+  assert.notEqual(
+    targetExecutableWarning(
+      { ...nativeDraft, executable: "C:\\Program Files\\Tool\\tool.exe restart" },
+      "en",
+    ),
+    null,
+    "a token after an executable path is an argument tail",
   );
   assert.notEqual(
     targetExecutableWarning({ ...nativeDraft, executable: "  python test.py  " }, "en"),
@@ -1057,6 +1084,8 @@ test("sync and doctor panels expose actionable, disabled-while-busy controls", a
     "generated.syncNoShells",
     "generated.reloadRequired",
     "generated.loaderMissing",
+    "generated.loaderError",
+    "loaderErrorMessage",
     "generated.generatedPath",
     "generatedPreviewErrorMessage",
     "syncErrorMessage",
