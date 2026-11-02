@@ -4,16 +4,18 @@ import {
   uninstallOutcomeText,
   uninstallRiskSummary,
 } from "../lib";
+import { useI18n } from "../language";
 
 type Stage = "idle" | "reviewed" | "done";
 
 export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }) {
+  const { language, t } = useI18n();
   const [purge, setPurge] = useState(false);
   const [stage, setStage] = useState<Stage>("idle");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const requestToken = useRef(0);
-  const risk = uninstallRiskSummary(purge);
+  const risk = uninstallRiskSummary(purge, language);
 
   const reset = () => {
     requestToken.current += 1;
@@ -63,30 +65,28 @@ export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }
 
   return (
     <section className="panel danger-zone" aria-labelledby="uninstall-title">
-      <h2 id="uninstall-title">Uninstall</h2>
-      <p className="hint">
-        Uninstalling always requires two steps: review the exact impact, then confirm. Nothing is removed on a single click.
-      </p>
+      <h2 id="uninstall-title">{t("uninstall.title")}</h2>
+      <p className="hint">{t("uninstall.hint")}</p>
 
       <fieldset className="field-group">
-        <legend>Mode</legend>
+        <legend>{t("uninstall.mode")}</legend>
         <label className="check-row">
           <input type="radio" name="uninstall-mode" checked={!purge} onChange={() => selectMode(false)} />
-          <span>Retain aliases</span>
+          <span>{t("uninstall.retain")}</span>
         </label>
         <label className="check-row">
           <input type="radio" name="uninstall-mode" checked={purge} onChange={() => selectMode(true)} />
-          <span>Purge aliases</span>
+          <span>{t("uninstall.purge")}</span>
         </label>
       </fieldset>
 
-      <div className="risk-summary" aria-label="Risk summary">
+      <div className="risk-summary" aria-label={t("uninstall.riskSummary")}>
         <div className="risk-column">
-          <h4>Kept</h4>
+          <h4>{t("uninstall.kept")}</h4>
           <ul>{risk.kept.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
         <div className="risk-column">
-          <h4>Removed</h4>
+          <h4>{t("uninstall.removed")}</h4>
           <ul>{risk.removed.map((item) => <li key={item}>{item}</li>)}</ul>
         </div>
       </div>
@@ -94,19 +94,19 @@ export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }
 
       {stage === "reviewed" && (
         <div className="review-block">
-          <h3>Review: what will happen</h3>
+          <h3>{t("uninstall.reviewTitle")}</h3>
           <ul>{risk.removed.map((item) => <li key={item}>{item}</li>)}</ul>
-          <p className="hint">Kept: {risk.kept.join("; ")}.</p>
+          <p className="hint">{t("uninstall.keptInline", { items: risk.kept.join("; ") })}</p>
           <p className="form-error" role="alert">
-            {purge ? "Confirm purge to continue." : "Confirm uninstall to continue."}
+            {t(purge ? "uninstall.confirmPurgeHint" : "uninstall.confirmUninstallHint")}
           </p>
         </div>
       )}
 
       {stage === "done" && (
         <div className="review-block" role="status">
-          <h3>Uninstall cleanup complete</h3>
-          <p>{uninstallOutcomeText(purge)}</p>
+          <h3>{t("uninstall.cleanupComplete")}</h3>
+          <p>{uninstallOutcomeText(purge, language)}</p>
           <p className="hint">{risk.protected.join(" ")}</p>
         </div>
       )}
@@ -114,16 +114,16 @@ export function UninstallPanel({ onUninstalled }: { onUninstalled?: () => void }
       {error && <p className="form-error" role="alert">{error}</p>}
 
       <div className="form-actions">
-        {stage === "reviewed" && <button type="button" onClick={reset} disabled={busy}>Cancel</button>}
-        {stage === "done" && <button type="button" onClick={reset}>Start over</button>}
+        {stage === "reviewed" && <button type="button" onClick={reset} disabled={busy}>{t("common.cancel")}</button>}
+        {stage === "done" && <button type="button" onClick={reset}>{t("uninstall.startOver")}</button>}
         {stage === "idle" && (
           <button type="button" onClick={review} disabled={busy}>
-            {busy ? "Loading impact…" : purge ? "Review purge" : "Review uninstall"}
+            {busy ? t("uninstall.loadingImpact") : t(purge ? "uninstall.reviewPurge" : "uninstall.reviewUninstall")}
           </button>
         )}
         {stage === "reviewed" && (
           <button type="button" className="btn-danger" onClick={confirm} disabled={busy}>
-            {busy ? "Working…" : purge ? "Confirm purge" : "Confirm uninstall"}
+            {busy ? t("uninstall.working") : t(purge ? "uninstall.confirmPurge" : "uninstall.confirmUninstall")}
           </button>
         )}
       </div>

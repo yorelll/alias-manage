@@ -1,9 +1,11 @@
 import { useRef, useState } from "react";
 import { SHELLS, copyToClipboard, shellLabel, tauriInvoke } from "../lib";
+import { useI18n } from "../language";
 
 type RunKind = "generated_preview" | "reload_command";
 
 export function GeneratedFilePanel() {
+  const { language, t } = useI18n();
   const [shell, setShell] = useState<string>("bash");
   const [preview, setPreview] = useState("");
   const [reload, setReload] = useState("");
@@ -42,8 +44,8 @@ export function GeneratedFilePanel() {
   const copy = async (text: string, label: string) => {
     setError(null);
     try {
-      await copyToClipboard(text);
-      setCopied(`${label} copied.`);
+      await copyToClipboard(text, language);
+      setCopied(t("generated.copied", { label }));
     } catch (reason) {
       setCopied(null);
       setError(String(reason));
@@ -52,22 +54,22 @@ export function GeneratedFilePanel() {
 
   return (
     <section className="panel" aria-labelledby="generated-title">
-      <h2 id="generated-title">Generated file</h2>
-      <p className="hint">Generated definitions and reload commands are shown for the selected shell. Nothing is executed.</p>
+      <h2 id="generated-title">{t("generated.title")}</h2>
+      <p className="hint">{t("generated.hint")}</p>
 
       <label className="field">
-        <span>Shell</span>
+        <span>{t("generated.shell")}</span>
         <select value={shell} onChange={(event) => changeShell(event.target.value)}>
-          {SHELLS.map((value) => <option key={value} value={value}>{shellLabel(value)}</option>)}
+          {SHELLS.map((value) => <option key={value} value={value}>{shellLabel(value, language)}</option>)}
         </select>
       </label>
 
       <div className="form-actions">
         <button type="button" onClick={() => void run("generated_preview")} disabled={busy !== null}>
-          {busy === "generated_preview" ? "Loading…" : "Show generated file"}
+          {busy === "generated_preview" ? t("common.loading") : t("generated.showFile")}
         </button>
         <button type="button" onClick={() => void run("reload_command")} disabled={busy !== null}>
-          {busy === "reload_command" ? "Loading…" : "Show reload command"}
+          {busy === "reload_command" ? t("common.loading") : t("generated.showReload")}
         </button>
       </div>
 
@@ -76,8 +78,8 @@ export function GeneratedFilePanel() {
       {preview && (
         <div className="preview-snippet">
           <div className="preview-header">
-            <h3>Generated file preview</h3>
-            <button type="button" onClick={() => void copy(preview, "Generated file preview")}>Copy</button>
+            <h3>{t("generated.previewTitle")}</h3>
+            <button type="button" onClick={() => void copy(preview, t("generated.previewTitle"))}>{t("common.copy")}</button>
           </div>
           <pre className="code-block">{preview}</pre>
         </div>
@@ -86,8 +88,8 @@ export function GeneratedFilePanel() {
       {reload && (
         <div className="preview-snippet">
           <div className="preview-header">
-            <h3>Reload command</h3>
-            <button type="button" onClick={() => void copy(reload, "Reload command")}>Copy</button>
+            <h3>{t("generated.reloadTitle")}</h3>
+            <button type="button" onClick={() => void copy(reload, t("generated.reloadTitle"))}>{t("common.copy")}</button>
           </div>
           <pre className="code-block">{reload}</pre>
         </div>

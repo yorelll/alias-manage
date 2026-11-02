@@ -404,6 +404,18 @@ pub struct ImportPreviewDto {
     pub unsupported: Vec<String>,
 }
 
+fn default_language() -> String {
+    "zh".to_owned()
+}
+
+/// Normalize a persisted language value, falling back to the Chinese default.
+fn normalized_language(value: &str) -> String {
+    match value.trim() {
+        "en" => "en".to_owned(),
+        _ => "zh".to_owned(),
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsDto {
     pub config_directory: String,
@@ -411,6 +423,8 @@ pub struct SettingsDto {
     pub backup_keep: usize,
     pub log_keep: usize,
     pub allow_relative_paths: bool,
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 #[tauri::command]
@@ -783,6 +797,7 @@ pub fn config_get() -> Result<SettingsDto, String> {
         backup_keep: config.backups.rc_keep,
         log_keep: config.logs.keep_files,
         allow_relative_paths: config.runtime.allow_relative_paths,
+        language: normalized_language(&config.runtime.language),
     })
 }
 
@@ -795,14 +810,23 @@ pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
     if requested != paths.root {
         return Err(format!("配置目录为只读，无法更改: {}", requested.display()));
     }
+    let language = settings.language.trim();
+    if language != "zh" && language != "en" {
+        return Err(format!(
+            "不支持的界面语言 / unsupported language: {} (expected \"zh\" or \"en\")",
+            settings.language
+        ));
+    }
     let mut config = paths.load_config().map_err(|error| error.to_string())?;
     config.backups.rc_keep = settings.backup_keep;
     config.logs.keep_files = settings.log_keep;
     config.runtime.default_shell = Some(settings.default_shell.clone());
     config.runtime.allow_relative_paths = settings.allow_relative_paths;
+    config.runtime.language = language.to_owned();
     config.save(&paths).map_err(|error| error.to_string())?;
     Ok(SettingsDto {
         config_directory: paths.root.to_string_lossy().into_owned(),
+        language: language.to_owned(),
         ..settings
     })
 }
@@ -1260,6 +1284,7 @@ mod tests {
             backup_keep: 1,
             log_keep: 1,
             allow_relative_paths: false,
+            language: "zh".into(),
         });
         assert!(result.is_err());
         assert!(
@@ -1868,6 +1893,7 @@ mod tests {
             backup_keep: 3,
             log_keep: 4,
             allow_relative_paths: true,
+            language: "en".into(),
         });
         let loaded = config_get();
         match previous {
@@ -1882,5 +1908,49 @@ mod tests {
         assert!(loaded.allow_relative_paths);
         assert_eq!(loaded.backup_keep, 3);
         assert_eq!(loaded.log_keep, 4);
+        assert_eq!(saved.language, "en");
+        assert_eq!(loaded.language, "en");
+    }
+
+    #[test]
+    fn config_get_defaults_to_chinese_language() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config = TempConfig::new("config-language-default");
+        let loaded = config_get().unwrap();
+        assert_eq!(loaded.language, "zh");
+    }
+
+    #[test]
+    fn config_save_rejects_unknown_language_without_writing() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("config-language-invalid");
+        let result = config_save(SettingsDto {
+            config_directory: config.root.to_string_lossy().into_owned(),
+            default_shell: "bash".into(),
+            backup_keep: 1,
+            log_keep: 1,
+            allow_relative_paths: false,
+            language: "fr".into(),
+        });
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unsupported language"));
+        assert!(!config.root.join("config.toml").exists());
+    }
+
+    #[test]
+    fn config_get_ignores_unknown_persisted_language() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config = TempConfig::new("config-language-unknown");
+        let paths = AppPaths::discover(None);
+        let mut app_config = aliasmgr_core::config::AppConfig::default();
+        app_config.runtime.language = "fr".into();
+        app_config.save(&paths).unwrap();
+        assert_eq!(config_get().unwrap().language, "zh");
     }
 }

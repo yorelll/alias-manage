@@ -9,6 +9,7 @@ import {
   normalizeImportReport,
   tauriInvoke,
 } from "../lib";
+import { useI18n } from "../language";
 
 interface SelectedFile {
   name: string;
@@ -16,20 +17,22 @@ interface SelectedFile {
 }
 
 function ReportList({ title, items }: { title: string; items: string[] }) {
+  const { t } = useI18n();
   return (
     <div className="report-card">
       <h3>{title} ({items.length})</h3>
       {items.length > 0
         ? <ul>{items.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}</ul>
-        : <p className="hint">None</p>}
+        : <p className="hint">{t("common.none")}</p>}
     </div>
   );
 }
 
 function SkipList({ entries }: { entries: ImportSkipEntry[] }) {
+  const { t } = useI18n();
   return (
     <div className="report-card">
-      <h3>Skipped ({entries.length})</h3>
+      <h3>{t("import.skipped")} ({entries.length})</h3>
       {entries.length > 0
         ? (
           <ul>
@@ -41,12 +44,13 @@ function SkipList({ entries }: { entries: ImportSkipEntry[] }) {
             ))}
           </ul>
         )
-        : <p className="hint">None</p>}
+        : <p className="hint">{t("common.none")}</p>}
     </div>
   );
 }
 
 export function ImportPanel({ onImported }: { onImported?: () => void }) {
+  const { language, t } = useI18n();
   const [file, setFile] = useState<SelectedFile | null>(null);
   const [report, setReport] = useState<ImportReport | null>(null);
   const [confirmed, setConfirmed] = useState(false);
@@ -75,7 +79,7 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
     if (!isImportableFilename(selected.name)) {
       setFile(null);
       setBusy(null);
-      setError("Choose a .json or .toml file.");
+      setError(t("import.invalidFile"));
       event.target.value = "";
       return;
     }
@@ -119,13 +123,13 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
 
   return (
     <section className="panel" aria-labelledby="import-title">
-      <h2 id="import-title">Import</h2>
+      <h2 id="import-title">{t("import.title")}</h2>
       <p className="hint">
-        Choose a JSON or TOML file. The preview is read-only; nothing is written until you confirm.
+        {t("import.hint")}
       </p>
 
       <label className="field file-picker">
-        <span>Import file (.json or .toml)</span>
+        <span>{t("import.fileLabel")}</span>
         <input
           ref={inputRef}
           id="import-file-input"
@@ -138,13 +142,13 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
 
       {file && (
         <p className="hint" role="status">
-          {file.name} · {file.content.length} characters
+          {t("import.fileStats", { name: file.name, count: file.content.length })}
         </p>
       )}
 
       {busy && (
         <p role="status">
-          {busy === "confirm" ? "Importing aliases…" : "Reading and validating file…"}
+          {busy === "confirm" ? t("import.importing") : t("import.reading")}
         </p>
       )}
       {error && <p className="form-error" role="alert">{error}</p>}
@@ -152,21 +156,26 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
       {report && counts && (
         <div className="import-report">
           <p role="status" className="import-summary">
-            {confirmed ? "Import complete." : "Preview only — not yet imported."} {counts.imported} to import,
-            {" "}{counts.skipped} skipped, {counts.warnings} warnings, {counts.unsupported} unsupported.
+            {t("import.summary", {
+              status: t(confirmed ? "import.complete" : "import.previewOnly"),
+              imported: counts.imported,
+              skipped: counts.skipped,
+              warnings: counts.warnings,
+              unsupported: counts.unsupported,
+            })}
           </p>
           <div className="report-grid">
-            <ReportList title="Imported" items={report.imported} />
-            <SkipList entries={importSkipEntries(report)} />
-            <ReportList title="Warnings" items={report.warnings} />
-            <ReportList title="Unsupported" items={report.unsupported} />
+            <ReportList title={t("import.imported")} items={report.imported} />
+            <SkipList entries={importSkipEntries(report, language)} />
+            <ReportList title={t("import.warnings")} items={report.warnings} />
+            <ReportList title={t("import.unsupported")} items={report.unsupported} />
           </div>
         </div>
       )}
 
       <div className="form-actions">
         <button type="button" onClick={reset} disabled={busy === "confirm"}>
-          {busy === "confirm" ? "Importing…" : "Cancel"}
+          {busy === "confirm" ? t("import.importingShort") : t("common.cancel")}
         </button>
         <button
           type="button"
@@ -174,7 +183,7 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
           onClick={confirm}
           disabled={!report || confirmed || busy !== null}
         >
-          Confirm import
+          {t("import.confirm")}
         </button>
       </div>
     </section>

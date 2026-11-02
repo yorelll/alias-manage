@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { normalizeTags } from "../lib";
+import { useI18n } from "../language";
 
 interface TagInputProps {
   tags: string[];
@@ -9,7 +10,9 @@ interface TagInputProps {
   id?: string;
 }
 
-export function TagInput({ tags, suggestions, onChange, label = "Tags", id }: TagInputProps) {
+export function TagInput({ tags, suggestions, onChange, label, id }: TagInputProps) {
+  const { t } = useI18n();
+  const text = label ?? t("wizard.tags");
   const generatedId = useId();
   const inputId = id ?? generatedId;
   const listId = `${inputId}-suggestions`;
@@ -21,13 +24,13 @@ export function TagInput({ tags, suggestions, onChange, label = "Tags", id }: Ta
   };
   return (
     <div className="tag-input">
-      <label htmlFor={inputId}>{label}</label>
+      <label htmlFor={inputId}>{text}</label>
       <div className="tag-chip-list">
         {tags.map((tag) => (
           <button
             type="button"
             key={tag}
-            aria-label={`Remove tag ${tag}`}
+            aria-label={`${t("common.remove")} ${tag}`}
             onClick={() => onChange(tags.filter((current) => current !== tag))}
           >
             {tag} ×
@@ -36,10 +39,10 @@ export function TagInput({ tags, suggestions, onChange, label = "Tags", id }: Ta
       </div>
       <input
         id={inputId}
-        aria-label={label}
+        aria-label={text}
         value={value}
         list={listId}
-        placeholder="Add a tag and press Enter"
+        placeholder={t("wizard.tagPlaceholder")}
         autoComplete="off"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {

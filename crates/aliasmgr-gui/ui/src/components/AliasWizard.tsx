@@ -1,21 +1,23 @@
 import { useEffect, useRef, useState } from "react";
 import type { AliasDto, EnvRow, PreviewSnippet } from "../lib";
 import {
-  FIXED_ARGS_PLACEHOLDER_HINT,
   SHELLS,
   TARGET_TYPES,
   emptyAliasDraft,
   environmentToRows,
   finalizeAliasDraft,
+  fixedArgsPlaceholderHint,
   latestPreviewResponse,
   normalizePreviewSnippets,
   previewAliasArgs,
   rowsToEnvironment,
   shellLabel,
+  targetTypeLabel,
   tauriInvoke,
   toggleShell,
   validateAliasDraft,
 } from "../lib";
+import { useI18n } from "../language";
 import { TagInput } from "./TagInput";
 
 interface AliasWizardProps {
@@ -26,6 +28,7 @@ interface AliasWizardProps {
 }
 
 export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProps) {
+  const { language, t } = useI18n();
   const [draft, setDraft] = useState<AliasDto>(initial ?? emptyAliasDraft());
   const [envRows, setEnvRows] = useState<EnvRow[]>(() => environmentToRows((initial ?? emptyAliasDraft()).environment));
   const [advanced, setAdvanced] = useState(() => Boolean(initial && (
@@ -75,7 +78,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
 
   const save = async () => {
     const finalized = finalizeAliasDraft(currentDraft());
-    const errors = validateAliasDraft(finalized);
+    const errors = validateAliasDraft(finalized, language);
     if (errors.length > 0) {
       setError(errors.join(" "));
       return;
@@ -90,7 +93,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   const runPreview = async () => {
     const token = ++previewToken.current;
     const finalized = finalizeAliasDraft(currentDraft());
-    const errors = validateAliasDraft(finalized);
+    const errors = validateAliasDraft(finalized, language);
     if (errors.length > 0) {
       setPreviewing(false);
       setPreviewError(errors.join(" "));
@@ -116,53 +119,53 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
 
   return (
     <section className="alias-wizard" aria-labelledby="alias-wizard-title" data-testid="alias-wizard">
-      <h2 id="alias-wizard-title">{initial ? `Edit alias: ${initial.name}` : "Add alias"}</h2>
+      <h2 id="alias-wizard-title">{initial ? t("wizard.editTitle", { name: initial.name }) : t("wizard.addTitle")}</h2>
 
-      {error && <p className="form-error" role="alert">Unable to save: {error}</p>}
+      {error && <p className="form-error" role="alert">{t("wizard.unableToSave", { error })}</p>}
 
       <div className="field-grid">
         <label className="field">
-          <span>Name</span>
+          <span>{t("wizard.name")}</span>
           <input
             ref={nameRef}
             value={draft.name}
             onChange={(event) => update({ name: event.target.value })}
-            placeholder="my-alias"
+            placeholder={t("wizard.namePlaceholder")}
             autoComplete="off"
             aria-invalid={Boolean(error) && !/^[A-Za-z_][A-Za-z0-9_-]{0,63}$/.test(draft.name)}
           />
         </label>
 
         <label className="field">
-          <span>Target type</span>
+          <span>{t("wizard.targetType")}</span>
           <select value={draft.target_type} onChange={(event) => update({ target_type: event.target.value })}>
-            {TARGET_TYPES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            {TARGET_TYPES.map((option) => <option key={option.value} value={option.value}>{targetTypeLabel(option.value, language)}</option>)}
           </select>
           {!TARGET_TYPES.some((option) => option.value === draft.target_type) && (
             <span className="hint">
-              This alias uses “{draft.target_type}”, which cannot be edited here. Choose a supported target type to save.
+              {t("wizard.unsupportedType", { type: draft.target_type })}
             </span>
           )}
         </label>
 
         <label className="field field-full">
-          <span>Target (executable or command)</span>
+          <span>{t("wizard.targetLabel")}</span>
           <input
             value={draft.executable}
             onChange={(event) => update({ executable: event.target.value })}
-            placeholder="git"
+            placeholder={t("wizard.targetPlaceholder")}
             autoComplete="off"
             spellCheck={false}
           />
         </label>
 
         <label className="field field-full">
-          <span>Description</span>
+          <span>{t("wizard.description")}</span>
           <textarea value={draft.description} onChange={(event) => update({ description: event.target.value })} rows={2} />
         </label>
 
         <fieldset className="field-group field-full">
-          <legend>Shells</legend>
+          <legend>{t("wizard.shells")}</legend>
           <div className="check-group">
             {SHELLS.map((shell) => (
               <label className="check-row" key={shell}>
@@ -171,22 +174,22 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
                   checked={draft.shells.includes(shell)}
                   onChange={() => update({ shells: toggleShell(draft.shells, shell) })}
                 />
-                <span>{shellLabel(shell)}</span>
+                <span>{shellLabel(shell, language)}</span>
               </label>
             ))}
           </div>
           {unknownShells.length > 0 && (
-            <p className="hint">Also targets (preserved): {unknownShells.map(shellLabel).join(", ")}</p>
+            <p className="hint">{t("wizard.alsoTargets", { shells: unknownShells.map((shell) => shellLabel(shell, language)).join(", ") })}</p>
           )}
         </fieldset>
 
         <label className="check-row field-full">
           <input type="checkbox" checked={draft.pass_args} onChange={(event) => update({ pass_args: event.target.checked })} />
-          <span>Pass user arguments to the target</span>
+          <span>{t("wizard.passArgs")}</span>
         </label>
 
         <div className="field field-full">
-          <TagInput label="Tags" tags={draft.tags} suggestions={tags} onChange={(next) => update({ tags: next })} />
+          <TagInput label={t("wizard.tags")} tags={draft.tags} suggestions={tags} onChange={(next) => update({ tags: next })} />
         </div>
       </div>
 
@@ -197,18 +200,18 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
         aria-controls="alias-wizard-advanced"
         onClick={() => setAdvanced((value) => !value)}
       >
-        {advanced ? "Hide advanced" : "Show advanced"}
+        {advanced ? t("wizard.hideAdvanced") : t("wizard.showAdvanced")}
       </button>
 
       {advanced && (
         <div id="alias-wizard-advanced" className="advanced-section">
           <div className="field-grid">
             <label className="field field-full">
-              <span>Working directory</span>
+              <span>{t("wizard.workingDirectory")}</span>
               <input
                 value={draft.working_directory ?? ""}
                 onChange={(event) => update({ working_directory: event.target.value.trim() ? event.target.value : null })}
-                placeholder="C:\\projects\\example"
+                placeholder={t("wizard.cwdPlaceholder")}
                 autoComplete="off"
                 spellCheck={false}
               />
@@ -216,21 +219,21 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
           </div>
 
           <div className="field">
-            <span>Fixed arguments</span>
-            <p className="hint">{FIXED_ARGS_PLACEHOLDER_HINT}</p>
+            <span>{t("wizard.fixedArguments")}</span>
+            <p className="hint">{fixedArgsPlaceholderHint(language)}</p>
             <div className="row-editor">
-              {draft.fixed_args.length === 0 && <p className="hint">No fixed arguments.</p>}
+              {draft.fixed_args.length === 0 && <p className="hint">{t("wizard.noFixedArguments")}</p>}
               {draft.fixed_args.map((argument, index) => (
                 <div className="row-editor-row" key={index}>
                   <input
-                    aria-label={`Fixed argument ${index + 1}`}
+                    aria-label={t("wizard.fixedArgumentAria", { index: index + 1 })}
                     value={argument}
                     onChange={(event) => {
                       const next = [...draft.fixed_args];
                       next[index] = event.target.value;
                       update({ fixed_args: next });
                     }}
-                    placeholder={"argument or {{args}}"}
+                    placeholder={t("wizard.argumentPlaceholder")}
                     autoComplete="off"
                     spellCheck={false}
                   />
@@ -238,43 +241,43 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
                     type="button"
                     onClick={() => update({ fixed_args: draft.fixed_args.filter((_, position) => position !== index) })}
                   >
-                    Remove
+                    {t("common.remove")}
                   </button>
                 </div>
               ))}
               <button type="button" onClick={() => update({ fixed_args: [...draft.fixed_args, ""] })}>
-                Add argument
+                {t("wizard.addArgument")}
               </button>
             </div>
           </div>
 
           <div className="field">
-            <span>Environment variables</span>
+            <span>{t("wizard.environmentVariables")}</span>
             <div className="row-editor">
-              {envRows.length === 0 && <p className="hint">No environment variables.</p>}
+              {envRows.length === 0 && <p className="hint">{t("wizard.noEnvironmentVariables")}</p>}
               {envRows.map((row, index) => (
                 <div className="row-editor-row" key={index}>
                   <input
-                    aria-label={`Environment key ${index + 1}`}
+                    aria-label={t("wizard.envKeyAria", { index: index + 1 })}
                     value={row.key}
                     onChange={(event) => {
                       const next = [...envRows];
                       next[index] = { ...next[index], key: event.target.value };
                       updateEnvRows(next);
                     }}
-                    placeholder="KEY"
+                    placeholder={t("wizard.envKeyPlaceholder")}
                     autoComplete="off"
                     spellCheck={false}
                   />
                   <input
-                    aria-label={`Environment value ${index + 1}`}
+                    aria-label={t("wizard.envValueAria", { index: index + 1 })}
                     value={row.value}
                     onChange={(event) => {
                       const next = [...envRows];
                       next[index] = { ...next[index], value: event.target.value };
                       updateEnvRows(next);
                     }}
-                    placeholder="value"
+                    placeholder={t("wizard.envValuePlaceholder")}
                     autoComplete="off"
                     spellCheck={false}
                   />
@@ -282,12 +285,12 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
                     type="button"
                     onClick={() => updateEnvRows(envRows.filter((_, position) => position !== index))}
                   >
-                    Remove
+                    {t("common.remove")}
                   </button>
                 </div>
               ))}
               <button type="button" onClick={() => updateEnvRows([...envRows, { key: "", value: "" }])}>
-                Add variable
+                {t("wizard.addVariable")}
               </button>
             </div>
           </div>
@@ -296,17 +299,17 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
 
       <div className="preview-block" aria-live="polite">
         <div className="preview-header">
-          <h3>Preview</h3>
+          <h3>{t("wizard.preview")}</h3>
           <button type="button" onClick={runPreview} disabled={previewing}>
-            {previewing ? "Rendering…" : "Preview"}
+            {previewing ? t("wizard.rendering") : t("wizard.preview")}
           </button>
         </div>
-        <p className="hint">Preview renders the generated shell snippets without executing the target or writing files.</p>
-        {previewError && <p className="form-error" role="alert">Preview failed: {previewError}</p>}
-        {previews && previews.length === 0 && <p className="hint">No preview returned for the selected shells.</p>}
+        <p className="hint">{t("wizard.previewHint")}</p>
+        {previewError && <p className="form-error" role="alert">{t("wizard.previewFailed", { error: previewError })}</p>}
+        {previews && previews.length === 0 && <p className="hint">{t("wizard.noPreview")}</p>}
         {previews?.map((snippet, index) => (
           <section className="preview-snippet" key={`${snippet.shell}-${index}`}>
-            <h4>{snippet.shell ? shellLabel(snippet.shell) : "Shell"}</h4>
+            <h4>{snippet.shell ? shellLabel(snippet.shell, language) : t("wizard.shellFallback")}</h4>
             {snippet.error
               ? <p className="form-error" role="alert">{snippet.error}</p>
               : <pre className="code-block">{snippet.content}</pre>}
@@ -316,10 +319,10 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
 
       <div className="wizard-actions">
         <button type="button" onClick={onCancel} disabled={saving}>
-          {saving ? "Saving…" : "Cancel"}
+          {saving ? t("common.saving") : t("common.cancel")}
         </button>
         <button type="button" className="btn-primary" onClick={save} disabled={saving} aria-busy={saving}>
-          {saving ? "Saving…" : "Save"}
+          {saving ? t("common.saving") : t("common.save")}
         </button>
       </div>
     </section>
