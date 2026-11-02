@@ -2,7 +2,7 @@ use super::common::{is_simple_alias, quote_posix};
 use crate::{
     error::AliasError,
     executor::render_argv,
-    model::{AliasRecord, ManagedNameSet},
+    model::{AliasRecord, ManagedNameSet, RestrictionMode},
 };
 
 pub fn render(alias: &AliasRecord, _names: &ManagedNameSet) -> Result<String, AliasError> {
@@ -20,21 +20,18 @@ pub fn render(alias: &AliasRecord, _names: &ManagedNameSet) -> Result<String, Al
             )
         ));
     } else if alias.target_type == crate::model::TargetType::ChangeDirectory {
+        let body = format!(
+            "cd -- {}",
+            quote_posix(
+                alias
+                    .working_directory
+                    .as_deref()
+                    .unwrap_or(&alias.executable)
+            )
+        );
         output.push_str(&format!(
             "{}\n",
-            crate::shells::common::managed_definition(
-                &alias.name,
-                &format!(
-                    "{}() {{ cd -- {}; }}",
-                    alias.name,
-                    quote_posix(
-                        alias
-                            .working_directory
-                            .as_deref()
-                            .unwrap_or(&alias.executable)
-                    )
-                )
-            )
+            crate::shells::common::managed_definition(&alias.name, &render_wrapper(alias, &body))
         ));
     } else {
         let command = render_command(alias);
@@ -43,11 +40,73 @@ pub fn render(alias: &AliasRecord, _names: &ManagedNameSet) -> Result<String, Al
             "{}\n",
             crate::shells::common::managed_definition(
                 &alias.name,
-                &format!("{}() {{ {invocation}; }}", alias.name)
+                &render_wrapper(alias, &invocation)
             )
         ));
     }
     Ok(output)
+}
+
+/// Wraps a function body, prefixing the directory guard when the alias has a
+/// restriction. Unrestricted aliases keep the compact single-line form.
+fn render_wrapper(alias: &AliasRecord, body: &str) -> String {
+    match render_restriction_guard(alias) {
+        Some(guard) => format!("{}() {{\n{}\n{};\n}}", alias.name, guard, body),
+        None => format!("{}() {{ {}; }}", alias.name, body),
+    }
+}
+
+/// Guard executed before the command, the working-directory change, and any
+/// environment subshell. It canonicalizes the invocation directory and every
+/// configured directory (missing directories are skipped), compares at path
+/// component boundaries, and refuses with a single stderr line.
+fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
+    let restriction = alias.restriction.as_ref()?;
+    let mut lines = vec![
+        "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_restriction_hit".to_string(),
+        "__aliasmgr_cwd=$(builtin pwd -P 2>/dev/null) || __aliasmgr_cwd=$PWD".to_string(),
+        "case \"$__aliasmgr_cwd\" in /) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac"
+            .to_string(),
+        "__aliasmgr_restriction_hit=0".to_string(),
+    ];
+    for path in &restriction.paths {
+        lines.push(format!(
+            "__aliasmgr_dir=$(builtin cd -- {} 2>/dev/null && builtin pwd -P) || __aliasmgr_dir=",
+            quote_posix(path)
+        ));
+        lines.push("if [ -n \"$__aliasmgr_dir\" ]; then".to_string());
+        lines.push(
+            "    case \"$__aliasmgr_dir\" in /) ;; *) __aliasmgr_dir=${__aliasmgr_dir%/} ;; esac"
+                .to_string(),
+        );
+        lines.push("    if [ \"$__aliasmgr_dir\" = / ]; then".to_string());
+        lines.push("        __aliasmgr_restriction_hit=1".to_string());
+        lines.push("    else".to_string());
+        lines.push(
+            "        case \"$__aliasmgr_cwd\" in \"$__aliasmgr_dir\"|\"$__aliasmgr_dir\"/*) __aliasmgr_restriction_hit=1 ;; esac"
+                .to_string(),
+        );
+        lines.push("    fi".to_string());
+        lines.push("fi".to_string());
+    }
+    let (condition, message) = match restriction.mode {
+        RestrictionMode::Whitelist => (
+            "[ \"$__aliasmgr_restriction_hit\" -eq 0 ]",
+            "current directory is not in the whitelist",
+        ),
+        RestrictionMode::Blacklist => (
+            "[ \"$__aliasmgr_restriction_hit\" -eq 1 ]",
+            "current directory is in the blacklist",
+        ),
+    };
+    lines.push(format!("if {condition}; then"));
+    lines.push(format!(
+        "    printf '%s\\n' \"aliasmgr: refusing to run '{}' in '$__aliasmgr_cwd': {message}\" >&2",
+        alias.name
+    ));
+    lines.push("    return 1".to_string());
+    lines.push("fi".to_string());
+    Some(lines.join("\n"))
 }
 
 fn render_command_tokens(alias: &AliasRecord) -> Vec<String> {
@@ -118,7 +177,7 @@ pub fn render_session_cleanup(name: &str, expected_fingerprint: &str) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{AliasRecord, TargetType};
+    use crate::model::{AliasRecord, PathRestriction, RestrictionMode, TargetType};
 
     #[test]
     fn renders_function_and_preemption() {
@@ -299,6 +358,114 @@ mod tests {
         let text = render(&alias, &names()).unwrap();
         assert!(text.contains("builtin cd -- '/tmp/it'\\''s 中文 dir'"));
         assert!(text.contains("command env 'GREETING=it'\\''s 中文'"));
+    }
+
+    #[test]
+    fn restricted_aliases_are_never_emitted_as_simple_aliases() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "rm".into(),
+            pass_args: false,
+            restriction: Some(PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["/srv/project".into()],
+            }),
+            ..Default::default()
+        };
+        assert!(!is_simple_alias(&alias));
+        let text = render(&alias, &names()).unwrap();
+        assert!(text.contains("rma() {"));
+        assert!(!text.contains("alias rma="));
+        assert!(text.contains("current directory is not in the whitelist"));
+    }
+
+    #[test]
+    fn whitelist_guard_resolves_paths_and_uses_component_boundaries() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "rm".into(),
+            fixed_args: vec!["-rf".into()],
+            pass_args: true,
+            restriction: Some(PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["/srv/project one".into(), "/srv/it's".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, &names()).unwrap();
+        assert!(text.contains("local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_restriction_hit"));
+        assert!(
+            text.contains("__aliasmgr_cwd=$(builtin pwd -P 2>/dev/null) || __aliasmgr_cwd=$PWD")
+        );
+        assert!(text.contains(
+            "case \"$__aliasmgr_cwd\" in /) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac"
+        ));
+        assert!(text.contains("builtin cd -- '/srv/project one'"));
+        assert!(text.contains("builtin cd -- '/srv/it'\\''s'"));
+        assert!(text.contains(
+            "case \"$__aliasmgr_cwd\" in \"$__aliasmgr_dir\"|\"$__aliasmgr_dir\"/*) __aliasmgr_restriction_hit=1 ;; esac"
+        ));
+        assert!(text.contains("if [ \"$__aliasmgr_restriction_hit\" -eq 0 ]; then"));
+        assert!(text.contains(
+            "printf '%s\\n' \"aliasmgr: refusing to run 'rma' in '$__aliasmgr_cwd': current directory is not in the whitelist\" >&2"
+        ));
+        assert!(text.contains("    return 1"));
+        assert!(!text.contains("eval "));
+        // The guard runs before the command.
+        let guard = text.find("__aliasmgr_cwd").unwrap();
+        let command = text.find("command 'rm' '-rf' \"$@\"").unwrap();
+        assert!(guard < command, "guard must precede the command: {text}");
+    }
+
+    #[test]
+    fn blacklist_guard_denies_matches_and_root_matches_everything() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "rm".into(),
+            pass_args: false,
+            restriction: Some(PathRestriction {
+                mode: RestrictionMode::Blacklist,
+                paths: vec!["/".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, &names()).unwrap();
+        assert!(text.contains("if [ \"$__aliasmgr_restriction_hit\" -eq 1 ]; then"));
+        assert!(text.contains("current directory is in the blacklist"));
+        assert!(text.contains("if [ \"$__aliasmgr_dir\" = / ]; then"));
+    }
+
+    #[test]
+    fn change_directory_guard_precedes_the_directory_change() {
+        let alias = AliasRecord {
+            name: "jump".into(),
+            executable: ".".into(),
+            target_type: TargetType::ChangeDirectory,
+            working_directory: Some("/tmp/project".into()),
+            restriction: Some(PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["/tmp".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, &names()).unwrap();
+        let guard = text.find("__aliasmgr_cwd").unwrap();
+        let change = text.find("cd -- '/tmp/project'").unwrap();
+        assert!(guard < change, "guard must precede cd: {text}");
+    }
+
+    #[test]
+    fn unrestricted_simple_aliases_still_use_native_alias() {
+        let alias = AliasRecord {
+            name: "ll".into(),
+            executable: "ls".into(),
+            pass_args: false,
+            ..Default::default()
+        };
+        assert!(is_simple_alias(&alias));
+        let text = render(&alias, &names()).unwrap();
+        assert!(text.contains("alias ll='ls'"));
+        assert!(!text.contains("__aliasmgr_cwd"));
     }
 
     #[test]

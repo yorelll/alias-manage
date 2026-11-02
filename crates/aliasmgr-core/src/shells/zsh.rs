@@ -33,4 +33,29 @@ mod tests {
         assert!(text.contains("unalias 'gs'"));
         assert!(text.contains("gs()"));
     }
+
+    #[test]
+    fn renders_restriction_guard_for_zsh_wrappers() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "rm".into(),
+            pass_args: false,
+            restriction: Some(crate::model::PathRestriction {
+                mode: crate::model::RestrictionMode::Whitelist,
+                paths: vec!["/srv/project".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(
+            &alias,
+            &ManagedNameSet {
+                current: vec![],
+                retired: vec![],
+            },
+        )
+        .unwrap();
+        assert!(text.contains("local __aliasmgr_cwd"));
+        assert!(text.contains("current directory is not in the whitelist"));
+        assert!(!text.contains("alias rma="));
+    }
 }

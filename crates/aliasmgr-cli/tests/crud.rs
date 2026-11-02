@@ -1,6 +1,7 @@
-use aliasmgr_cli::cli::{AddArgs, UpdateArgs};
+use aliasmgr_cli::cli::{AddArgs, RestrictionModeArg, UpdateArgs};
 use aliasmgr_cli::commands;
 use aliasmgr_core::error::AliasError;
+use aliasmgr_core::model::{PathRestriction, RestrictionMode};
 
 fn args(name: &str) -> AddArgs {
     AddArgs {
@@ -11,6 +12,10 @@ fn args(name: &str) -> AddArgs {
         cwd: None,
         environment: vec![],
         tags: vec!["git".into()],
+        description: None,
+        restrict: None,
+        restrict_paths: vec![],
+        clear_restriction: false,
         no_pass_args: false,
         target_type: None,
         path_mode: None,
@@ -26,6 +31,10 @@ fn update_args(name: &str) -> UpdateArgs {
         cwd: None,
         environment: None,
         tags: None,
+        description: None,
+        restrict: None,
+        restrict_paths: vec![],
+        clear_restriction: false,
         no_pass_args: false,
         pass_args: false,
         target_type: None,
@@ -95,6 +104,106 @@ fn update_preserves_unspecified_fields_and_replaces_supplied_args() {
             .unwrap()
             .pass_args
     );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn description_round_trips_and_empty_string_clears_it() {
+    let root =
+        std::env::temp_dir().join(format!("aliasmgr-cli-description-{}", std::process::id()));
+    let cfg = root.to_string_lossy().to_string();
+    let mut add = args("desc");
+    add.description = Some("first memo".into());
+    assert_eq!(
+        commands::add(Some(&cfg), &add).unwrap().description,
+        "first memo"
+    );
+    let mut clear = update_args("desc");
+    clear.description = Some(String::new());
+    assert_eq!(
+        commands::update(Some(&cfg), &clear).unwrap().description,
+        ""
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn restriction_flags_follow_add_and_update_semantics() {
+    let root =
+        std::env::temp_dir().join(format!("aliasmgr-cli-restriction-{}", std::process::id()));
+    let cfg = root.to_string_lossy().to_string();
+    let base = std::env::temp_dir().to_string_lossy().into_owned();
+    let first = format!("{base}/restriction-one");
+    let second = format!("{base}/restriction-two");
+
+    let mut add = args("rma");
+    add.restrict = Some(RestrictionModeArg::Whitelist);
+    add.restrict_paths = vec![format!(" {first} "), second.clone()];
+    let created = commands::add(Some(&cfg), &add).unwrap();
+    assert_eq!(
+        created.restriction,
+        Some(PathRestriction {
+            mode: RestrictionMode::Whitelist,
+            paths: vec![first.clone(), second.clone()],
+        })
+    );
+
+    let mut missing_paths = args("missing-paths");
+    missing_paths.restrict = Some(RestrictionModeArg::Whitelist);
+    assert!(matches!(
+        commands::add(Some(&cfg), &missing_paths),
+        Err(AliasError::Config(message)) if message.contains("--restrict-path")
+    ));
+
+    let mut path_only = args("path-only");
+    path_only.restrict_paths = vec![first.clone()];
+    assert!(matches!(
+        commands::add(Some(&cfg), &path_only),
+        Err(AliasError::Config(message)) if message.contains("--restrict")
+    ));
+
+    let mut mode_only = update_args("rma");
+    mode_only.restrict = Some(RestrictionModeArg::Blacklist);
+    let changed = commands::update(Some(&cfg), &mode_only).unwrap();
+    assert_eq!(
+        changed.restriction,
+        Some(PathRestriction {
+            mode: RestrictionMode::Blacklist,
+            paths: vec![first.clone(), second.clone()],
+        })
+    );
+
+    let mut replace_paths = update_args("rma");
+    replace_paths.restrict_paths = vec![second.clone()];
+    let changed = commands::update(Some(&cfg), &replace_paths).unwrap();
+    assert_eq!(
+        changed.restriction,
+        Some(PathRestriction {
+            mode: RestrictionMode::Blacklist,
+            paths: vec![second.clone()],
+        })
+    );
+
+    let mut clear = update_args("rma");
+    clear.clear_restriction = true;
+    assert_eq!(
+        commands::update(Some(&cfg), &clear).unwrap().restriction,
+        None
+    );
+
+    commands::add(Some(&cfg), &args("plain")).unwrap();
+    let mut restrict_only = update_args("plain");
+    restrict_only.restrict = Some(RestrictionModeArg::Whitelist);
+    assert!(matches!(
+        commands::update(Some(&cfg), &restrict_only),
+        Err(AliasError::Config(message)) if message.contains("no restriction exists")
+    ));
+    let mut path_only_update = update_args("plain");
+    path_only_update.restrict_paths = vec![first.clone()];
+    assert!(matches!(
+        commands::update(Some(&cfg), &path_only_update),
+        Err(AliasError::Config(message)) if message.contains("existing restriction")
+    ));
     let _ = std::fs::remove_dir_all(root);
 }
 

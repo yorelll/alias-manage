@@ -1,4 +1,4 @@
-use aliasmgr_core::model::{PathMode, TargetType};
+use aliasmgr_core::model::{PathMode, RestrictionMode, TargetType};
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
 #[derive(Debug, Parser)]
@@ -75,6 +75,23 @@ impl From<PathModeArg> for PathMode {
         match value {
             PathModeArg::Absolute => PathMode::Absolute,
             PathModeArg::RelativeToWorkingDirectory => PathMode::RelativeToWorkingDirectory,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum RestrictionModeArg {
+    #[value(name = "whitelist")]
+    Whitelist,
+    #[value(name = "blacklist")]
+    Blacklist,
+}
+
+impl From<RestrictionModeArg> for RestrictionMode {
+    fn from(value: RestrictionModeArg) -> Self {
+        match value {
+            RestrictionModeArg::Whitelist => RestrictionMode::Whitelist,
+            RestrictionModeArg::Blacklist => RestrictionMode::Blacklist,
         }
     }
 }
@@ -172,6 +189,14 @@ pub struct AddArgs {
     #[arg(long = "tag")]
     pub tags: Vec<String>,
     #[arg(long)]
+    pub description: Option<String>,
+    #[arg(long, value_enum)]
+    pub restrict: Option<RestrictionModeArg>,
+    #[arg(long = "restrict-path")]
+    pub restrict_paths: Vec<String>,
+    #[arg(long, conflicts_with_all = ["restrict", "restrict_paths"])]
+    pub clear_restriction: bool,
+    #[arg(long)]
     pub no_pass_args: bool,
     #[arg(long, value_enum)]
     pub target_type: Option<TargetTypeArg>,
@@ -195,6 +220,14 @@ pub struct UpdateArgs {
     pub environment: Option<Vec<String>>,
     #[arg(long = "tag")]
     pub tags: Option<Vec<String>>,
+    #[arg(long)]
+    pub description: Option<String>,
+    #[arg(long, value_enum)]
+    pub restrict: Option<RestrictionModeArg>,
+    #[arg(long = "restrict-path")]
+    pub restrict_paths: Vec<String>,
+    #[arg(long, conflicts_with_all = ["restrict", "restrict_paths"])]
+    pub clear_restriction: bool,
     #[arg(long, conflicts_with = "pass_args")]
     pub no_pass_args: bool,
     #[arg(long, conflicts_with = "no_pass_args")]

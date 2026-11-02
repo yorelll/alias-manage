@@ -35,6 +35,30 @@ pub enum PathMode {
     RelativeToWorkingDirectory,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RestrictionMode {
+    Whitelist,
+    Blacklist,
+}
+
+/// Directory guard attached to an alias. The generated shell wrapper refuses
+/// to run when the invocation directory violates the whitelist/blacklist.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PathRestriction {
+    pub mode: RestrictionMode,
+    pub paths: Vec<String>,
+}
+
+impl RestrictionMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RestrictionMode::Whitelist => "whitelist",
+            RestrictionMode::Blacklist => "blacklist",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PathOrigin {
@@ -58,6 +82,8 @@ pub struct AliasRecord {
     pub enabled: bool,
     pub advanced_shell_mode: bool,
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restriction: Option<PathRestriction>,
     pub path_mode: PathMode,
     pub path_origin: PathOrigin,
     pub created_at: DateTime<Utc>,
@@ -94,6 +120,7 @@ impl Default for AliasRecord {
             enabled: true,
             advanced_shell_mode: false,
             tags: Vec::new(),
+            restriction: None,
             path_mode: PathMode::Absolute,
             path_origin: PathOrigin::CliArgument,
             created_at: now,

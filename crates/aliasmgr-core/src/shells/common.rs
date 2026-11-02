@@ -295,7 +295,8 @@ pub fn render_cleanup(names: &ManagedNameSet) -> String {
         .collect()
 }
 pub fn is_simple_alias(alias: &AliasRecord) -> bool {
-    alias.fixed_args.is_empty()
+    alias.restriction.is_none()
+        && alias.fixed_args.is_empty()
         && !alias.pass_args
         && alias.working_directory.is_none()
         && alias.environment.is_empty()

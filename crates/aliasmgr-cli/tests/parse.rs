@@ -1,4 +1,4 @@
-use aliasmgr_cli::cli::{Cli, Command, ShellCommand};
+use aliasmgr_cli::cli::{Cli, Command, RestrictionModeArg, ShellCommand};
 use clap::Parser;
 
 #[test]
@@ -145,6 +145,70 @@ fn parses_reload_shell_and_import_confirmation() {
     match cli.command {
         Command::Uninstall { yes, .. } => assert!(!yes),
         _ => panic!("expected uninstall"),
+    }
+}
+
+#[test]
+fn parses_description_and_restriction_flags() {
+    let cli = Cli::try_parse_from([
+        "aliasmgr",
+        "add",
+        "rma",
+        "--exec",
+        "rm",
+        "--description",
+        "Remove build output",
+        "--restrict",
+        "whitelist",
+        "--restrict-path",
+        "/srv/project",
+        "--restrict-path",
+        "/srv/shared",
+    ])
+    .unwrap();
+    match cli.command {
+        Command::Add(args) => {
+            assert_eq!(args.description.as_deref(), Some("Remove build output"));
+            assert!(matches!(args.restrict, Some(RestrictionModeArg::Whitelist)));
+            assert_eq!(args.restrict_paths, vec!["/srv/project", "/srv/shared"]);
+            assert!(!args.clear_restriction);
+        }
+        _ => panic!("expected add"),
+    }
+
+    let cli = Cli::try_parse_from([
+        "aliasmgr",
+        "update",
+        "rma",
+        "--restrict",
+        "blacklist",
+        "--clear-restriction",
+    ]);
+    assert!(
+        cli.is_err(),
+        "--clear-restriction must conflict with --restrict"
+    );
+    let cli = Cli::try_parse_from([
+        "aliasmgr",
+        "update",
+        "rma",
+        "--restrict-path",
+        "/srv",
+        "--clear-restriction",
+    ]);
+    assert!(
+        cli.is_err(),
+        "--clear-restriction must conflict with --restrict-path"
+    );
+
+    let cli = Cli::try_parse_from(["aliasmgr", "update", "rma", "--clear-restriction"]).unwrap();
+    match cli.command {
+        Command::Update(args) => {
+            assert!(args.clear_restriction);
+            assert!(args.restrict.is_none());
+            assert!(args.restrict_paths.is_empty());
+        }
+        _ => panic!("expected update"),
     }
 }
 

@@ -27,7 +27,7 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
 
 ## Alias lifecycle
 
-- `add <NAME> --exec <PROGRAM> [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--no-pass-args] [--target-type TYPE] [--path-mode MODE]`
+- `add <NAME> --exec <PROGRAM> [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--description TEXT] [--restrict MODE] [--restrict-path PATH]... [--clear-restriction] [--no-pass-args] [--target-type TYPE] [--path-mode MODE]`
   - `--arg` is repeatable and accepts leading hyphens, so `--arg --oneline` is valid. Because hyphen values are allowed, a following flag can be consumed as a value when it is ambiguous; use `--arg=--oneline` or place other flags before `--arg` in that case.
   - `--shell` accepts `bash`, `zsh`, `powershell5`, and `powershell7`, and is repeatable. When omitted, the alias targets Bash only.
   - `--env KEY=VALUE` is repeatable and is stored on the record. A missing `=`, an empty key, or an invalid shell is a configuration error (exit 1).
@@ -36,16 +36,21 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
   - `--no-pass-args` sets `pass_args=false`; user arguments are forwarded by default. When fixed arguments contain `{{args}}`, user arguments are inserted at that position; `{{{{args}}}}` renders the literal text `{{args}}`. Without a placeholder, user arguments are appended at the end only when `pass_args` is true.
   - `--target-type TYPE` accepts `native_executable` (default), `python_script`, `powershell_script`, `batch`, `shell_script`, `java_jar`, `cmdlet`, and `change_directory`. `raw_shell_command` is not exposed as a CLI value and is rejected by clap as a usage error (exit 2); advanced Shell mode remains rejected by validation.
   - `--path-mode MODE` accepts `absolute` (default) and `relative_to_working_directory`.
+  - `--description TEXT` stores a free-form memo. `--description ""` stores an empty description.
+  - `--restrict whitelist|blacklist` with one or more `--restrict-path PATH` attaches an execution-directory restriction. `--restrict` without a path and `--restrict-path` without `--restrict` are configuration errors (exit 1). `--clear-restriction` conflicts with both flags (clap usage error, exit 2). Paths are trimmed, must be absolute, at most 64 paths of at most 4096 characters each. See `docs/restrictions.md`.
 - `get <NAME>`: prints the stored record. A missing alias is `NotFound` (exit 4).
 - `list [--sort FIELD] [--desc] [--limit N] [--tag TAG]...`
   - `--sort` accepts `name` (default), `updated_at`, `created_at`, `target_type`, and `enabled`.
   - `--limit` defaults to 50. Repeated `--tag` values use AND intersection.
+  - Table output columns are `NAME`, `TARGET`, `DESCRIPTION`, `TAGS`, `ENABLED`. Control characters (tabs, newlines, escape sequences) in displayed values are replaced with spaces so a crafted value cannot break columns or inject terminal sequences. `--format json` emits every stored field, including `description`, `tags`, and `restriction`.
 - `find <QUERY> [--fuzzy] [--field FIELD] [--limit N] [--tag TAG]...`
   - `--field` accepts `all` (default), `name`, `target`, `description`, `tags`, `shells`, and `target_type`.
   - `--fuzzy` adds subsequence matching on top of exact/prefix/substring scoring. Without it, exact, prefix, and substring matches still score; there is no separate exact-only mode.
-- `update <NAME> [--exec <PROGRAM>] [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--no-pass-args|--pass-args] [--target-type TYPE] [--path-mode MODE]`
+- `update <NAME> [--exec <PROGRAM>] [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--description TEXT] [--restrict MODE] [--restrict-path PATH]... [--clear-restriction] [--no-pass-args|--pass-args] [--target-type TYPE] [--path-mode MODE]`
   - Only supplied fields change. Omitted fields keep their stored values.
   - `--arg`, `--shell`, and `--tag` replace their whole collection when supplied. `--env` merges keys into the existing environment map. `--cwd` replaces the stored working directory; there is currently no flag to clear it.
+  - `--description` replaces the stored memo; `--description ""` clears it.
+  - Restriction updates: `--restrict` alone changes only the mode and keeps existing paths (error if the record has no restriction and no paths are supplied); `--restrict-path` alone replaces the path list and keeps the existing mode (error if the record has no restriction); supplying both replaces both; `--clear-restriction` removes the restriction. Omitted restriction flags preserve the stored value. Validation and path rules match `add`. `--clear-restriction` conflicts with `--restrict` and `--restrict-path` (clap usage error, exit 2). See `docs/restrictions.md`.
   - Removing a shell from the record retires the old name for that shell so the next `sync` cleans it up.
   - `--target-type` and `--path-mode` accept the same values as `add` and replace the stored values when supplied; omitted values are preserved.
   - A missing alias is `NotFound` (exit 4). An invalid shell or environment entry is a configuration error (exit 1). `--no-pass-args` and `--pass-args` conflict and are rejected by clap (exit 2). An unsupported `--target-type` or `--path-mode` value is a clap usage error (exit 2).
@@ -79,7 +84,7 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
 
 ## Transfer
 
-- `export <FILE>`: writes JSON by default, or TOML when the path ends in `.toml`. Environment keys whose names contain `PASSWORD`, `TOKEN`, `SECRET`, `API_KEY`, or `APIKEY` (case-insensitive) are omitted from the export.
+- `export <FILE>`: writes JSON by default, or TOML when the path ends in `.toml`. Environment keys whose names contain `PASSWORD`, `TOKEN`, `SECRET`, `API_KEY`, or `APIKEY` (case-insensitive) are omitted from the export. The same envelope is the single import/export format for Bash, Zsh, PowerShell 5.1, and PowerShell 7: each record carries its `shells` list, plus `description`, `tags`, and an optional `restriction`. Importing into an empty database preserves those fields.
 - `import <FILE> [--yes]`
   - The import file is parsed and every candidate record is validated with the same rules as `add` (alias-name syntax, PowerShell-reserved names, argument templates). Records that fail validation are skipped with a warning and are never persisted. Sensitive environment keys are filtered on import as well.
   - Without `--yes`, the command previews only: it opens the existing database read-only, evaluates conflicts through `ConflictStrategy::Ask`, and reports `imported`, `skipped`, `unsupported`, and `warnings` counts without persisting anything. Each warning is printed to stderr (for example an omitted sensitive-key name or a rejected invalid record); warning text never includes environment values, and echoed names/keys have control characters stripped and are truncated for display. The read-only SQLite handle may leave `-wal` / `-shm` side files next to the database.

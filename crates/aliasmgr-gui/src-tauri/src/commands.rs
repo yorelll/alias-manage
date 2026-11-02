@@ -1,7 +1,9 @@
 use aliasmgr_core::{
     config::AppPaths,
     detection::{detect, find_definition_source, DetectionContext},
-    model::{AliasRecord, ManagedNameSet, PathMode, PathOrigin, ShellKind, TargetType},
+    model::{
+        AliasRecord, ManagedNameSet, PathMode, PathOrigin, PathRestriction, ShellKind, TargetType,
+    },
     search::{SearchField, SearchQuery, SortField},
     service::AliasService,
     shells::{bash, powershell, zsh},
@@ -102,6 +104,8 @@ pub struct AliasDto {
     pub shells: Vec<String>,
     pub enabled: bool,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub restriction: Option<PathRestriction>,
     pub revision: i64,
     #[serde(default)]
     pub path_mode: Option<String>,
@@ -209,6 +213,7 @@ fn alias_to_dto(alias: &AliasRecord) -> AliasDto {
             .collect(),
         enabled: alias.enabled,
         tags: alias.tags.clone(),
+        restriction: alias.restriction.clone(),
         revision: alias.revision,
         path_mode: Some(path_mode_to_str(&alias.path_mode).to_owned()),
         path_origin: Some(path_origin_to_str(&alias.path_origin).to_owned()),
@@ -272,6 +277,7 @@ fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
         environment: dto.environment,
         enabled: dto.enabled,
         tags: dto.tags,
+        restriction: dto.restriction,
         revision: dto.revision,
         target_type: target_type_from_str(&dto.target_type)?,
         shells: dto
@@ -1060,6 +1066,7 @@ mod tests {
             shells: vec!["bash".into(), "zsh".into(), "powershell7".into()],
             enabled: true,
             tags: Vec::new(),
+            restriction: None,
             revision: 1,
             path_mode: Some("absolute".into()),
             path_origin: Some("gui_file_picker".into()),
@@ -1095,6 +1102,38 @@ mod tests {
         assert!(!config.root.join("aliases.db").exists());
         assert!(!config.root.join("generated").exists());
         assert_eq!(std::fs::read_dir(&config.root).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn preview_alias_includes_the_restriction_guard() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config = TempConfig::new("preview-restriction");
+        let mut dto = preview_dto();
+        dto.restriction = Some(PathRestriction {
+            mode: aliasmgr_core::model::RestrictionMode::Whitelist,
+            paths: vec![std::env::temp_dir().to_string_lossy().into_owned()],
+        });
+
+        let previews = preview_alias(dto).unwrap();
+        assert_eq!(previews.len(), 3);
+        for preview in &previews {
+            assert!(
+                preview.error.is_none(),
+                "{}: {:?}",
+                preview.shell,
+                preview.error
+            );
+            assert!(
+                preview.content.contains("__aliasmgr_cwd"),
+                "{} preview lacks the guard: {}",
+                preview.shell,
+                preview.content
+            );
+            assert!(!preview.content.contains("Set-Alias -Name gsp"));
+            assert!(!preview.content.contains("alias gsp="));
+        }
     }
 
     #[test]

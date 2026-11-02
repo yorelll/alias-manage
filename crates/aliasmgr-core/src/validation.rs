@@ -2,6 +2,7 @@ use crate::{
     error::AliasError,
     model::{AliasRecord, ShellKind, TargetType},
 };
+use std::path::Path;
 
 pub fn validate_alias_name(name: &str) -> Result<(), AliasError> {
     if name.is_empty() || name.chars().count() > 64 {
@@ -43,6 +44,48 @@ pub fn validate_powershell_name(name: &str) -> Result<(), AliasError> {
     Ok(())
 }
 
+pub fn validate_restriction(alias: &AliasRecord) -> Result<(), AliasError> {
+    const MAX_PATHS: usize = 64;
+    const MAX_PATH_CHARS: usize = 4096;
+    let Some(restriction) = &alias.restriction else {
+        return Ok(());
+    };
+    if restriction.paths.is_empty() {
+        return Err(AliasError::InvalidAliasRecord(
+            "restriction requires at least one path".into(),
+        ));
+    }
+    if restriction.paths.len() > MAX_PATHS {
+        return Err(AliasError::InvalidAliasRecord(format!(
+            "restriction supports at most {MAX_PATHS} paths"
+        )));
+    }
+    for path in &restriction.paths {
+        let trimmed = path.trim();
+        if trimmed.is_empty() {
+            return Err(AliasError::InvalidAliasRecord(
+                "restriction paths must not be empty".into(),
+            ));
+        }
+        if trimmed.chars().count() > MAX_PATH_CHARS {
+            return Err(AliasError::InvalidAliasRecord(format!(
+                "restriction path exceeds {MAX_PATH_CHARS} characters"
+            )));
+        }
+        if trimmed.contains('\0') {
+            return Err(AliasError::InvalidAliasRecord(
+                "restriction paths must not contain NUL".into(),
+            ));
+        }
+        if !Path::new(trimmed).is_absolute() {
+            return Err(AliasError::InvalidAliasRecord(format!(
+                "restriction path must be absolute: {trimmed}"
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_alias(alias: &AliasRecord) -> Result<(), AliasError> {
     validate_alias_name(&alias.name)?;
     if alias.executable.trim().is_empty() {
@@ -59,6 +102,7 @@ pub fn validate_alias(alias: &AliasRecord) -> Result<(), AliasError> {
         return Err(AliasError::AdvancedModeUnsupported);
     }
     validate_arg_template(alias)?;
+    validate_restriction(alias)?;
     if alias
         .shells
         .iter()
@@ -72,6 +116,7 @@ pub fn validate_alias(alias: &AliasRecord) -> Result<(), AliasError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::{PathRestriction, RestrictionMode};
 
     fn alias(name: &str) -> AliasRecord {
         AliasRecord {
@@ -142,6 +187,71 @@ mod tests {
         assert!(matches!(
             validate_alias(&value),
             Err(AliasError::InvalidAliasRecord(message)) if message.contains("shell")
+        ));
+    }
+
+    #[test]
+    fn validates_restriction_paths() {
+        let absolute = std::env::temp_dir().to_string_lossy().into_owned();
+        let mut value = alias("cm");
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Whitelist,
+            paths: vec![absolute.clone()],
+        });
+        assert!(validate_alias(&value).is_ok());
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Whitelist,
+            paths: vec![],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("at least one path")
+        ));
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Blacklist,
+            paths: vec!["relative/path".into()],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("absolute")
+        ));
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Blacklist,
+            paths: vec!["   ".into()],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("must not be empty")
+        ));
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Blacklist,
+            paths: vec![format!("{absolute}\0tail")],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("NUL")
+        ));
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Whitelist,
+            paths: vec![absolute.clone(); 65],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("at most 64")
+        ));
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Whitelist,
+            paths: vec![format!("{absolute}{}", "a".repeat(4096))],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("4096")
         ));
     }
 }

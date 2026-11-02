@@ -16,15 +16,18 @@ import {
   importContentArgs,
   importReportCounts,
   importSkipEntries,
+  isAbsolutePath,
   isImportableFilename,
   latestPreviewResponse,
   manualOnlyBoundary,
+  mergeEditedAlias,
   nextDataVersion,
   normalizeDoctorFindings,
   normalizeFixedArgs,
   normalizeImportReport,
   normalizeOverriddenDefinitions,
   normalizePreviewSnippets,
+  normalizeRestriction,
   normalizeSettings,
   normalizeShells,
   normalizeShellValue,
@@ -36,6 +39,7 @@ import {
   pathModeLabel,
   pathOriginLabel,
   previewAliasArgs,
+  restrictionModeLabel,
   rowsToEnvironment,
   settingsDirty,
   settingsValidation,
@@ -647,4 +651,54 @@ test("accessibility styles provide focus-visible, horizontal table scroll, and r
   assert.ok(css.includes("min-width: 940px"));
   assert.ok(css.includes("@media (max-width: 760px)"));
   assert.ok(css.includes("visually-hidden"));
+});
+
+test("restriction helpers trim paths, validate absolute paths, and survive edits", () => {
+  assert.equal(normalizeRestriction(null), null);
+  assert.deepEqual(
+    normalizeRestriction({ mode: "whitelist", paths: [" /srv/a ", "", " /srv/a ", "/srv/b"] }),
+    { mode: "whitelist", paths: ["/srv/a", "/srv/b"] },
+  );
+  assert.deepEqual(
+    finalizeAliasDraft({
+      ...baseAlias(),
+      restriction: { mode: "blacklist", paths: [" /srv/cache "] },
+    }).restriction,
+    { mode: "blacklist", paths: ["/srv/cache"] },
+  );
+
+  assert.equal(isAbsolutePath("/srv/a"), true);
+  assert.equal(isAbsolutePath("C:\\work"), true);
+  assert.equal(isAbsolutePath("C:/work"), true);
+  assert.equal(isAbsolutePath("\\\\server\\share"), true);
+  assert.equal(isAbsolutePath("relative/path"), false);
+  assert.equal(restrictionModeLabel("whitelist", "en"), "whitelist");
+  assert.equal(restrictionModeLabel("blacklist", "zh"), "黑名单");
+  assert.equal(restrictionModeLabel("custom", "en"), "custom");
+
+  const original = baseAlias();
+  const edited = {
+    ...original,
+    restriction: { mode: "blacklist" as const, paths: [" /srv/a "] },
+  };
+  assert.deepEqual(mergeEditedAlias(original, edited).restriction, {
+    mode: "blacklist",
+    paths: ["/srv/a"],
+  });
+
+  const missingPaths = {
+    ...baseAlias(),
+    restriction: { mode: "whitelist" as const, paths: [] },
+  };
+  assert.deepEqual(validateAliasDraft(missingPaths, "en"), [
+    "Add at least one absolute directory for the execution restriction.",
+  ]);
+  const relative = {
+    ...baseAlias(),
+    restriction: { mode: "whitelist" as const, paths: ["relative"] },
+  };
+  assert.deepEqual(validateAliasDraft(relative, "en"), [
+    "Every restriction directory must be an absolute path.",
+  ]);
+  assert.deepEqual(validateAliasDraft({ ...baseAlias(), restriction: null }, "en"), []);
 });

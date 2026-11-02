@@ -107,6 +107,32 @@ fn powershell_parser_accepts_cwd_and_environment_function() {
 
 #[cfg(windows)]
 #[test]
+fn powershell_parser_accepts_restriction_guard() {
+    let alias = AliasRecord {
+        name: "rma".into(),
+        executable: "Remove-Item".into(),
+        fixed_args: vec!["-Recurse".into()],
+        pass_args: false,
+        restriction: Some(aliasmgr_core::model::PathRestriction {
+            mode: aliasmgr_core::model::RestrictionMode::Whitelist,
+            paths: vec!["C:\\work dir".into(), "D:\\it's".into()],
+        }),
+        ..Default::default()
+    };
+    let script = powershell::render(
+        &alias,
+        ShellKind::PowerShell5,
+        &ManagedNameSet {
+            current: vec![],
+            retired: vec![],
+        },
+    )
+    .unwrap();
+    assert_parser_accepts(&script, "restriction");
+}
+
+#[cfg(windows)]
+#[test]
 fn powershell_parser_accepts_change_directory_function() {
     let alias = AliasRecord {
         name: "jump".into(),

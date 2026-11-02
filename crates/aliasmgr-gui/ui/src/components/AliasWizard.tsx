@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { AliasDto, EnvRow, PreviewSnippet } from "../lib";
+import type { AliasDto, EnvRow, PathRestriction, PreviewSnippet, RestrictionMode } from "../lib";
 import {
   SHELLS,
   TARGET_TYPES,
@@ -39,6 +39,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   const [previews, setPreviews] = useState<PreviewSnippet[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [restrictionPath, setRestrictionPath] = useState("");
   const previewToken = useRef(0);
   const nameRef = useRef<HTMLInputElement | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -78,6 +79,17 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   };
 
   const currentDraft = () => ({ ...draft, environment: rowsToEnvironment(envRows) });
+
+  const restriction = draft.restriction ?? null;
+  const setRestriction = (next: PathRestriction | null) => update({ restriction: next });
+  const addRestrictionPath = () => {
+    const path = restrictionPath.trim();
+    if (!restriction || !path) return;
+    if (!restriction.paths.includes(path)) {
+      setRestriction({ ...restriction, paths: [...restriction.paths, path] });
+    }
+    setRestrictionPath("");
+  };
 
   const save = async () => {
     const finalized = finalizeAliasDraft(currentDraft());
@@ -194,6 +206,77 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
         <div className="field field-full">
           <TagInput label={t("wizard.tags")} tags={draft.tags} suggestions={tags} onChange={(next) => update({ tags: next })} />
         </div>
+
+        <label className="check-row field-full">
+          <input
+            type="checkbox"
+            checked={restriction !== null}
+            onChange={(event) => update({
+              restriction: event.target.checked
+                ? { mode: "whitelist", paths: [] }
+                : null,
+            })}
+          />
+          <span>{t("wizard.restriction")}</span>
+        </label>
+
+        {restriction && (
+          <div className="field field-full restriction-editor" data-testid="restriction-editor">
+            <p className="hint">{t("wizard.restrictionHint")}</p>
+            <label className="field">
+              <span>{t("wizard.restrictionMode")}</span>
+              <select
+                value={restriction.mode}
+                onChange={(event) => setRestriction({
+                  ...restriction,
+                  mode: event.target.value as RestrictionMode,
+                })}
+              >
+                <option value="whitelist">{t("wizard.restrictionWhitelist")}</option>
+                <option value="blacklist">{t("wizard.restrictionBlacklist")}</option>
+              </select>
+            </label>
+            <div className="field">
+              <span>{t("wizard.restrictionPaths")}</span>
+              <div className="row-editor">
+                {restriction.paths.length === 0 && <p className="hint">{t("wizard.noRestrictionPaths")}</p>}
+                {restriction.paths.map((path, index) => (
+                  <div className="row-editor-row" key={path}>
+                    <code className="restriction-path">{path}</code>
+                    <button
+                      type="button"
+                      onClick={() => setRestriction({
+                        ...restriction,
+                        paths: restriction.paths.filter((_, position) => position !== index),
+                      })}
+                    >
+                      {t("common.remove")}
+                    </button>
+                  </div>
+                ))}
+                <div className="row-editor-row">
+                  <input
+                    aria-label={t("wizard.restrictionPathAria", { index: restriction.paths.length + 1 })}
+                    value={restrictionPath}
+                    onChange={(event) => setRestrictionPath(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        addRestrictionPath();
+                      }
+                    }}
+                    placeholder={t("wizard.restrictionPathPlaceholder")}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button type="button" onClick={addRestrictionPath}>
+                    {t("wizard.addRestrictionPath")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <button

@@ -805,4 +805,77 @@ mod tests {
         );
         assert!(warning.contains("evilname"));
     }
+
+    #[test]
+    fn export_import_preserves_description_tags_shells_and_restriction() {
+        let restriction = crate::model::PathRestriction {
+            mode: crate::model::RestrictionMode::Whitelist,
+            paths: vec![std::env::temp_dir().to_string_lossy().into_owned()],
+        };
+        let alias = AliasRecord {
+            name: "deploy".into(),
+            description: "Deploy the app".into(),
+            executable: "deploy".into(),
+            tags: vec!["ops".into(), "prod".into()],
+            shells: vec![
+                ShellKind::Bash,
+                ShellKind::Zsh,
+                ShellKind::PowerShell5,
+                ShellKind::PowerShell7,
+            ],
+            restriction: Some(restriction.clone()),
+            ..Default::default()
+        };
+        for extension in ["json", "toml"] {
+            let path = unique_path("full-fields", extension);
+            let records = if extension == "json" {
+                export_json(&path, std::slice::from_ref(&alias)).unwrap();
+                read_json(&path).unwrap()
+            } else {
+                export_toml(&path, std::slice::from_ref(&alias)).unwrap();
+                read_toml(&path).unwrap()
+            };
+            let report = import_records(records, &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
+            assert_eq!(report.imported, vec!["deploy"], "{extension}");
+            let database = crate::storage::Database::open_in_memory().unwrap();
+            database
+                .insert_aliases_atomic(&report.accepted_records)
+                .unwrap();
+            let stored = database.get_alias_by_name("deploy").unwrap().unwrap();
+            assert_eq!(stored.description, "Deploy the app", "{extension}");
+            assert_eq!(stored.tags, vec!["ops", "prod"], "{extension}");
+            assert_eq!(stored.shells, alias.shells, "{extension}");
+            assert_eq!(stored.restriction, Some(restriction.clone()), "{extension}");
+            let _ = fs::remove_file(path);
+        }
+    }
+
+    #[test]
+    fn old_format_json_without_restriction_still_imports() {
+        let alias = AliasRecord {
+            name: "old".into(),
+            executable: "git".into(),
+            tags: vec!["legacy".into()],
+            ..Default::default()
+        };
+        // `None` is skipped during serialization, matching pre-restriction files.
+        assert!(!serde_json::to_string(&alias)
+            .unwrap()
+            .contains("restriction"));
+        let mut value = serde_json::to_value(&alias).unwrap();
+        value.as_object_mut().unwrap().remove("restriction");
+        let content = serde_json::json!({
+            "format_version": FORMAT_VERSION,
+            "exported_at": "2025-01-01T00:00:00Z",
+            "exported_by_version": "0.0.1",
+            "aliases": [value],
+        })
+        .to_string();
+        let records = read_json_str(&content).unwrap();
+        assert_eq!(records[0].restriction, None);
+        assert_eq!(records[0].tags, vec!["legacy"]);
+        let report = import_records(records, &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
+        assert_eq!(report.imported, vec!["old"]);
+        assert_eq!(report.accepted_records[0].restriction, None);
+    }
 }

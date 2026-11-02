@@ -25,6 +25,13 @@ export function navLabel(language: Language, id: Page): string {
   return t(language, item?.labelKey ?? "nav.aliases");
 }
 
+export type RestrictionMode = "whitelist" | "blacklist";
+
+export interface PathRestriction {
+  mode: RestrictionMode;
+  paths: string[];
+}
+
 export interface AliasDto {
   id: string;
   name: string;
@@ -38,6 +45,7 @@ export interface AliasDto {
   shells: string[];
   enabled: boolean;
   tags: string[];
+  restriction?: PathRestriction | null;
   revision: number;
   path_mode?: string | null;
   path_origin?: string | null;
@@ -114,6 +122,7 @@ export function emptyAliasDraft(): AliasDto {
     shells: ["bash"],
     enabled: true,
     tags: [],
+    restriction: null,
     revision: 1,
     path_mode: "absolute",
     path_origin: "gui_file_picker",
@@ -140,6 +149,7 @@ export function mergeEditedAlias(original: AliasDto, edited: AliasDto): AliasDto
     path_mode: original.path_mode ?? "absolute",
     path_origin: original.path_origin ?? "gui_file_picker",
     tags: normalizeTags(edited.tags),
+    restriction: normalizeRestriction(edited.restriction),
   };
 }
 
@@ -271,6 +281,15 @@ export function pathOriginLabel(origin?: string | null, language: Language = DEF
   }
 }
 
+/** Localized labels for restriction modes; unknown values stay raw. */
+export function restrictionModeLabel(mode?: string | null, language: Language = DEFAULT_LANGUAGE): string {
+  switch (mode) {
+    case "whitelist": return t(language, "restriction.mode.whitelist");
+    case "blacklist": return t(language, "restriction.mode.blacklist");
+    default: return mode || t(language, "common.none");
+  }
+}
+
 /** Localized severity badge text; unknown severities fall back to the backend value. */
 export function severityLabel(severity: string, language: Language = DEFAULT_LANGUAGE): string {
   const key = `severity.${severity}`;
@@ -325,7 +344,22 @@ export function finalizeAliasDraft(draft: AliasDto): AliasDto {
     tags: normalizeTags(draft.tags),
     shells: normalizeShells(draft.shells),
     fixed_args: normalizeFixedArgs(draft.fixed_args),
+    restriction: normalizeRestriction(draft.restriction),
   };
+}
+
+/** Trim restriction paths and drop blanks; `null` means no restriction. */
+export function normalizeRestriction(
+  restriction: PathRestriction | null | undefined,
+): PathRestriction | null {
+  if (!restriction) return null;
+  const paths = [...new Set(restriction.paths.map((path) => path.trim()).filter(Boolean))];
+  return { mode: restriction.mode, paths };
+}
+
+/** Absolute path check used by the wizard; existence is not required. */
+export function isAbsolutePath(value: string): boolean {
+  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
 }
 
 export function validateAliasDraft(draft: AliasDto, language: Language = DEFAULT_LANGUAGE): string[] {
@@ -337,6 +371,14 @@ export function validateAliasDraft(draft: AliasDto, language: Language = DEFAULT
   if (normalizeShells(draft.shells).length === 0) errors.push(t(language, "validation.shells"));
   if (!draft.target_type) errors.push(t(language, "validation.targetType"));
   if (draft.target_type === "raw_shell_command") errors.push(t(language, "validation.rawShell"));
+  const restriction = normalizeRestriction(draft.restriction);
+  if (restriction) {
+    if (restriction.paths.length === 0) {
+      errors.push(t(language, "validation.restrictionPaths"));
+    } else if (restriction.paths.some((path) => !isAbsolutePath(path))) {
+      errors.push(t(language, "validation.restrictionAbsolute"));
+    }
+  }
   return errors;
 }
 

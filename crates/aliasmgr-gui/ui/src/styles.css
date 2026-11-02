@@ -133,6 +133,9 @@ input[readonly] { color: #3c4a63; background: #eef2f8; cursor: not-allowed; }
 .row-editor { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .row-editor-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%; }
 .row-editor-row input { flex: 1 1 0; min-width: 0; }
+.restriction-editor { gap: 10px; padding: 10px; border: 1px solid #e3e8f2; border-radius: 6px; background: #f8fafd; }
+.restriction-badge { display: inline-block; margin-right: 8px; padding: 1px 7px; border-radius: 999px; background: #e8eef9; color: #24457d; font-size: 12px; }
+.restriction-path { overflow-wrap: anywhere; }
 .hint { margin: 4px 0; color: #63708a; font-size: 12px; overflow-wrap: anywhere; }
 .form-error { margin: 8px 0; padding: 8px 10px; border-left: 4px solid #a33; border-radius: 4px; color: #8a2318; background: #fff2f0; }
 .form-actions, .wizard-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }

@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import type { AliasDto } from "../lib";
-import { pathModeLabel, pathOriginLabel, shellLabel, targetTypeLabel } from "../lib";
+import { pathModeLabel, pathOriginLabel, restrictionModeLabel, shellLabel, targetTypeLabel } from "../lib";
 import { useI18n } from "../language";
 
 interface AliasTableProps {
@@ -103,6 +103,19 @@ export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete
                           : "—"}</dd>
                         <dt>{t("detail.pathMode")}</dt><dd>{pathModeLabel(alias.path_mode, language)}</dd>
                         <dt>{t("detail.pathOrigin")}</dt><dd>{pathOriginLabel(alias.path_origin, language)}</dd>
+                        <dt>{t("detail.restriction")}</dt>
+                        <dd>{alias.restriction
+                          ? (
+                            <>
+                              <span className="restriction-badge">
+                                {t("restriction.badge", { mode: restrictionModeLabel(alias.restriction.mode, language) })}
+                              </span>
+                              {alias.restriction.paths.length > 0 && (
+                                <span className="restriction-paths">{alias.restriction.paths.join(", ")}</span>
+                              )}
+                            </>
+                          )
+                          : "—"}</dd>
                         <dt>{t("detail.revision")}</dt><dd>{alias.revision}</dd>
                         <dt>{t("detail.id")}</dt><dd className="mono">{alias.id}</dd>
                       </dl>

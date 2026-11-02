@@ -1,14 +1,15 @@
 use crate::{
     error::AliasError,
     executor::render_argv,
-    model::{AliasRecord, ManagedNameSet, ShellKind, TargetType},
+    model::{AliasRecord, ManagedNameSet, RestrictionMode, ShellKind, TargetType},
 };
 
 pub fn quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 pub fn is_simple_alias(alias: &AliasRecord) -> bool {
-    alias.fixed_args.is_empty()
+    alias.restriction.is_none()
+        && alias.fixed_args.is_empty()
         && !alias.pass_args
         && alias.working_directory.is_none()
         && alias.environment.is_empty()
@@ -57,16 +58,19 @@ pub fn render(
             .working_directory
             .as_deref()
             .unwrap_or(&alias.executable);
+        let body = format!("Set-Location -LiteralPath {}", quote(directory));
+        let definition = match render_restriction_guard(alias) {
+            Some(guard) => format!(
+                "function global:{} {{\n{}\n    {}\n}}",
+                alias.name,
+                indent(&guard, 4),
+                body
+            ),
+            None => format!("function global:{} {{ {} }}", alias.name, body),
+        };
         output.push_str(&format!(
             "{}\n",
-            crate::shells::common::managed_definition(
-                &alias.name,
-                &format!(
-                    "function global:{} {{ Set-Location -LiteralPath {} }}",
-                    alias.name,
-                    quote(directory)
-                )
-            )
+            crate::shells::common::managed_definition(&alias.name, &definition)
         ));
         return Ok(output);
     }
@@ -101,15 +105,85 @@ fn render_command(alias: &AliasRecord) -> String {
     render_command_tokens(alias).join(" ")
 }
 
+fn indent(text: &str, spaces: usize) -> String {
+    let pad = " ".repeat(spaces);
+    text.lines()
+        .map(|line| format!("{pad}{line}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Guard executed before the command, `Push-Location`, and environment changes.
+/// Paths are canonicalized with `GetFullPath`, compared at path component
+/// boundaries, and case-folded only when generated on Windows.
+fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
+    let restriction = alias.restriction.as_ref()?;
+    let comparison = if cfg!(windows) {
+        "[StringComparison]::OrdinalIgnoreCase"
+    } else {
+        "[StringComparison]::Ordinal"
+    };
+    let candidates = restriction
+        .paths
+        .iter()
+        .map(|path| quote(path))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut lines = vec![
+        "$__aliasmgr_cwd = (Get-Location -PSProvider FileSystem).ProviderPath".to_string(),
+        "try { $__aliasmgr_cwd = [System.IO.Path]::GetFullPath($__aliasmgr_cwd) } catch { }"
+            .to_string(),
+        "if ($__aliasmgr_cwd.Length -gt 1 -and $__aliasmgr_cwd -ne [System.IO.Path]::GetPathRoot($__aliasmgr_cwd)) { $__aliasmgr_cwd = $__aliasmgr_cwd.TrimEnd([char[]]@('\\', '/')) }".to_string(),
+        "$__aliasmgr_restriction_hit = $false".to_string(),
+        format!("foreach ($__aliasmgr_candidate in @({candidates})) {{"),
+        "    try { $__aliasmgr_dir = [System.IO.Path]::GetFullPath($__aliasmgr_candidate) } catch { continue }".to_string(),
+        "    if (-not [System.IO.Directory]::Exists($__aliasmgr_dir)) { continue }".to_string(),
+        "    if ($__aliasmgr_dir.Length -gt 1 -and $__aliasmgr_dir -ne [System.IO.Path]::GetPathRoot($__aliasmgr_dir)) { $__aliasmgr_dir = $__aliasmgr_dir.TrimEnd([char[]]@('\\', '/')) }".to_string(),
+        "    $__aliasmgr_is_root = $__aliasmgr_dir -eq [System.IO.Path]::GetPathRoot($__aliasmgr_dir)".to_string(),
+        format!("    $__aliasmgr_equals = $__aliasmgr_cwd.Equals($__aliasmgr_dir, {comparison})"),
+        format!("    $__aliasmgr_starts = $__aliasmgr_cwd.StartsWith($__aliasmgr_dir, {comparison})"),
+        "    $__aliasmgr_boundary = $false".to_string(),
+        "    if ($__aliasmgr_cwd.Length -gt $__aliasmgr_dir.Length -and $__aliasmgr_starts) {".to_string(),
+        "        $__aliasmgr_next = $__aliasmgr_cwd.Substring($__aliasmgr_dir.Length, 1)".to_string(),
+        "        $__aliasmgr_boundary = ($__aliasmgr_next -eq '\\') -or ($__aliasmgr_next -eq '/')".to_string(),
+        "    }".to_string(),
+        "    if ($__aliasmgr_equals -or ($__aliasmgr_is_root -and $__aliasmgr_starts) -or $__aliasmgr_boundary) { $__aliasmgr_restriction_hit = $true }".to_string(),
+        "}".to_string(),
+    ];
+    let (condition, message) = match restriction.mode {
+        RestrictionMode::Whitelist => (
+            "-not $__aliasmgr_restriction_hit",
+            "current directory is not in the whitelist",
+        ),
+        RestrictionMode::Blacklist => (
+            "$__aliasmgr_restriction_hit",
+            "current directory is in the blacklist",
+        ),
+    };
+    lines.push(format!("if ({condition}) {{"));
+    lines.push(format!(
+        "    [Console]::Error.WriteLine(\"aliasmgr: refusing to run '{}' in '$__aliasmgr_cwd': {message}\")",
+        alias.name
+    ));
+    lines.push("    $global:LASTEXITCODE = 1".to_string());
+    lines.push("    return".to_string());
+    lines.push("}".to_string());
+    Some(lines.join("\n"))
+}
+
 /// Builds the function body. Working directory and environment changes are
 /// restored in `finally` so the caller's session is untouched.
 fn render_function(alias: &AliasRecord, command: &str) -> String {
+    let guard = render_restriction_guard(alias);
     let cwd = alias.working_directory.as_deref();
     let has_environment = !alias.environment.is_empty();
-    if cwd.is_none() && !has_environment {
+    if guard.is_none() && cwd.is_none() && !has_environment {
         return format!("function global:{} {{ & {} }}", alias.name, command);
     }
     let mut lines = vec![format!("function global:{} {{", alias.name)];
+    if let Some(guard) = &guard {
+        lines.push(indent(guard, 4));
+    }
     if has_environment {
         lines.push("    $__aliasmgr_environment = @{}".to_string());
         for key in alias.environment.keys() {
@@ -445,6 +519,98 @@ mod tests {
             render(&alias, ShellKind::PowerShell7, &names()),
             Err(AliasError::TargetMissing(_))
         ));
+    }
+
+    #[test]
+    fn restricted_aliases_are_never_emitted_as_simple_aliases() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "Remove-Item".into(),
+            pass_args: false,
+            restriction: Some(crate::model::PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["C:\\work".into()],
+            }),
+            ..Default::default()
+        };
+        assert!(!is_simple_alias(&alias));
+        let text = render(&alias, ShellKind::PowerShell7, &names()).unwrap();
+        assert!(text.contains("function global:rma {"));
+        assert!(!text.contains("Set-Alias -Name rma"));
+        assert!(text.contains("current directory is not in the whitelist"));
+    }
+
+    #[test]
+    fn whitelist_guard_canonicalizes_paths_and_uses_component_boundaries() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "Remove-Item".into(),
+            fixed_args: vec!["-Recurse".into()],
+            restriction: Some(crate::model::PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["C:\\work dir".into(), "D:\\it's".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, ShellKind::PowerShell7, &names()).unwrap();
+        assert!(
+            text.contains("$__aliasmgr_cwd = (Get-Location -PSProvider FileSystem).ProviderPath")
+        );
+        assert!(text.contains("[System.IO.Path]::GetFullPath($__aliasmgr_cwd)"));
+        assert!(text.contains("foreach ($__aliasmgr_candidate in @('C:\\work dir', 'D:\\it''s'))"));
+        assert!(text.contains("$__aliasmgr_cwd.Length -gt $__aliasmgr_dir.Length"));
+        assert!(text.contains("$__aliasmgr_cwd.Substring($__aliasmgr_dir.Length, 1)"));
+        let comparison = if cfg!(windows) {
+            "[StringComparison]::OrdinalIgnoreCase"
+        } else {
+            "[StringComparison]::Ordinal"
+        };
+        assert!(text.contains(comparison));
+        assert!(text.contains("if (-not $__aliasmgr_restriction_hit) {"));
+        assert!(text.contains(
+            "[Console]::Error.WriteLine(\"aliasmgr: refusing to run 'rma' in '$__aliasmgr_cwd': current directory is not in the whitelist\")"
+        ));
+        assert!(text.contains("$global:LASTEXITCODE = 1"));
+        assert!(!text.contains(forbidden_eval_device()));
+        let guard = text.find("$__aliasmgr_cwd").unwrap();
+        let command = text.find("& 'Remove-Item' '-Recurse' @args").unwrap();
+        assert!(guard < command, "guard must precede the command: {text}");
+    }
+
+    #[test]
+    fn blacklist_guard_denies_matches() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "Remove-Item".into(),
+            pass_args: false,
+            restriction: Some(crate::model::PathRestriction {
+                mode: RestrictionMode::Blacklist,
+                paths: vec!["C:\\Windows".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, ShellKind::PowerShell5, &names()).unwrap();
+        assert!(text.contains("if ($__aliasmgr_restriction_hit) {"));
+        assert!(text.contains("current directory is in the blacklist"));
+    }
+
+    #[test]
+    fn change_directory_guard_precedes_set_location() {
+        let alias = AliasRecord {
+            name: "jump".into(),
+            executable: ".".into(),
+            target_type: TargetType::ChangeDirectory,
+            working_directory: Some("C:/work".into()),
+            restriction: Some(crate::model::PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["C:\\".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, ShellKind::PowerShell7, &names()).unwrap();
+        let guard = text.find("$__aliasmgr_cwd").unwrap();
+        let change = text.find("Set-Location -LiteralPath 'C:/work'").unwrap();
+        assert!(guard < change, "guard must precede Set-Location: {text}");
     }
 
     #[test]

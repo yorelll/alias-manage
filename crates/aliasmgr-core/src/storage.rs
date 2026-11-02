@@ -1,7 +1,7 @@
 use crate::{
     error::AliasError,
     migrations,
-    model::{record_checksum, AliasRecord},
+    model::{record_checksum, AliasRecord, PathRestriction},
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -151,7 +151,7 @@ impl Database {
         let checksum = checked_checksum(alias)?;
         self.conn
             .execute(
-                "INSERT INTO aliases (id,name,name_folded,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+                "INSERT INTO aliases (id,name,name_folded,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision,restriction_json) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,?21)",
                 params![
                     alias.id.to_string(),
                     alias.name,
@@ -173,6 +173,7 @@ impl Database {
                     alias.updated_at.to_rfc3339(),
                     checksum,
                     alias.revision,
+                    serde_json::to_string(&alias.restriction)?,
                 ],
             )
             .map_err(map_constraint)?;
@@ -412,8 +413,30 @@ impl Database {
         Ok(())
     }
 
+    /// Column list shared by `fetch` and `list_aliases`. A read-only handle may
+    /// open a database that predates the restriction column (import preview
+    /// never migrates), so fall back to a literal JSON `null` in that case.
+    fn alias_columns(&self) -> Result<String, AliasError> {
+        let has_restriction = self
+            .conn
+            .prepare("PRAGMA table_info(aliases)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .iter()
+            .any(|name| name == "restriction_json");
+        let restriction = if has_restriction {
+            "restriction_json"
+        } else {
+            "'null'"
+        };
+        Ok(format!("id,name,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision,{restriction}"))
+    }
+
     fn fetch(&self, field: &str, value: &str) -> Result<Option<AliasRecord>, AliasError> {
-        let sql = format!("SELECT id,name,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision FROM aliases WHERE {field} = ?1");
+        let sql = format!(
+            "SELECT {} FROM aliases WHERE {field} = ?1",
+            self.alias_columns()?
+        );
         self.conn
             .query_row(&sql, params![value], row_to_alias)
             .optional()?
@@ -422,7 +445,11 @@ impl Database {
     }
 
     pub fn list_aliases(&self) -> Result<Vec<AliasRecord>, AliasError> {
-        let mut statement = self.conn.prepare("SELECT id,name,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision FROM aliases ORDER BY name COLLATE BINARY")?;
+        let sql = format!(
+            "SELECT {} FROM aliases ORDER BY name COLLATE BINARY",
+            self.alias_columns()?
+        );
+        let mut statement = self.conn.prepare(&sql)?;
         let rows = statement.query_map([], row_to_alias)?;
         rows.map(|row| row.map_err(AliasError::from).and_then(verify_checksum))
             .collect()
@@ -469,7 +496,7 @@ impl Database {
         record.updated_at = Utc::now();
         let checksum = record_checksum(&record)?;
         let changed = self.conn.execute(
-            "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19 WHERE id=?1",
+            "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19,restriction_json=?20 WHERE id=?1",
             params![
                 record.id.to_string(),
                 record.name,
@@ -490,6 +517,7 @@ impl Database {
                 record.updated_at.to_rfc3339(),
                 checksum,
                 record.revision,
+                serde_json::to_string(&record.restriction)?,
             ],
         )
         .map_err(map_constraint)?;
@@ -620,6 +648,8 @@ fn row_to_alias(row: &rusqlite::Row<'_>) -> rusqlite::Result<AliasRecord> {
         updated_at: parse_time(16)?,
         record_checksum: parse(17)?,
         revision: row.get(18)?,
+        restriction: serde_json::from_str::<Option<PathRestriction>>(&parse_json(19)?)
+            .map_err(json_error(19))?,
     })
 }
 
@@ -666,6 +696,85 @@ mod tests {
             executable: "tool".into(),
             ..Default::default()
         })
+    }
+
+    #[test]
+    fn restriction_round_trips_and_sql_null_maps_to_none() {
+        let database = Database::open_in_memory().unwrap();
+        let mut alias = database_alias("restricted");
+        alias.restriction = Some(PathRestriction {
+            mode: crate::model::RestrictionMode::Blacklist,
+            paths: vec!["/tmp/cache".into()],
+        });
+        let alias = checked(alias);
+        database.insert_alias(&alias).unwrap();
+        let stored = database.get_alias(alias.id).unwrap().unwrap();
+        assert_eq!(stored.restriction, alias.restriction);
+        assert_eq!(record_checksum(&stored).unwrap(), stored.record_checksum);
+
+        let plain = database_alias("plain");
+        database.insert_alias(&plain).unwrap();
+        assert_eq!(
+            database.get_alias(plain.id).unwrap().unwrap().restriction,
+            None
+        );
+        let raw: String = database
+            .conn
+            .query_row(
+                "SELECT restriction_json FROM aliases WHERE id = ?1",
+                params![plain.id.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(raw, "null");
+    }
+
+    #[test]
+    fn read_only_handle_reads_a_pre_restriction_database() {
+        let root = temp_root("legacy-readonly");
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("aliases.db");
+        let alias = database_alias("legacy");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(crate::migrations::INITIAL)
+                .unwrap();
+            connection.execute_batch("PRAGMA user_version = 1").unwrap();
+            connection
+                .execute(
+                    "INSERT INTO aliases (id,name,name_folded,description,target_type,executable,fixed_args_json,pass_args,working_directory,environment_json,shells_json,enabled,advanced_shell_mode,tags_json,path_mode,path_origin,created_at,updated_at,record_checksum,revision) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
+                    params![
+                        alias.id.to_string(),
+                        alias.name,
+                        alias.name.to_lowercase(),
+                        alias.description,
+                        serde_json::to_string(&alias.target_type).unwrap(),
+                        alias.executable,
+                        serde_json::to_string(&alias.fixed_args).unwrap(),
+                        alias.pass_args,
+                        alias.working_directory,
+                        serde_json::to_string(&alias.environment).unwrap(),
+                        serde_json::to_string(&alias.shells).unwrap(),
+                        alias.enabled,
+                        alias.advanced_shell_mode,
+                        serde_json::to_string(&alias.tags).unwrap(),
+                        serde_json::to_string(&alias.path_mode).unwrap(),
+                        serde_json::to_string(&alias.path_origin).unwrap(),
+                        alias.created_at.to_rfc3339(),
+                        alias.updated_at.to_rfc3339(),
+                        alias.record_checksum,
+                        alias.revision,
+                    ],
+                )
+                .unwrap();
+        }
+        let database = Database::open_read_only(&path).unwrap();
+        let listed = database.list_aliases().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "legacy");
+        assert_eq!(listed[0].restriction, None);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

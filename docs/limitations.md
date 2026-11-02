@@ -13,6 +13,8 @@
 - Syntax checking is best effort. Generated Bash/Zsh files are checked with `bash -n` / `zsh -n` and PowerShell files with the host parser only when that interpreter is present and usable (a health probe must succeed). If the interpreter is missing or unusable (for example a WSL launcher stub on Windows), the check is a documented no-op and the file is accepted unvalidated. Passing a syntax check does not prove that an alias becomes effective in a live Shell.
 - PowerShell parser diagnostics are locale-dependent. The syntax probe forces UTF-8 console output to avoid mojibake, but the message language follows the host UI culture and may appear in en-US or another locale. Tests assert readable text, not a specific localized wording.
 - `--no-color` and `--verbose` are accepted but currently reserved no-ops. `get` always prints a Rust debug representation and ignores `--format`.
+- 限行只检查调用时的当前工作目录，是防护栏而非沙箱。命令本身仍可切换目录或访问任意绝对路径；直接按路径调用生成脚本、修改生成文件或绕过 Shell 函数都可绕过。检查与执行之间当前目录仍可能变化（例如命令内部或并发 Shell 操作）。失效的配置目录会被跳过：只含失效目录的白名单会拒绝所有执行。
+- 限行目录必须是当前平台认定的绝对路径（`Path::is_absolute`）；在 Windows 上导入 Linux 风格的 `/srv/...` 路径会被拒绝，反之亦然。
 - `update` can set or replace `--cwd`, environment keys, and collections, but it cannot clear a working directory or remove an individual environment key.
 - `import` preview opens a read-only SQLite handle against an existing database. That handle may leave `-wal` / `-shm` side files next to `aliases.db` even though no alias is persisted.
 - Import preview cannot model every insert-time conflict. For example, `ConflictStrategy::Overwrite` case-fold persistence in PowerShell can behave differently when records are actually written, so preview counts are not a guarantee of the `--yes` outcome.

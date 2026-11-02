@@ -13,6 +13,7 @@ pub struct AliasRow {
     pub shells: Vec<String>,
     pub enabled: bool,
     pub tags: Vec<String>,
+    pub restriction: Option<aliasmgr_core::model::PathRestriction>,
     pub revision: i64,
 }
 
@@ -43,6 +44,7 @@ pub fn row(alias: &aliasmgr_core::model::AliasRecord) -> AliasRow {
             .collect(),
         enabled: alias.enabled,
         tags: alias.tags.clone(),
+        restriction: alias.restriction.clone(),
         revision: alias.revision,
     }
 }
@@ -64,10 +66,33 @@ pub fn alias_rows(
     }
 }
 
+/// Table cells must stay on one line: control characters (tabs, newlines,
+/// escape sequences) become spaces so a crafted description or tag cannot
+/// break the column layout or inject terminal control sequences.
+fn sanitize_cell(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
 pub fn table(rows: &[AliasRow]) -> String {
-    let mut output = String::from("NAME\tTARGET\tENABLED\n");
+    let mut output = String::from("NAME\tTARGET\tDESCRIPTION\tTAGS\tENABLED\n");
     for row in rows {
-        output.push_str(&format!("{}\t{}\t{}\n", row.name, row.target, row.enabled));
+        output.push_str(&format!(
+            "{}\t{}\t{}\t{}\t{}\n",
+            sanitize_cell(&row.name),
+            sanitize_cell(&row.target),
+            sanitize_cell(&row.description),
+            sanitize_cell(&row.tags.join(", ")),
+            row.enabled
+        ));
     }
     output
 }
@@ -94,9 +119,36 @@ mod tests {
             shells: vec!["bash".into()],
             enabled: true,
             tags: vec![],
+            restriction: None,
             revision: 1,
         }];
-        assert_eq!(table(&rows), "NAME\tTARGET\tENABLED\ngs\tgit\ttrue\n");
+        assert_eq!(
+            table(&rows),
+            "NAME\tTARGET\tDESCRIPTION\tTAGS\tENABLED\ngs\tgit\t\t\ttrue\n"
+        );
         assert!(json(&rows).unwrap().contains("\"name\""));
+    }
+
+    #[test]
+    fn table_columns_show_description_and_tags_and_strip_control_characters() {
+        let rows = vec![AliasRow {
+            name: "gs".into(),
+            description: "line one\nline\ttwo".into(),
+            target: "git".into(),
+            target_type: "native_executable".into(),
+            fixed_args: vec![],
+            pass_args: true,
+            working_directory: None,
+            environment: Default::default(),
+            shells: vec!["bash".into()],
+            enabled: true,
+            tags: vec!["work".into(), "a\tb".into()],
+            restriction: None,
+            revision: 1,
+        }];
+        assert_eq!(
+            table(&rows),
+            "NAME\tTARGET\tDESCRIPTION\tTAGS\tENABLED\ngs\tgit\tline one line two\twork, a b\ttrue\n"
+        );
     }
 }

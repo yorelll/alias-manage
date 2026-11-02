@@ -7,10 +7,12 @@ SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文
 ## 功能
 
 - 别名增删改查、启用/禁用、重命名、精确/模糊搜索、标签过滤与排序
+- 别名描述/备注与标签；`list`/`find` 按标签过滤，GUI 提供标签分面
+- 限行（执行目录限制）：白名单/黑名单，为每个别名生成目录守卫；见 [docs/restrictions.md](docs/restrictions.md)
 - Bash、Zsh、PowerShell 5.1、PowerShell 7 适配器；简单别名使用原生 `alias`/`Set-Alias`，其余生成函数包装器
 - 结构化 argv 透传、工作目录、环境变量、`{{args}}` 占位符
 - 同步锁、备份与轮转、operation journal、崩溃恢复、生成文件 checksum 与语法检查
-- 导入/导出（JSON/TOML），敏感环境变量过滤，预览与确认分离
+- 统一跨 Shell 导入/导出：同一份 JSON/TOML 文件（带 `format_version` 信封）可在 Bash、Zsh、PowerShell 5.1 和 PowerShell 7 之间迁移；敏感环境变量过滤，预览与确认分离
 - 保留/清除式卸载；从不删除用户引用的目标文件
 - Tauri 2 GUI（预发布）
 
@@ -87,6 +89,7 @@ Windows 需要 WebView2 Runtime；Linux 需要 WebKitGTK 4.1 等原生依赖。G
 - [docs/exit-codes.md](docs/exit-codes.md)：退出码
 - [docs/limitations.md](docs/limitations.md)：已知限制
 - [docs/security.md](docs/security.md)：安全边界
+- [docs/restrictions.md](docs/restrictions.md)：限行（执行目录限制）语义与限制
 - [docs/uninstall.md](docs/uninstall.md)：卸载语义
 - [docs/architecture.md](docs/architecture.md)：架构说明
 

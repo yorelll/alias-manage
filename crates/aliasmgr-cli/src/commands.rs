@@ -1,10 +1,10 @@
-use crate::cli::{AddArgs, Command, UpdateArgs};
+use crate::cli::{AddArgs, Command, RestrictionModeArg, UpdateArgs};
 use crate::messages::NON_INTERACTIVE;
 use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
 use aliasmgr_core::{
     config::AppPaths,
     error::AliasError,
-    model::{record_checksum, AliasRecord, ShellKind, ShellStatus},
+    model::{record_checksum, AliasRecord, PathRestriction, ShellKind, ShellStatus},
     storage::Database,
     validation::validate_alias,
 };
@@ -73,15 +73,103 @@ fn parse_environment(values: &[String]) -> Result<BTreeMap<String, String>, Alia
     Ok(environment)
 }
 
+fn trimmed_restriction_paths(paths: &[String]) -> Vec<String> {
+    paths.iter().map(|path| path.trim().to_string()).collect()
+}
+
+fn new_alias_restriction(
+    mode: Option<RestrictionModeArg>,
+    paths: &[String],
+    clear: bool,
+) -> Result<Option<PathRestriction>, AliasError> {
+    if clear {
+        return Ok(None);
+    }
+    let paths = trimmed_restriction_paths(paths);
+    match mode {
+        Some(mode) => {
+            if paths.is_empty() {
+                return Err(AliasError::Config(
+                    "--restrict requires at least one --restrict-path".into(),
+                ));
+            }
+            Ok(Some(PathRestriction {
+                mode: mode.into(),
+                paths,
+            }))
+        }
+        None => {
+            if !paths.is_empty() {
+                return Err(AliasError::Config(
+                    "--restrict-path requires --restrict".into(),
+                ));
+            }
+            Ok(None)
+        }
+    }
+}
+
+fn apply_update_restriction(
+    alias: &mut AliasRecord,
+    mode: Option<RestrictionModeArg>,
+    raw_paths: &[String],
+    clear: bool,
+) -> Result<(), AliasError> {
+    if clear {
+        alias.restriction = None;
+        return Ok(());
+    }
+    let paths = trimmed_restriction_paths(raw_paths);
+    match (mode, paths.is_empty()) {
+        (Some(mode), false) => {
+            alias.restriction = Some(PathRestriction {
+                mode: mode.into(),
+                paths,
+            });
+        }
+        (Some(mode), true) => {
+            match alias.restriction.as_ref() {
+                Some(existing) => {
+                    alias.restriction = Some(PathRestriction {
+                        mode: mode.into(),
+                        paths: existing.paths.clone(),
+                    });
+                }
+                None => return Err(AliasError::Config(
+                    "--restrict requires at least one --restrict-path when no restriction exists"
+                        .into(),
+                )),
+            }
+        }
+        (None, false) => match alias.restriction.as_mut() {
+            Some(existing) => existing.paths = paths,
+            None => {
+                return Err(AliasError::Config(
+                    "--restrict-path requires an existing restriction; pass --restrict as well"
+                        .into(),
+                ))
+            }
+        },
+        (None, true) => {}
+    }
+    Ok(())
+}
+
 pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, AliasError> {
     let mut alias = AliasRecord {
         name: args.name.clone(),
+        description: args.description.clone().unwrap_or_default(),
         executable: args.exec.clone(),
         fixed_args: args.args.clone(),
         pass_args: !args.no_pass_args,
         working_directory: args.cwd.clone(),
         environment: parse_environment(&args.environment)?,
         tags: args.tags.clone(),
+        restriction: new_alias_restriction(
+            args.restrict,
+            &args.restrict_paths,
+            args.clear_restriction,
+        )?,
         ..Default::default()
     };
     if let Some(target_type) = args.target_type {
@@ -219,6 +307,15 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
     if let Some(tags) = &args.tags {
         alias.tags = tags.clone();
     }
+    if let Some(description) = &args.description {
+        alias.description = description.clone();
+    }
+    apply_update_restriction(
+        &mut alias,
+        args.restrict,
+        &args.restrict_paths,
+        args.clear_restriction,
+    )?;
     if let Some(target_type) = args.target_type {
         alias.target_type = target_type.into();
     }
