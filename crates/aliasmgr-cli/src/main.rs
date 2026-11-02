@@ -11,6 +11,10 @@ fn main() {
     if let Err(error) = commands::ensure_interactive(&cli.command, atty::is(atty::Stream::Stdin)) {
         std::process::exit(exit_code::exit_code(&error));
     }
+    if let cli::Command::Tui = &cli.command {
+        run_tui(cli.config_dir.as_deref());
+        return;
+    }
     let result: Result<String, aliasmgr_core::error::AliasError> = match &cli.command {
         cli::Command::Add(args) => commands::add(cli.config_dir.as_deref(), args)
             .map(|_| messages::ALIAS_ADDED.to_string()),
@@ -102,6 +106,7 @@ fn main() {
             commands::uninstall(cli.config_dir.as_deref(), *purge_aliases)
                 .map(|_| "uninstall completed".into())
         }
+        cli::Command::Tui => unreachable!("TUI is dispatched before the output-based match"),
     };
     match result {
         Ok(output) => {
@@ -114,4 +119,25 @@ fn main() {
             std::process::exit(exit_code::exit_code(&error));
         }
     }
+}
+
+#[cfg(feature = "tui")]
+fn run_tui(config_dir: Option<&str>) {
+    let result = aliasmgr_tui::run(config_dir.map(std::path::PathBuf::from));
+    match result {
+        Ok(()) => {}
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(exit_code::exit_code(&error));
+        }
+    }
+}
+
+#[cfg(not(feature = "tui"))]
+fn run_tui(_config_dir: Option<&str>) {
+    let error = aliasmgr_core::error::AliasError::Config(
+        "TUI support is not compiled in; rebuild aliasmgr with the default `tui` feature".into(),
+    );
+    eprintln!("{error}");
+    std::process::exit(exit_code::exit_code(&error));
 }

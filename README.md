@@ -2,7 +2,7 @@
 
 跨平台命令别名管理器，目标平台为 Linux 与 Windows，支持 Bash、Zsh、PowerShell 5.1 和 PowerShell 7。
 
-SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文件。CLI、TUI（后续）与 GUI 通过同一配置根读写同一个 `<config-root>/aliases.db`，不维护多份数据库。普通路径使用结构化参数数组，不执行整行字符串求值；用户 RC/Profile 只写入一个带标记的 loader 块。
+SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文件。CLI、TUI 与 GUI 通过同一配置根读写同一个 `<config-root>/aliases.db`，不维护多份数据库。普通路径使用结构化参数数组，不执行整行字符串求值；用户 RC/Profile 只写入一个带标记的 loader 块。
 
 ## 功能
 
@@ -14,6 +14,7 @@ SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文
 - 同步锁、备份与轮转、operation journal、崩溃恢复、生成文件 checksum 与语法检查
 - 统一跨 Shell 导入/导出：同一份 JSON/TOML 文件（带 `format_version` 信封）可在 Bash、Zsh、PowerShell 5.1 和 PowerShell 7 之间迁移；敏感环境变量过滤，预览与确认分离
 - 保留/清除式卸载；从不删除用户引用的目标文件
+- 统一终端 UI（`aliasmgr tui`）：列表/搜索/标签过滤/排序、创建/编辑/重命名/启用/禁用/删除、结构化参数编辑、生成预览、后台同步、Doctor；Bash/Zsh/PowerShell 5.1/PowerShell 7 共用一个 TUI
 - Tauri 2 GUI（预发布）
 
 ## 构建要求
@@ -35,6 +36,14 @@ cargo build --release -p aliasmgr-cli
 
 产物：Linux 为 `target/release/aliasmgr`，Windows 为 `target/release/aliasmgr.exe`。
 
+默认构建包含 `tui` feature（ratatui + crossterm）。只构建非交互 CLI：
+
+```bash
+cargo build --release -p aliasmgr-cli --no-default-features
+```
+
+该模式下不链接任何 TUI 依赖，`aliasmgr tui` 会明确提示未编译 TUI 支持并以退出码 1 结束。现有非交互命令、参数、输出与退出码不因 TUI 改变。
+
 ## 快速开始
 
 ```bash
@@ -43,6 +52,7 @@ aliasmgr list
 aliasmgr sync
 aliasmgr reload --print --shell bash
 aliasmgr doctor
+aliasmgr tui
 ```
 
 配置根优先级：
@@ -62,6 +72,20 @@ aliasmgr doctor
 
 目标类型（`--target-type`）只是分类/校验元数据，不会自动添加解释器。要运行 `python test.py`，请设置 `--exec python --arg test.py`，不要写成 `--exec "python test.py"`。各类型的运行时行为见 [docs/cli-commands.md](docs/cli-commands.md#target-type-semantics)。
 
+## 终端 UI（TUI）
+
+```bash
+aliasmgr tui
+aliasmgr --config-dir /tmp/aliasmgr-demo tui
+```
+
+需要交互式终端（stdin/stdout 均为 TTY）；管道、CI 或重定向输出中会立即报错退出（退出码 1），不会挂起或输出转义序列。最小可用尺寸 80x20；≥120 列时列表与详情双栏，窄屏用 `Enter`/`Tab` 打开详情、`Esc` 返回；更小尺寸显示明确的“终端太小”提示。
+
+常用键：`↑/↓` 或 `j/k` 移动，`Enter` 详情，`/` 搜索，`n` 新建，`e` 编辑，`r` 重命名，`Space` 启用/禁用，`d` 删除，`s` 后台同步，`p` 生成预览，`D` Doctor，`t` 标签过滤，`o`/`O` 排序，`?` 帮助，`q`/`Ctrl+C` 退出。编辑时 `Tab` 切换字段、`Ctrl+S` 保存、`Esc` 取消；固定参数逐行编辑（空格、引号、空字符串、CJK 与 `{{args}}` 原样保留，不做拆分或求值）。
+
+TUI 复用同一 SQLite、校验、同步、Doctor、loader 与 Shell 适配器；保存只写数据库并提示需要同步，同步后仍需用户手动执行显示的 reload 命令。详情区区分四层状态：DB 已写入 / 生成文件已更新 / loader 已安装 / 当前终端是否已加载（未知）。环境变量值默认显示为 `***`，生成预览在渲染前即脱敏。
+
+完整快捷键、目标类型语义与限制见 [docs/tui.md](docs/tui.md)。
 ## 构建 GUI（预发布）
 
 ```bash
@@ -76,7 +100,7 @@ Windows 需要 WebView2 Runtime；Linux 需要 WebKitGTK 4.1 等原生依赖。G
 
 ## 命令
 
-`add`、`remove`、`update`、`rename`、`get`、`find`、`list`、`enable`、`disable`、`sync`、`reload`、`doctor`、`shell detect`、`shell install`、`shell uninstall`、`import`、`export`、`uninstall`。
+`add`、`remove`、`update`、`rename`、`get`、`find`、`list`、`enable`、`disable`、`sync`、`reload`、`doctor`、`tui`、`shell detect`、`shell install`、`shell uninstall`、`import`、`export`、`uninstall`。
 
 完整参数与退出码见 [docs/cli-commands.md](docs/cli-commands.md) 和 [docs/exit-codes.md](docs/exit-codes.md)。
 
@@ -99,6 +123,7 @@ Windows 需要 WebView2 Runtime；Linux 需要 WebKitGTK 4.1 等原生依赖。G
 - [docs/restrictions.md](docs/restrictions.md)：限行（执行目录限制）语义与限制
 - [docs/uninstall.md](docs/uninstall.md)：卸载语义
 - [docs/architecture.md](docs/architecture.md)：架构说明
+- [docs/tui.md](docs/tui.md)：TUI 使用说明、快捷键、目标类型语义与限制
 
 ## 许可
 

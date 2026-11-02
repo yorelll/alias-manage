@@ -1,0 +1,13 @@
+[package]
+name = "aliasmgr-tui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Interactive terminal front end for Alias Manager"
+
+[dependencies]
+aliasmgr-core = { path = "../aliasmgr-core" }
+crossterm = "0.29"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+unicode-width = "0.2"
+uuid.workspace = true

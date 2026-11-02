@@ -22,7 +22,7 @@
 
 Current `AliasError` mappings in `crates/aliasmgr-cli/src/exit_code.rs`:
 
-- Code 1: `Config` errors, including an unsupported `--shell` or an invalid `KEY=VALUE` environment entry.
+- Code 1: `Config` errors, including an unsupported `--shell`, an invalid `KEY=VALUE` environment entry, a non-interactive `aliasmgr tui` invocation, and a TUI request in a `--no-default-features` build.
 - Code 3: `AliasConflict`, `ExactNameConflict`, `CaseFoldConflict`, and `NameReserved`.
 - Code 4: `NotFound`, emitted by alias lookup commands when the name does not exist.
 - Code 5: `InvalidAliasName`, `InvalidAliasRecord` (empty executable, empty Shell list, or invalid restriction paths such as a relative/foreign-platform path, blank path, NUL, or leading/trailing whitespace), `InvalidArgTemplate`, and `AdvancedModeUnsupported`.
@@ -37,4 +37,4 @@ Current `AliasError` mappings in `crates/aliasmgr-cli/src/exit_code.rs`:
 
 Code 2 is produced by clap before `AliasError` handling. Code 11 has no `AliasError` variant and remains reserved. Meanings are stable after publication.
 
-The exit-code table describes the CLI contract, not GUI or installer behavior.
+The exit-code table describes the CLI contract, not GUI or installer behavior. `aliasmgr tui` maps startup and runtime errors through the same `AliasError` table; its successful exit is code 0. The TUI never changes the exit code of another command.

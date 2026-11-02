@@ -1,6 +1,6 @@
 # CLI Commands
 
-This document describes the current pre-GUI CLI surface. It is a command contract verified against `crates/aliasmgr-cli` and the core library on 2026-11-01, not a claim that every environment-dependent Shell behavior is accepted on every machine. CI and tests always use an isolated temporary configuration directory.
+This document describes the current CLI surface (the TUI is launched from `aliasmgr tui`). It is a command contract verified against `crates/aliasmgr-cli` and the core library on 2026-11-01, not a claim that every environment-dependent Shell behavior is accepted on every machine. CI and tests always use an isolated temporary configuration directory.
 
 ## Global options
 
@@ -24,6 +24,20 @@ Every command that touches configuration resolves one root through `AppPaths::di
    - Linux: `$XDG_CONFIG_HOME/alias-manager`, then `$HOME/.config/alias-manager`, then `.alias-manager` in the current directory.
 
 The database, generated files, backups, journal, loader paths, `sync`, `reload --print`, and `uninstall` all use this same root. There is no separate current-directory database fallback.
+
+## TUI
+
+- `tui`: launch the interactive terminal UI (see [docs/tui.md](tui.md)).
+  - Requires an interactive stdin and stdout. In a pipe or CI session it exits
+    with a `Config` error (exit 1) and does not enter raw mode.
+  - The `tui` feature is on by default. A `--no-default-features` build rejects
+    the command with a clear "TUI support is not compiled in" message (exit 1).
+  - The TUI reads/writes the same `<config-root>/aliases.db`, runs the same
+    sync/doctor/loader core helpers and never reloads the current shell. It
+    does not change the output, arguments or exit codes of any other command.
+  - `NO_COLOR` (presence), `TERM=dumb` and `ALIASMGR_TUI_ASCII=1` control
+    colour and ASCII fallback inside the TUI; the CLI's reserved `--no-color`
+    flag is unchanged.
 
 ## Alias lifecycle
 

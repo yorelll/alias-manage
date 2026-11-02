@@ -14,7 +14,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
     about = "Cross-platform command alias manager",
     long_about = "Alias Manager stores command aliases in one SQLite database and renders them into \
 self-contained definition files for Bash, Zsh, PowerShell 5.1, and PowerShell 7.\n\n\
-The CLI, GUI, and (planned) TUI share the same config root and database. Generated files are \
+The CLI, GUI, and TUI share the same config root and database. Generated files are \
 derived data: `sync` rebuilds them, and a marked loader block in each shell profile sources the \
 file when a new shell starts. An already-open shell must reload the file explicitly.",
     after_help = "EXAMPLES:\n  \
@@ -289,6 +289,18 @@ aliasmgr find gs --fuzzy --format json"
         )]
         tags: Vec<String>,
     },
+    #[command(
+        about = "Launch the interactive terminal UI",
+        long_about = "Launch the unified interactive terminal UI for browsing, creating, editing, renaming, \
+enabling/disabling and deleting aliases, previewing generated shell content, syncing, and running Doctor.\n\n\
+The TUI uses the same SQLite database, validation, sync, doctor and loader code as the non-interactive \
+commands. It never reloads the current shell automatically. It requires an interactive terminal; in a \
+pipeline or non-TTY session it exits with a clear error.\n\n\
+When aliasmgr is built without the default `tui` feature, this command reports that TUI support is not \
+compiled in and exits non-zero.",
+        after_help = "EXAMPLES:\n  aliasmgr tui\n  aliasmgr --config-dir /tmp/aliasmgr-demo tui"
+    )]
+    Tui,
     #[command(
         about = "List stored aliases",
         long_about = "List stored aliases, optionally sorted, limited, or filtered by tag. Table \

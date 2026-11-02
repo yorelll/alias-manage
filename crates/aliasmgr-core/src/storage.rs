@@ -1,7 +1,7 @@
 use crate::{
     error::AliasError,
     migrations,
-    model::{record_checksum, AliasRecord, PathRestriction},
+    model::{record_checksum, AliasRecord, PathRestriction, ShellKind},
 };
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -456,6 +456,25 @@ impl Database {
     }
 
     pub fn update_alias(&self, alias: &AliasRecord) -> Result<bool, AliasError> {
+        self.update_alias_inner(alias, None)
+    }
+
+    /// Optimistic-concurrency update: writes only while the stored revision is
+    /// still `expected_revision`. The revision guard is part of the UPDATE, so
+    /// a concurrent CLI/GUI write cannot be silently overwritten.
+    pub fn update_alias_checked(
+        &self,
+        alias: &AliasRecord,
+        expected_revision: i64,
+    ) -> Result<bool, AliasError> {
+        self.update_alias_inner(alias, Some(expected_revision))
+    }
+
+    fn update_alias_inner(
+        &self,
+        alias: &AliasRecord,
+        expected_revision: Option<i64>,
+    ) -> Result<bool, AliasError> {
         let stored = self
             .conn
             .query_row(
@@ -467,6 +486,14 @@ impl Database {
         let Some((stored_created_at, stored_revision)) = stored else {
             return Ok(false);
         };
+        if let Some(expected) = expected_revision {
+            if stored_revision != expected {
+                return Err(AliasError::AliasConflict(format!(
+                    "alias {} changed since revision {} (found {})",
+                    alias.name, expected, stored_revision
+                )));
+            }
+        }
         if self
             .conn
             .query_row(
@@ -495,33 +522,82 @@ impl Database {
         record.revision = stored_revision.saturating_add(1);
         record.updated_at = Utc::now();
         let checksum = record_checksum(&record)?;
-        let changed = self.conn.execute(
-            "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19,restriction_json=?20 WHERE id=?1",
-            params![
-                record.id.to_string(),
-                record.name,
-                record.name.to_lowercase(),
-                record.description,
-                serde_json::to_string(&record.target_type)?,
-                record.executable,
-                serde_json::to_string(&record.fixed_args)?,
-                record.pass_args,
-                record.working_directory,
-                serde_json::to_string(&record.environment)?,
-                serde_json::to_string(&record.shells)?,
-                record.enabled,
-                record.advanced_shell_mode,
-                serde_json::to_string(&record.tags)?,
-                serde_json::to_string(&record.path_mode)?,
-                serde_json::to_string(&record.path_origin)?,
-                record.updated_at.to_rfc3339(),
-                checksum,
-                record.revision,
-                serde_json::to_string(&record.restriction)?,
-            ],
-        )
-        .map_err(map_constraint)?;
+        let update_columns = "UPDATE aliases SET name=?2,name_folded=?3,description=?4,target_type=?5,executable=?6,fixed_args_json=?7,pass_args=?8,working_directory=?9,environment_json=?10,shells_json=?11,enabled=?12,advanced_shell_mode=?13,tags_json=?14,path_mode=?15,path_origin=?16,updated_at=?17,record_checksum=?18,revision=?19,restriction_json=?20 WHERE id=?1";
+        let optional_text = |value: Option<String>| {
+            value
+                .map(rusqlite::types::Value::Text)
+                .unwrap_or(rusqlite::types::Value::Null)
+        };
+        let values = vec![
+            rusqlite::types::Value::Text(record.id.to_string()),
+            rusqlite::types::Value::Text(record.name.clone()),
+            rusqlite::types::Value::Text(record.name.to_lowercase()),
+            rusqlite::types::Value::Text(record.description.clone()),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.target_type)?),
+            rusqlite::types::Value::Text(record.executable.clone()),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.fixed_args)?),
+            rusqlite::types::Value::Integer(record.pass_args as i64),
+            optional_text(record.working_directory.clone()),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.environment)?),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.shells)?),
+            rusqlite::types::Value::Integer(record.enabled as i64),
+            rusqlite::types::Value::Integer(record.advanced_shell_mode as i64),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.tags)?),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.path_mode)?),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.path_origin)?),
+            rusqlite::types::Value::Text(record.updated_at.to_rfc3339()),
+            rusqlite::types::Value::Text(checksum),
+            rusqlite::types::Value::Integer(record.revision),
+            rusqlite::types::Value::Text(serde_json::to_string(&record.restriction)?),
+        ];
+        let changed = match expected_revision {
+            Some(expected) => {
+                let guarded = values
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once(rusqlite::types::Value::Integer(expected)));
+                self.conn
+                    .execute(
+                        &format!("{update_columns} AND revision=?21"),
+                        rusqlite::params_from_iter(guarded),
+                    )
+                    .map_err(map_constraint)?
+            }
+            None => self
+                .conn
+                .execute(update_columns, rusqlite::params_from_iter(values))
+                .map_err(map_constraint)?,
+        };
+        if expected_revision.is_some() && changed == 0 {
+            return Err(AliasError::AliasConflict(format!(
+                "alias {} changed during save",
+                alias.name
+            )));
+        }
         Ok(changed == 1)
+    }
+
+    /// Revision-checked update that also writes the supplied tombstones in the
+    /// same transaction. A conflict or validation failure rolls both back, so a
+    /// refused rename cannot leave a stale retired name behind.
+    pub fn update_alias_checked_with_tombstones(
+        &self,
+        alias: &AliasRecord,
+        expected_revision: i64,
+        tombstones: &[(String, ShellKind, i64)],
+    ) -> Result<bool, AliasError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let changed = self.update_alias_inner(alias, Some(expected_revision))?;
+        if changed {
+            for (name, shell, revision) in tombstones {
+                tx.execute(
+                    "INSERT INTO retired_names(name, shell, definition_kind, retired_at_revision, retired_at) VALUES (?1,?2,'function',?3,datetime('now'))",
+                    params![name, serde_json::to_string(shell)?, revision],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(changed)
     }
 
     pub fn delete_alias(&self, id: Uuid) -> Result<bool, AliasError> {
@@ -529,6 +605,54 @@ impl Database {
             .conn
             .execute("DELETE FROM aliases WHERE id=?1", params![id.to_string()])?
             == 1)
+    }
+
+    /// Deletes a record and records a tombstone for every shell it targeted in
+    /// one transaction. `expected_revision` makes deletion conflict-safe: the
+    /// record is left untouched when the stored revision has moved on.
+    pub fn delete_alias_with_tombstones(
+        &self,
+        id: Uuid,
+        expected_revision: Option<i64>,
+    ) -> Result<bool, AliasError> {
+        let tx = self.conn.unchecked_transaction()?;
+        let stored = tx
+            .query_row(
+                "SELECT name, revision, shells_json FROM aliases WHERE id = ?1",
+                params![id.to_string()],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((name, revision, shells_json)) = stored else {
+            return Ok(false);
+        };
+        if let Some(expected) = expected_revision {
+            if revision != expected {
+                return Err(AliasError::AliasConflict(format!(
+                    "alias {name} changed since revision {expected} (found {revision})"
+                )));
+            }
+        }
+        let shells: Vec<ShellKind> = serde_json::from_str(&shells_json)?;
+        for shell in shells {
+            tx.execute(
+                "INSERT INTO retired_names(name, shell, definition_kind, retired_at_revision, retired_at) VALUES (?1,?2,'function',?3,datetime('now'))",
+                params![
+                    name,
+                    serde_json::to_string(&shell)?,
+                    revision.saturating_add(1)
+                ],
+            )?;
+        }
+        let deleted = tx.execute("DELETE FROM aliases WHERE id=?1", params![id.to_string()])?;
+        tx.commit()?;
+        Ok(deleted == 1)
     }
 
     pub fn transaction<T, F>(&mut self, operation: F) -> Result<T, AliasError>

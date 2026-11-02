@@ -1,12 +1,44 @@
 # Architecture
 
-Alias Manager is a Rust workspace. `aliasmgr-core` owns the domain model, validation, storage, execution and shell adapters; CLI and GUI layers call the core API.
+Alias Manager is a Rust workspace. `aliasmgr-core` owns the domain model, validation, storage, execution and shell adapters; the CLI, TUI and GUI layers call the core API.
 
 The current pre-GUI CLI boundary targets Bash, Zsh, PowerShell 5.1 and PowerShell 7. Tauri 2 Linux builds require WebKitGTK 4.1 and related GTK dependencies; GUI compilation and interaction are a separate later gate. CI uses Ubuntu 24.04 for core checks. Linux packaging targets Ubuntu 22.04 for glibc compatibility.
 
 SQLite with the bundled feature is the configuration source of truth. Shell files are rebuildable derived artifacts.
 
-CLI, the Tauri GUI, and the future TUI resolve the configuration root through the same `AppPaths::discover` and open the same `<config-root>/aliases.db`. No frontend keeps its own database or a second copy of record state; there is exactly one SQLite file per configuration root.
+CLI, the TUI (`crates/aliasmgr-tui`) and the Tauri GUI resolve the configuration root through the same `AppPaths::discover` and open the same `<config-root>/aliases.db`. No frontend keeps its own database or a second copy of record state; there is exactly one SQLite file per configuration root.
+
+## TUI layer
+
+`crates/aliasmgr-tui` is an optional dependency of `aliasmgr-cli` behind the
+default-on `tui` feature. It depends on `aliasmgr-core` only (never on the CLI
+or GUI), and adds just `ratatui`, `crossterm` and `unicode-width`. With
+`--no-default-features` the CLI builds without these crates.
+
+The TUI is a presentation and input-state layer:
+
+- Reads and writes go through `AliasService` / `Database`. Optimistic
+  concurrency uses `AliasService::{update_checked, delete_checked,
+  rename_checked, set_enabled_checked}`, which add a revision guard to the
+  database `UPDATE`/transaction. A rename or a removed shell retires the old
+  name through the same tombstone rules as the CLI.
+- Sync uses `sync::sync_config_dir_collect_io`, so per-shell results, the
+  monotonic revision, lock, backups, journal and atomic writes stay in core.
+  Sync, Doctor and loader actions run on a `std::thread` and report through an
+  `mpsc` channel; one job writes at a time and the UI never blocks.
+- Doctor uses `doctor::diagnose`; loader status/install/uninstall use
+  `integration`; previews use `SyncCoordinator::render_shell`; reload commands
+  come from `sync::reload_command`.
+- At startup an interrupted sync journal is recovered through
+  `SyncCoordinator::recover_pending_operations` under the shared sync lock;
+  the TUI does not implement its own recovery.
+- The event loop uses crossterm `poll(250ms)` and a dirty flag; there is no
+  timer-driven redraw. Raw mode and the alternate screen are owned by an RAII
+  session and a panic hook chains a best-effort restore before the previous
+  hook.
+- The TUI re-reads the database on every refresh and polls a cheap SQLite
+  fingerprint for external CLI/GUI writes. It never treats its cached snapshot
+  as the source of truth.
 
 ## Data model and storage
 

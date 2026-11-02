@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/aliasmgr-core",
+  "crates/aliasmgr-tui",
   "crates/aliasmgr-cli",
   "crates/aliasmgr-tests",
 ]
