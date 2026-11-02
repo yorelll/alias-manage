@@ -550,13 +550,15 @@ test("DoctorPanel scans overrides and copies desensitized metadata only", async 
   for (const fragment of [
     "doctor_status", "scan_overrides", "severityCounts", "orderedSeverities",
     "navigator.clipboard.writeText", "doctor.copyMetadata", "doctor.copySuggestion",
-    "manualOnlyBoundary", "doctorFindingText", "overrideMetadataText",
-    "text.message", "text.action", "finding.detail", "recoverable",
+    "manualOnlyBoundary", "doctorFindingText", "findingCodeLabel", "overrideMetadataText",
+    "text.message", "text.action", "finding.detail", "recoverable", "copyError", "title={finding.code}",
   ]) {
     assert.ok(doctor.includes(fragment), `doctor is missing ${fragment}`);
   }
   assert.equal(doctor.includes("overridden_definitions"), false);
   assert.equal(/original_definition|recovery_text|entry\.definition\b/.test(doctor), false);
+  assert.match(doctor, /setCopyError\(t\("doctor\.copyFailed"/);
+  assert.equal(/setError\(t\("doctor\.copyFailed"/.test(doctor), false, "copy errors must not be treated as load errors");
   assert.equal(/eval\(|new Function|child_process/.test(doctor), false);
 });
 
@@ -628,7 +630,7 @@ test("TagInput has a real label, id, and accessible remove controls", async () =
 test("localized transient messages are cleared when the language changes", async () => {
   const cases: Array<[string, string]> = [
     ["AliasWizard", "useEffect(() => { setError(null); setPreviewError(null); }, [language]);"],
-    ["DoctorPanel", "useEffect(() => { setCopyNotice(null); }, [language]);"],
+    ["DoctorPanel", "useEffect(() => { setCopyNotice(null); setCopyError(null); }, [language]);"],
     ["GeneratedFilePanel", "useEffect(() => { setCopied(null); setError(null); }, [language]);"],
     ["ImportPanel", "useEffect(() => { setError(null); }, [language]);"],
   ];

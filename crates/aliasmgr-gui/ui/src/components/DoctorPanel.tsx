@@ -3,6 +3,7 @@ import type { DoctorFinding, OverriddenDefinition } from "../lib";
 import {
   definitionKindLabel,
   doctorFindingText,
+  findingCodeLabel,
   manualOnlyBoundary,
   normalizeDoctorFindings,
   normalizeOverriddenDefinitions,
@@ -29,10 +30,11 @@ export function DoctorPanel() {
   const [loading, setLoading] = useState(true);
   const [overridesLoading, setOverridesLoading] = useState(false);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
   // Copy notices are built from localized copy; drop them when the language changes.
-  useEffect(() => { setCopyNotice(null); }, [language]);
+  useEffect(() => { setCopyNotice(null); setCopyError(null); }, [language]);
 
   useEffect(() => {
     let cancelled = false;
@@ -62,12 +64,13 @@ export function DoctorPanel() {
   }, [reloadToken]);
 
   const copy = useCallback(async (text: string, label: string) => {
+    setCopyError(null);
     try {
       await navigator.clipboard.writeText(text);
       setCopyNotice(t("doctor.copied", { label }));
     } catch (reason) {
       setCopyNotice(null);
-      setError(t("doctor.copyFailed", { label, error: String(reason) }));
+      setCopyError(t("doctor.copyFailed", { label, error: String(reason) }));
     }
   }, [t]);
 
@@ -121,7 +124,7 @@ export function DoctorPanel() {
                 <span className={severityClass(finding.severity)}>{severityLabel(finding.severity, language)}</span>
                 <span className="finding-scope">{finding.shell ? shellLabel(finding.shell, language) : t("doctor.global")}</span>
                 <span className="finding-title">{text.title}</span>
-                <span className="finding-code">{finding.code}</span>
+                <span className="finding-code" title={finding.code}>{findingCodeLabel(finding.code, language)}</span>
               </summary>
               <div className="finding-body">
                 <p>{text.message}</p>
@@ -180,6 +183,7 @@ export function DoctorPanel() {
         )}
       </section>
 
+      {copyError && <p className="form-error" role="alert">{copyError}</p>}
       {copyNotice && <p className="hint" role="status">{copyNotice}</p>}
     </section>
   );
