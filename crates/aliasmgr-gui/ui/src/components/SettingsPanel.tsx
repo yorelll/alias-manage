@@ -9,8 +9,12 @@ import {
   shellLabel,
   tauriInvoke,
 } from "../lib";
+import type { Language } from "../i18n";
+import { LANGUAGES, isLanguage } from "../i18n";
+import { useI18n } from "../language";
 
 export function SettingsPanel() {
+  const { language, setLanguage, t } = useI18n();
   const [loaded, setLoaded] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +28,7 @@ export function SettingsPanel() {
       const value = normalizeSettings(await tauriInvoke("config_get"));
       setLoaded(value);
       setDraft({ ...value });
+      setLanguage(value.language);
     } catch (reason) {
       setError(String(reason));
     }
@@ -37,16 +42,25 @@ export function SettingsPanel() {
     setError(null);
   };
 
+  const changeLanguage = (value: string) => {
+    if (!isLanguage(value)) return;
+    // Apply immediately to the whole UI; Cancel restores the loaded language.
+    const next: Language = value;
+    edit({ language: next });
+    setLanguage(next);
+  };
+
   const cancel = () => {
     if (!loaded) return;
     setDraft({ ...loaded });
+    setLanguage(loaded.language);
     setError(null);
     setSaved(null);
   };
 
   const save = async () => {
     if (!draft || busy) return;
-    const errors = settingsValidation(draft);
+    const errors = settingsValidation(draft, language);
     if (errors.length > 0) {
       setSaved(null);
       setError(errors.join(" "));
@@ -59,7 +73,8 @@ export function SettingsPanel() {
       const stored = normalizeSettings(await tauriInvoke("config_save", { settings: draft }));
       setLoaded({ ...stored });
       setDraft({ ...stored });
-      setSaved(`Settings saved for ${stored.config_directory}.`);
+      setLanguage(stored.language);
+      setSaved(t("settings.saved", { directory: stored.config_directory }));
     } catch (reason) {
       // Keep the draft intact so the user can correct the path and retry.
       setSaved(null);
@@ -72,20 +87,20 @@ export function SettingsPanel() {
   if (!draft) {
     return (
       <section className="panel">
-        <h1>Settings</h1>
-        <p>{error ? `Unable to load settings: ${error}` : "Loading…"}</p>
+        <h1>{t("settings.title")}</h1>
+        <p>{error ? t("settings.loadError", { error }) : t("common.loading")}</p>
       </section>
     );
   }
 
   return (
     <section className="panel" aria-labelledby="settings-title">
-      <h1 id="settings-title">Settings</h1>
-      <p className="hint">Changes are applied only when you save. Cancel restores the last loaded values.</p>
+      <h1 id="settings-title">{t("settings.title")}</h1>
+      <p className="hint">{t("settings.hint")}</p>
 
       <div className="settings-grid">
         <label className="field field-full">
-          <span>Config directory</span>
+          <span>{t("settings.configDirectory")}</span>
           <input
             value={draft.config_directory}
             readOnly
@@ -94,20 +109,30 @@ export function SettingsPanel() {
             aria-describedby="config-directory-hint"
           />
           <span id="config-directory-hint" className="hint">
-            Fixed at startup. Changing the directory here is not supported; restart the application with
-            {" "}<code>ALIASMGR_CONFIG_DIR</code> to use a different directory.
+            {t("settings.configDirHintBefore")}
+            {" "}<code>ALIASMGR_CONFIG_DIR</code> {t("settings.configDirHintAfter")}
           </span>
         </label>
 
         <label className="field">
-          <span>Default shell</span>
-          <select value={draft.default_shell} onChange={(event) => edit({ default_shell: event.target.value })}>
-            {SHELLS.map((shell) => <option key={shell} value={shell}>{shellLabel(shell)}</option>)}
+          <span>{t("settings.language")}</span>
+          <select
+            value={draft.language}
+            onChange={(event) => changeLanguage(event.target.value)}
+          >
+            {LANGUAGES.map((option) => <option key={option.value} value={option.value}>{t(option.labelKey)}</option>)}
           </select>
         </label>
 
         <label className="field">
-          <span>Backup keep</span>
+          <span>{t("settings.defaultShell")}</span>
+          <select value={draft.default_shell} onChange={(event) => edit({ default_shell: event.target.value })}>
+            {SHELLS.map((shell) => <option key={shell} value={shell}>{shellLabel(shell, language)}</option>)}
+          </select>
+        </label>
+
+        <label className="field">
+          <span>{t("settings.backupKeep")}</span>
           <input
             type="number"
             min={0}
@@ -118,7 +143,7 @@ export function SettingsPanel() {
         </label>
 
         <label className="field">
-          <span>Log keep</span>
+          <span>{t("settings.logKeep")}</span>
           <input
             type="number"
             min={0}
@@ -134,19 +159,19 @@ export function SettingsPanel() {
             checked={draft.allow_relative_paths}
             onChange={(event) => edit({ allow_relative_paths: event.target.checked })}
           />
-          <span>Allow relative paths</span>
+          <span>{t("settings.allowRelativePaths")}</span>
         </label>
       </div>
 
-      {loaded && settingsDirty(loaded, draft) && <p className="hint" role="status">Unsaved changes.</p>}
+      {loaded && settingsDirty(loaded, draft) && <p className="hint" role="status">{t("settings.unsaved")}</p>}
       {saved && <p role="status">{saved}</p>}
       {error && <p className="form-error" role="alert">{error}</p>}
 
       <div className="form-actions">
-        <button type="button" onClick={cancel} disabled={busy}>Cancel</button>
-        <button type="button" onClick={() => void load()} disabled={busy}>Reload persisted values</button>
+        <button type="button" onClick={cancel} disabled={busy}>{t("common.cancel")}</button>
+        <button type="button" onClick={() => void load()} disabled={busy}>{t("settings.reload")}</button>
         <button type="button" className="btn-primary" onClick={save} disabled={busy}>
-          {busy ? "Saving…" : "Save settings"}
+          {busy ? t("common.saving") : t("settings.save")}
         </button>
       </div>
     </section>

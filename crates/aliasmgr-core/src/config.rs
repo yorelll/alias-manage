@@ -59,6 +59,10 @@ pub struct ShellPathOverrides {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellRuntimeConfig {
     pub default_shell: Option<String>,
+    /// UI language. Persisted values are `zh` (default) or `en`; the GUI
+    /// validates the value before saving.
+    #[serde(default = "default_language")]
+    pub language: String,
     pub allow_relative_paths: bool,
     pub execution_policy: Option<String>,
     pub powershell5_bom: bool,
@@ -67,10 +71,15 @@ pub struct ShellRuntimeConfig {
     pub powershell7_line_ending: Option<String>,
 }
 
+pub fn default_language() -> String {
+    "zh".to_owned()
+}
+
 impl Default for ShellRuntimeConfig {
     fn default() -> Self {
         Self {
             default_shell: None,
+            language: default_language(),
             allow_relative_paths: false,
             execution_policy: None,
             powershell5_bom: true,
@@ -409,6 +418,55 @@ mod tests {
         assert!(!runtime.powershell7_bom);
         assert_eq!(runtime.default_shell, None);
         assert!(!runtime.allow_relative_paths);
+        assert_eq!(runtime.language, "zh");
+    }
+
+    #[test]
+    fn language_defaults_to_chinese() {
+        assert_eq!(ShellRuntimeConfig::default().language, "zh");
+        assert_eq!(default_language(), "zh");
+    }
+
+    #[test]
+    fn language_round_trips_through_toml() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-config-language-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        let paths = AppPaths { root: root.clone() };
+        let mut config = AppConfig::default();
+        config.runtime.language = "en".into();
+        config.save(&paths).unwrap();
+        assert_eq!(paths.load_config().unwrap().runtime.language, "en");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn old_config_without_language_parses_as_chinese() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-config-legacy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let serialized = toml::to_string_pretty(&AppConfig::default()).unwrap();
+        assert!(serialized.contains("language = \"zh\""));
+        let legacy = serialized
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("language ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(paths.config_file(), legacy).unwrap();
+        assert_eq!(paths.load_config().unwrap().runtime.language, "zh");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

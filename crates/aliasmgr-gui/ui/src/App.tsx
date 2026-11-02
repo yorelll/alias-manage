@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import "./styles.css";
 import { AliasTable } from "./components/AliasTable";
 import { SearchBar } from "./components/SearchBar";
@@ -9,7 +9,7 @@ import { GeneratedFilePanel } from "./components/GeneratedFilePanel";
 import { ImportPanel } from "./components/ImportPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { UninstallPanel } from "./components/UninstallPanel";
-import type { AliasDto } from "./lib";
+import type { AliasDto, Settings } from "./lib";
 import {
   type StartupStatus,
   type Page,
@@ -19,6 +19,7 @@ import {
   clearAliasFilters,
   mergeEditedAlias,
   nextDataVersion,
+  normalizeSettings,
   searchAliasesArgs,
   statusShellText,
   statusSummaryText,
@@ -26,6 +27,10 @@ import {
   toggleAliasEnabled,
   usesFilteredSearch,
 } from "./lib";
+import { DEFAULT_LANGUAGE, type Language, htmlLang } from "./i18n";
+import { I18nContext, useI18n } from "./language";
+import type { I18nContextValue } from "./language";
+import { t as translate } from "./i18n";
 
 export type { StartupStatus, Page };
 export { NAV_ITEMS, statusSummaryText };
@@ -41,8 +46,9 @@ interface StatusDrawerProps {
 }
 
 export function StatusDrawer({ status, error }: StatusDrawerProps) {
+  const { language, t } = useI18n();
   const [expanded, setExpanded] = useState(false);
-  const summaryText = statusSummaryText(status, error);
+  const summaryText = statusSummaryText(status, error, language);
 
   return (
     <div className="status-drawer" data-testid="status-drawer">
@@ -64,20 +70,20 @@ export function StatusDrawer({ status, error }: StatusDrawerProps) {
           {summaryText}
         </span>
         <button className="status-drawer-toggle" tabIndex={-1} aria-hidden="true">
-          {expanded ? "▲ collapse" : "▼ expand"}
+          {expanded ? t("status.collapse") : t("status.expand")}
         </button>
       </div>
       {expanded && (
         <div id="status-drawer-body" className="status-drawer-body" data-testid="status-drawer-body">
           {error ? (
-            <p className="status-unavailable" role="alert">Startup status unavailable. The application is still usable.</p>
+            <p className="status-unavailable" role="alert">{t("status.startupUnavailable")}</p>
           ) : status ? (
             <>
-              <span className="status-label">Version</span><span className="status-value">{status.version}</span>
-              <span className="status-label">Shell</span><span className="status-value">{statusShellText(status)}</span>
-              <span className="status-label">Config dir</span><span className="status-value">{status.config_directory}</span>
+              <span className="status-label">{t("status.version")}</span><span className="status-value">{status.version}</span>
+              <span className="status-label">{t("status.shell")}</span><span className="status-value">{statusShellText(status, language)}</span>
+              <span className="status-label">{t("status.configDir")}</span><span className="status-value">{status.config_directory}</span>
             </>
-          ) : <span className="status-value">Loading…</span>}
+          ) : <span className="status-value">{t("common.loading")}</span>}
         </div>
       )}
     </div>
@@ -87,6 +93,7 @@ export function StatusDrawer({ status, error }: StatusDrawerProps) {
 type WizardState = { mode: "create" } | { mode: "edit"; alias: AliasDto };
 
 export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?: number; onOpenImport?: () => void }) {
+  const { language, t } = useI18n();
   const [aliases, setAliases] = useState<AliasDto[]>([]);
   const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
   const [query, setQuery] = useState("");
@@ -210,12 +217,12 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
   return (
     <div data-testid="aliases-page" tabIndex={-1}>
       <div className="page-header">
-        <h1 className="page-title">Aliases</h1>
+        <h1 className="page-title">{t("aliases.title")}</h1>
         <div className="page-actions">
           {onOpenImport && (
-            <button type="button" className="btn-secondary" onClick={onOpenImport}>Import</button>
+            <button type="button" className="btn-secondary" onClick={onOpenImport}>{t("aliases.import")}</button>
           )}
-          <button type="button" className="btn-add-alias" onClick={() => { cancelDelete(); setWizard({ mode: "create" }); }}>+ Add alias</button>
+          <button type="button" className="btn-add-alias" onClick={() => { cancelDelete(); setWizard({ mode: "create" }); }}>{t("aliases.add")}</button>
         </div>
       </div>
       {error && <p role="alert">{error}</p>}
@@ -238,7 +245,7 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
             setSelectedTags(cleared.tags);
           }}
         >
-          Clear filters
+          {t("aliases.clearFilters")}
         </button>
       </div>
       {wizard && (
@@ -251,12 +258,12 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
         />
       )}
       {loading ? (
-        <p className="alias-loading" role="status">Loading aliases…</p>
+        <p className="alias-loading" role="status">{t("aliases.loading")}</p>
       ) : aliases.length === 0 ? (
         error ? null : filtered ? (
-          <ul className="alias-list"><li className="alias-list-empty"><span>No matches for current filters.</span></li></ul>
+          <ul className="alias-list"><li className="alias-list-empty"><span>{t("aliases.noMatches")}</span></li></ul>
         ) : (
-          <ul className="alias-list"><li className="alias-list-empty"><span aria-hidden="true">☰</span><span>No aliases yet. Create your first alias to get started.</span></li></ul>
+          <ul className="alias-list"><li className="alias-list-empty"><span aria-hidden="true">☰</span><span>{t("aliases.empty")}</span></li></ul>
         )
       ) : (
         <>
@@ -270,7 +277,7 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
             confirmDeleteDisabled={!deleteArmed}
           />
           {filtered && aliases.length === SEARCH_LIMIT && (
-            <p className="result-limit-notice" role="status">Showing first {SEARCH_LIMIT} results. Refine your search to see more.</p>
+            <p className="result-limit-notice" role="status">{t("aliases.resultLimit", { limit: SEARCH_LIMIT })}</p>
           )}
         </>
       )}
@@ -279,7 +286,8 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
 }
 
 export function PlaceholderPage({ name }: { name: string }) {
-  return <div className="placeholder-page">{name} – coming soon</div>;
+  const { t } = useI18n();
+  return <div className="placeholder-page">{t("placeholder.comingSoon", { name })}</div>;
 }
 
 export function App() {
@@ -287,6 +295,7 @@ export function App() {
   const [status, setStatus] = useState<StartupStatus | null>(null);
   const [statusError, setStatusError] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
+  const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE);
   const syncPageRef = useRef<HTMLDivElement | null>(null);
   const focusSyncAfterNavigation = useRef(false);
 
@@ -296,6 +305,27 @@ export function App() {
     focusSyncAfterNavigation.current = true;
     setPage("sync");
   };
+
+  const i18n = useMemo<I18nContextValue>(() => ({
+    language,
+    setLanguage,
+    t: (key, params) => translate(language, key, params),
+  }), [language]);
+
+  useEffect(() => {
+    document.documentElement.lang = htmlLang(language);
+  }, [language]);
+
+  useEffect(() => {
+    let cancelled = false;
+    // Default stays Chinese when config cannot be read.
+    tauriInvoke("config_get")
+      .then((value) => {
+        if (!cancelled) setLanguage(normalizeSettings(value as Settings).language);
+      })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   useEffect(() => {
     if (page === "sync" && focusSyncAfterNavigation.current) {
@@ -311,24 +341,26 @@ export function App() {
   }, []);
 
   return (
-    <div className="app-layout">
-      <nav className="sidebar" aria-label="Main navigation">
-        <span className="sidebar-title">Alias Manager</span>
-        <ul className="sidebar-nav">
-          {NAV_ITEMS.map(({ id, label }) => <li key={id}><button className={`sidebar-nav-item${page === id ? " active" : ""}`} onClick={() => setPage(id)} aria-current={page === id ? "page" : undefined}>{label}</button></li>)}
-        </ul>
-      </nav>
-      <div className="main-content">
-        <div className="page-area">
-          {/* Pages stay mounted so drafts survive navigation; inactive pages
-              are hidden from layout, the accessibility tree, and tab order. */}
-          <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} /></div>
-          <div hidden={page !== "sync"} ref={syncPageRef} tabIndex={-1}><ImportPanel onImported={invalidateAliasData} /><GeneratedFilePanel /></div>
-          <div hidden={page !== "doctor"}><DoctorPanel /></div>
-          <div hidden={page !== "settings"}><SettingsPanel /><UninstallPanel onUninstalled={invalidateAliasData} /></div>
+    <I18nContext.Provider value={i18n}>
+      <div className="app-layout">
+        <nav className="sidebar" aria-label={i18n.t("nav.aria")}>
+          <span className="sidebar-title">{i18n.t("app.title")}</span>
+          <ul className="sidebar-nav">
+            {NAV_ITEMS.map(({ id, labelKey }) => <li key={id}><button className={`sidebar-nav-item${page === id ? " active" : ""}`} onClick={() => setPage(id)} aria-current={page === id ? "page" : undefined}>{i18n.t(labelKey)}</button></li>)}
+          </ul>
+        </nav>
+        <div className="main-content">
+          <div className="page-area">
+            {/* Pages stay mounted so drafts survive navigation; inactive pages
+                are hidden from layout, the accessibility tree, and tab order. */}
+            <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} /></div>
+            <div hidden={page !== "sync"} ref={syncPageRef} tabIndex={-1}><ImportPanel onImported={invalidateAliasData} /><GeneratedFilePanel /></div>
+            <div hidden={page !== "doctor"}><DoctorPanel /></div>
+            <div hidden={page !== "settings"}><SettingsPanel /><UninstallPanel onUninstalled={invalidateAliasData} /></div>
+          </div>
+          <StatusDrawer status={status} error={statusError} />
         </div>
-        <StatusDrawer status={status} error={statusError} />
       </div>
-    </div>
+    </I18nContext.Provider>
   );
 }

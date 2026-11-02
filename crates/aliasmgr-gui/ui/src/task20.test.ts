@@ -16,8 +16,8 @@ test("Task 20 panel command names are represented", () => {
 });
 
 test("Task 20 keeps destructive GUI actions explicit", () => {
-  assert.match(uninstallPanel, /Confirm purge/);
-  assert.match(importPanel, /Confirm import/);
+  assert.match(uninstallPanel, /uninstall\.confirmPurge/);
+  assert.match(importPanel, /import\.confirm/);
 });
 
 test("Task 20 command surfaces are core-backed rather than empty placeholders", async () => {

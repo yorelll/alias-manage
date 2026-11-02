@@ -1,6 +1,7 @@
 import { Fragment, useState } from "react";
 import type { AliasDto } from "../lib";
-import { pathModeLabel, shellLabel, targetTypeLabel } from "../lib";
+import { pathModeLabel, pathOriginLabel, shellLabel, targetTypeLabel } from "../lib";
+import { useI18n } from "../language";
 
 interface AliasTableProps {
   aliases: AliasDto[];
@@ -17,22 +18,24 @@ function environmentEntries(alias: AliasDto): Array<[string, string]> {
 }
 
 export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete, pendingDeleteId, confirmDeleteDisabled }: AliasTableProps) {
+  const { language, t } = useI18n();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const shellsText = (alias: AliasDto) => alias.shells.map((shell) => shellLabel(shell, language)).join(", ") || "—";
 
   return (
     <div className="table-scroll">
       <table className="alias-table">
         <thead>
           <tr>
-            <th scope="col"><span className="visually-hidden">Details</span></th>
-            <th scope="col">Name</th>
-            <th scope="col">Target</th>
-            <th scope="col">Target type</th>
-            <th scope="col">Shells</th>
-            <th scope="col">Description</th>
-            <th scope="col">Tags</th>
-            <th scope="col">Status</th>
-            <th scope="col">Actions</th>
+            <th scope="col"><span className="visually-hidden">{t("table.detailsHidden")}</span></th>
+            <th scope="col">{t("table.name")}</th>
+            <th scope="col">{t("table.target")}</th>
+            <th scope="col">{t("table.targetType")}</th>
+            <th scope="col">{t("table.shells")}</th>
+            <th scope="col">{t("table.description")}</th>
+            <th scope="col">{t("table.tags")}</th>
+            <th scope="col">{t("table.status")}</th>
+            <th scope="col">{t("table.actions")}</th>
           </tr>
         </thead>
         <tbody>
@@ -50,35 +53,35 @@ export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete
                       className="btn-details"
                       aria-expanded={expanded}
                       aria-controls={detailsId}
-                      aria-label={`${expanded ? "Hide" : "Show"} details for ${alias.name}`}
+                      aria-label={t(expanded ? "table.hideDetails" : "table.showDetails", { name: alias.name })}
                       onClick={() => setExpandedId(expanded ? null : alias.id)}
                     >
-                      {expanded ? "Hide" : "Details"}
+                      {expanded ? t("table.hide") : t("table.details")}
                     </button>
                   </td>
                   <td className="cell-name">{alias.name}</td>
                   <td className="cell-target">{alias.executable}</td>
-                  <td>{targetTypeLabel(alias.target_type)}</td>
-                  <td>{alias.shells.map(shellLabel).join(", ") || "—"}</td>
+                  <td>{targetTypeLabel(alias.target_type, language)}</td>
+                  <td>{shellsText(alias)}</td>
                   <td className="cell-description" title={alias.description}>{alias.description || "—"}</td>
                   <td>{alias.tags.length > 0
                     ? alias.tags.map((tag) => <span className="tag-chip" key={tag}>{tag}</span>)
                     : "—"}</td>
-                  <td><span className={`status-text ${alias.enabled ? "is-enabled" : "is-disabled"}`}>{alias.enabled ? "enabled" : "disabled"}</span></td>
+                  <td><span className={`status-text ${alias.enabled ? "is-enabled" : "is-disabled"}`}>{t(alias.enabled ? "table.enabled" : "table.disabled")}</span></td>
                   <td className="alias-actions">
                     {onToggle && (
-                      <button type="button" onClick={() => onToggle(alias)} aria-label={`${alias.enabled ? "Disable" : "Enable"} ${alias.name}`}>
-                        {alias.enabled ? "Disable" : "Enable"}
+                      <button type="button" onClick={() => onToggle(alias)} aria-label={t(alias.enabled ? "table.disableAria" : "table.enableAria", { name: alias.name })}>
+                        {t(alias.enabled ? "table.disable" : "table.enable")}
                       </button>
                     )}
-                    {onEdit && <button type="button" onClick={() => onEdit(alias)} aria-label={`Edit ${alias.name}`}>Edit</button>}
+                    {onEdit && <button type="button" onClick={() => onEdit(alias)} aria-label={t("table.editAria", { name: alias.name })}>{t("table.edit")}</button>}
                     {onDelete && (pending ? (
                       <>
-                        <button type="button" className="btn-danger" disabled={confirmDeleteDisabled} onClick={() => onDelete(alias)}>Confirm delete</button>
-                        {onCancelDelete && <button type="button" onClick={onCancelDelete}>Cancel</button>}
+                        <button type="button" className="btn-danger" disabled={confirmDeleteDisabled} onClick={() => onDelete(alias)}>{t("table.confirmDelete")}</button>
+                        {onCancelDelete && <button type="button" onClick={onCancelDelete}>{t("common.cancel")}</button>}
                       </>
                     ) : (
-                      <button type="button" className="btn-danger" onClick={() => onDelete(alias)} aria-label={`Delete ${alias.name}`}>Delete</button>
+                      <button type="button" className="btn-danger" onClick={() => onDelete(alias)} aria-label={t("table.deleteAria", { name: alias.name })}>{t("table.delete")}</button>
                     ))}
                   </td>
                 </tr>
@@ -86,22 +89,22 @@ export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete
                   <tr key={`${alias.id}-details`} id={detailsId} className="alias-details-row">
                     <td colSpan={9}>
                       <dl className="detail-grid">
-                        <dt>Target type</dt><dd>{targetTypeLabel(alias.target_type)}</dd>
-                        <dt>Shells</dt><dd>{alias.shells.map(shellLabel).join(", ") || "—"}</dd>
-                        <dt>Pass user arguments</dt><dd>{alias.pass_args ? "yes" : "no"}</dd>
-                        <dt>Fixed arguments</dt>
+                        <dt>{t("detail.targetType")}</dt><dd>{targetTypeLabel(alias.target_type, language)}</dd>
+                        <dt>{t("detail.shells")}</dt><dd>{shellsText(alias)}</dd>
+                        <dt>{t("detail.passArgs")}</dt><dd>{t(alias.pass_args ? "common.yes" : "common.no")}</dd>
+                        <dt>{t("detail.fixedArgs")}</dt>
                         <dd>{alias.fixed_args.length > 0
                           ? <ol className="detail-args">{alias.fixed_args.map((argument, index) => <li key={index}><code>{argument}</code></li>)}</ol>
                           : "—"}</dd>
-                        <dt>Working directory</dt><dd>{alias.working_directory ?? "—"}</dd>
-                        <dt>Environment</dt>
+                        <dt>{t("detail.workingDirectory")}</dt><dd>{alias.working_directory ?? "—"}</dd>
+                        <dt>{t("detail.environment")}</dt>
                         <dd>{env.length > 0
                           ? <ul className="detail-env">{env.map(([key, value]) => <li key={key}><code>{key}</code> = <code>{value}</code></li>)}</ul>
                           : "—"}</dd>
-                        <dt>Path mode</dt><dd>{pathModeLabel(alias.path_mode)}</dd>
-                        <dt>Path origin</dt><dd>{alias.path_origin ?? "—"}</dd>
-                        <dt>Revision</dt><dd>{alias.revision}</dd>
-                        <dt>ID</dt><dd className="mono">{alias.id}</dd>
+                        <dt>{t("detail.pathMode")}</dt><dd>{pathModeLabel(alias.path_mode, language)}</dd>
+                        <dt>{t("detail.pathOrigin")}</dt><dd>{pathOriginLabel(alias.path_origin, language)}</dd>
+                        <dt>{t("detail.revision")}</dt><dd>{alias.revision}</dd>
+                        <dt>{t("detail.id")}</dt><dd className="mono">{alias.id}</dd>
                       </dl>
                     </td>
                   </tr>
