@@ -183,6 +183,8 @@ impl<'a> AliasService<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
 
     #[test]
     fn service_lists_searches_and_counts_tags() {
@@ -542,6 +544,42 @@ mod tests {
             database.managed_name_set(&ShellKind::Bash).unwrap().retired,
             vec!["gs".to_string()]
         );
+    }
+
+    #[test]
+    fn checked_update_waits_for_a_concurrent_writer_instead_of_busy_snapshot() {
+        let (root, database) = temp_database("immediate");
+        let created = seeded(&database, "gs");
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        let (locked_tx, locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let holder = std::thread::spawn(move || {
+            // Hold the database write lock long enough for the update to reach
+            // its BEGIN. A DEFERRED read-then-write would then fail with
+            // SQLITE_BUSY_SNAPSHOT; an IMMEDIATE transaction waits and sees the
+            // committed state.
+            other.conn.execute_batch("BEGIN IMMEDIATE;").unwrap();
+            locked_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            other.conn.execute_batch("COMMIT;").unwrap();
+        });
+        locked_rx.recv().unwrap();
+        let releaser = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(250));
+            let _ = release_tx.send(());
+        });
+        let mut edit = created.clone();
+        edit.description = "from checked writer".into();
+        let result = AliasService::new(&database).update_checked(edit, created.revision);
+        releaser.join().unwrap();
+        holder.join().unwrap();
+        match result {
+            Ok(saved) => assert_eq!(saved.description, "from checked writer"),
+            Err(AliasError::AliasConflict(_)) => {}
+            Err(other) => panic!("unexpected error instead of a clean write/conflict: {other:?}"),
+        }
+        drop(database);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

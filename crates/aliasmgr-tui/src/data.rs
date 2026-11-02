@@ -17,7 +17,7 @@ use aliasmgr_core::{
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::mpsc::{self, Receiver, Sender},
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
     time::SystemTime,
 };
 
@@ -183,7 +183,22 @@ pub fn generated_layer(
     if !path.exists() {
         return "file missing (needs sync)".to_string();
     }
-    "up to date".to_string()
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(_) => return "file unreadable (run Doctor)".to_string(),
+    };
+    let embedded = content
+        .lines()
+        .find_map(|line| line.strip_prefix("# file_checksum: "));
+    let expected = state.file_checksum.as_str();
+    // The stored revision only proves when sync last ran. Compare both the
+    // embedded marker and the body against the checksum sync recorded, so a
+    // hand-edited file is not reported as up to date.
+    if embedded == Some(expected) && sync::verify_file_checksum(&content, expected) {
+        "up to date".to_string()
+    } else {
+        "checksum mismatch (file modified? run Doctor)".to_string()
+    }
 }
 
 /// Layer 3: whether the marked loader block is installed in the profile.
@@ -298,6 +313,8 @@ pub enum JobResult {
     Sync(Result<SyncRun, String>),
     Doctor(Result<Vec<DoctorFinding>, String>),
     Loader(Result<LoaderOutcome, String>),
+    /// The worker panicked or its channel disappeared before it could report.
+    WorkerFailed(String),
 }
 
 #[derive(Debug)]
@@ -309,7 +326,7 @@ pub struct JobOutcome {
 /// One background job at a time. Writes are never concurrent with each other;
 /// sync itself holds the shared core sync lock.
 pub struct Jobs {
-    sender: Sender<JobOutcome>,
+    sender: Option<Sender<JobOutcome>>,
     receiver: Receiver<JobOutcome>,
     running: Option<JobKind>,
 }
@@ -324,7 +341,7 @@ impl Jobs {
     pub fn new() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
-            sender,
+            sender: Some(sender),
             receiver,
             running: None,
         }
@@ -345,12 +362,14 @@ impl Jobs {
         if self.running.is_some() {
             return false;
         }
-        let sender = self.sender.clone();
+        let Some(sender) = self.sender.clone() else {
+            return false;
+        };
         let thread_kind = kind.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("aliasmgr-tui-{}", thread_kind.label()))
             .spawn(move || {
-                let result = run_job(&thread_kind, &root);
+                let result = catch_worker(|| run_job(&thread_kind, &root));
                 let _ = sender.send(JobOutcome {
                     kind: thread_kind,
                     result,
@@ -371,7 +390,21 @@ impl Jobs {
                 self.running = None;
                 Some(outcome)
             }
-            Err(_) => None,
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => self.running.take().map(|kind| JobOutcome {
+                kind,
+                result: JobResult::WorkerFailed(
+                    "background worker disconnected before reporting".to_string(),
+                ),
+            }),
+        }
+    }
+
+    /// Test-only injection of a worker outcome for deterministic UI tests.
+    #[cfg(test)]
+    pub fn inject(&mut self, outcome: JobOutcome) {
+        if let Some(sender) = &self.sender {
+            let _ = sender.send(outcome);
         }
     }
 
@@ -383,6 +416,16 @@ impl Jobs {
             self.running = None;
         }
         outcome
+    }
+}
+
+/// Runs a worker body, converting a panic into a result the UI can display.
+/// Without this a panicking sync/doctor thread would leave `running` set and
+/// the TUI would refuse every later write forever.
+fn catch_worker<F: FnOnce() -> JobResult>(work: F) -> JobResult {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(result) => result,
+        Err(_) => JobResult::WorkerFailed("background worker panicked".to_string()),
     }
 }
 
@@ -475,6 +518,38 @@ mod tests {
             .iter()
             .any(|line| line.starts_with("3 loader [bash]")));
         assert!(layers.last().unwrap().contains("current shell: unknown"));
+        drop(database);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn generated_layer_detects_a_hand_edited_file_even_at_the_synced_revision() {
+        let root = temp_root("generated-checksum");
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let alias = insert(
+            &database,
+            AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            },
+        );
+        drop(database);
+        sync::sync_config_dir(&root).unwrap();
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let snapshot = load_snapshot(&database, &root).unwrap();
+        assert_eq!(
+            generated_layer(&root, &snapshot, &alias, &ShellKind::Bash),
+            "up to date"
+        );
+        let path = root.join("generated/bash.sh");
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str("\n# hand edit\n");
+        std::fs::write(&path, content).unwrap();
+        let snapshot = load_snapshot(&database, &root).unwrap();
+        assert!(generated_layer(&root, &snapshot, &alias, &ShellKind::Bash)
+            .contains("checksum mismatch"));
         drop(database);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -615,6 +690,26 @@ mod tests {
             other => panic!("unexpected job result: {other:?}"),
         }
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_panicking_worker_becomes_a_displayable_failure() {
+        let result = catch_worker(|| panic!("worker boom"));
+        match result {
+            JobResult::WorkerFailed(message) => assert!(message.contains("panicked")),
+            other => panic!("unexpected result: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_disconnected_worker_clears_busy_and_reports_failure() {
+        let mut jobs = Jobs::new();
+        jobs.running = Some(JobKind::Sync);
+        jobs.sender = None;
+        let outcome = jobs.try_recv().expect("must synthesize an outcome");
+        assert!(!jobs.is_busy());
+        assert_eq!(outcome.kind, JobKind::Sync);
+        assert!(matches!(outcome.result, JobResult::WorkerFailed(_)));
     }
 
     #[test]

@@ -67,7 +67,15 @@ pub fn install_panic_hook() {
     if let Ok(mut slot) = previous_hook().lock() {
         *slot = Some(previous);
     }
-    panic::set_hook(Box::new(|info| {
+    let main_thread = std::thread::current().id();
+    panic::set_hook(Box::new(move |info| {
+        // Background workers are caught by `catch_worker` and reported as a
+        // normal failure. Restoring the terminal from a worker panic would tear
+        // down the still-running UI, and printing would corrupt the alternate
+        // screen, so only main-thread panics use this hook.
+        if std::thread::current().id() != main_thread {
+            return;
+        }
         emergency_restore();
         if let Ok(slot) = previous_hook().lock() {
             if let Some(previous) = slot.as_ref() {
@@ -190,6 +198,26 @@ mod tests {
         restore_panic_hook();
         let _ = panic::catch_unwind(|| panic!("tui hook test after restore"));
         assert_eq!(CALLS.load(Ordering::SeqCst), 2);
+        panic::set_hook(original);
+    }
+
+    #[test]
+    fn worker_panics_do_not_restore_the_terminal_or_chain_to_the_ui_hook() {
+        let _guard = HOOK_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        let original = panic::take_hook();
+        panic::set_hook(Box::new(|_info| {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+        }));
+        install_panic_hook();
+        let worker = std::thread::spawn(|| panic!("worker hook test"));
+        assert!(worker.join().is_err());
+        assert_eq!(CALLS.load(Ordering::SeqCst), 0);
+        let _ = panic::catch_unwind(|| panic!("main hook test"));
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+        restore_panic_hook();
         panic::set_hook(original);
     }
 

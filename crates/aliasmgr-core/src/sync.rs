@@ -67,6 +67,26 @@ fn shell_file_content(shell: &ShellKind, body: &str, checksum: &str, config: &Ap
     let content = normalize_line_endings(&content).replace('\n', line_ending);
     format!("{prefix}{content}")
 }
+/// Free-function form of [`SyncCoordinator::journal_needs_recovery`] for
+/// front ends that only have a path.
+pub fn journal_needs_recovery(path: &Path) -> Result<bool, AliasError> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let content = fs::read_to_string(path)?;
+    let state = content
+        .lines()
+        .find_map(|line| line.strip_prefix("state="))
+        .ok_or_else(|| AliasError::Config("operation journal has no state".into()))?;
+    match state {
+        "prepared" | "committed" => Ok(true),
+        "completed" => Ok(false),
+        other => Err(AliasError::Config(format!(
+            "unknown operation journal state: {other}"
+        ))),
+    }
+}
+
 pub struct SyncCoordinator {
     pub config_dir: PathBuf,
 }
@@ -210,6 +230,15 @@ impl SyncCoordinator {
         fs::write(&journal, format!("revision_from={revision_from}\nrevision_to={revision}\nstate=completed\nbackups_json={}\n", serde_json::to_string(&backups)?))?;
         Ok(SyncReceipt { revision, results })
     }
+    /// Reports whether an operation journal represents interrupted work.
+    ///
+    /// A successful sync leaves `state=completed` behind, so the mere presence
+    /// of the file is not a recovery signal. Read errors and unknown or missing
+    /// states are surfaced instead of being silently treated as "nothing to do".
+    pub fn journal_needs_recovery(&self) -> Result<bool, AliasError> {
+        journal_needs_recovery(&self.config_dir.join("operation.journal"))
+    }
+
     pub fn recover_pending_operations(&self) -> Result<(), AliasError> {
         let journal = self.config_dir.join("operation.journal");
         if !journal.exists() {
@@ -1671,6 +1700,51 @@ mod tests {
         let run = sync_config_dir(&root).unwrap();
         assert_eq!(run.results[0].status, ShellStatus::Failed);
         assert_eq!(run.results[0].error_code.as_deref(), Some("sync_failed"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn journal_recovery_predicate_only_accepts_interrupted_states() {
+        let root = sync_root("journal-predicate");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("operation.journal");
+
+        // Missing journal: nothing to recover.
+        assert!(!journal_needs_recovery(&path).unwrap());
+
+        for (state, expected) in [
+            ("prepared", true),
+            ("committed", true),
+            ("completed", false),
+        ] {
+            fs::write(
+                &path,
+                format!("revision_from=1\nrevision_to=2\nstate={state}\nbackups_json=[]\n"),
+            )
+            .unwrap();
+            assert_eq!(
+                journal_needs_recovery(&path).unwrap(),
+                expected,
+                "state {state}"
+            );
+        }
+
+        fs::write(&path, "revision_to=2\nbackups_json=[]\n").unwrap();
+        assert!(matches!(
+            journal_needs_recovery(&path),
+            Err(AliasError::Config(message)) if message.contains("no state")
+        ));
+
+        fs::write(&path, "state=half-written\n").unwrap();
+        assert!(matches!(
+            journal_needs_recovery(&path),
+            Err(AliasError::Config(message)) if message.contains("unknown")
+        ));
+
+        // A directory cannot be read as a journal.
+        fs::remove_file(&path).unwrap();
+        fs::create_dir(&path).unwrap();
+        assert!(journal_needs_recovery(&path).is_err());
         let _ = fs::remove_dir_all(root);
     }
 }

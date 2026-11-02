@@ -33,11 +33,13 @@ compiled in and exits with code 1. No ratatui/crossterm code is linked.
 - Interactive stdin and stdout. In a pipe, CI job, or redirected output,
   `aliasmgr tui` fails immediately with a clear message and exit code 1 instead
   of blocking or emitting escape sequences.
-- Usable from 80x20. At 120 columns or more the browser shows the alias list and
-  the detail pane side by side; 80–119 columns use a single pane with
-  `Enter`/`Tab` to open detail and `Esc` to go back.
-- Smaller than 80x20 shows "Terminal too small" with the current size and the
-  minimum; resizing recovers automatically. `q` / `Ctrl+C` still exit.
+- Usable from 80x24. At 120 columns or more the browser shows the alias list
+  and the detail pane side by side; 80–119 columns use a single pane where
+  `Enter` opens detail, `Tab`/`Shift+Tab` switch focus, and `Esc` goes back.
+- Smaller than 80x24 shows "Terminal too small" with the frame size and the
+  minimum. While too small every key except `q`/`Ctrl+C` is ignored, any armed
+  modal is cleared, and resizing recovers automatically. `q`/`Ctrl+C` quit
+  immediately even with an unsaved draft, because no confirmation can be shown.
 - No mouse, clipboard, Nerd Font, emoji or true-colour dependency.
 - `NO_COLOR` (presence) and `TERM=dumb` disable colour; `TERM=dumb` and
   `ALIASMGR_TUI_ASCII=1` use plain borders and `...` instead of `…`.
@@ -170,9 +172,12 @@ Opening a stored record captures its revision. Save is revision-checked in the
 database update (`UPDATE ... WHERE id = ? AND revision = ?`):
 
 - an unchanged revision saves;
-- a changed or deleted record shows a conflict modal with **reload latest**,
-  **discard draft**, or **explicit overwrite**; nothing is overwritten silently;
-- delete, rename and enable/disable use the same checked path;
+- a changed record shows a conflict modal with **reload latest**, **discard
+  draft**, or **explicit overwrite**; nothing is overwritten silently;
+- a record deleted in another front end shows a deletion modal with **discard
+  draft** or **recreate from this draft**;
+- delete, rename and enable/disable use the same checked path, and the rename
+  modal stays bound to the record it was opened on even if the list refreshes;
 - an external change while editing keeps the local draft and warns that saving
   will ask before overwriting.
 

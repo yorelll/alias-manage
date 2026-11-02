@@ -19,9 +19,9 @@ use aliasmgr_core::{
     search::{search, SearchField, SearchQuery, SortField},
     service::AliasService,
     storage::Database,
-    sync::{SyncCoordinator, SyncRun},
+    sync::{self, SyncCoordinator, SyncRun},
 };
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -129,6 +129,7 @@ pub enum Modal {
     ConfirmQuit,
     ConfirmDiscard,
     Rename {
+        alias: AliasRecord,
         input: TextInput,
     },
     TagFilter {
@@ -137,6 +138,10 @@ pub enum Modal {
     },
     Conflict {
         current: AliasRecord,
+    },
+    /// The record was deleted in another front end while the editor was open.
+    Deleted {
+        name: String,
     },
     Message {
         title: String,
@@ -179,6 +184,9 @@ pub struct App {
     pub jobs: Jobs,
     pub saving: bool,
     pub external_pending: bool,
+    /// Set by the renderer. While the terminal is too small every key except
+    /// q/Ctrl+C is ignored, so invisible destructive modals cannot fire.
+    pub too_small: bool,
     last_external_check: Instant,
 }
 
@@ -189,26 +197,20 @@ impl App {
         // the shared core helper under the same lock sync uses; never write a
         // second recovery implementation here.
         let journal = root.join("operation.journal");
-        // A successful sync leaves a `state=completed` journal behind; only
-        // prepared/committed entries represent work that needs recovery.
-        let journal_pending = std::fs::read_to_string(&journal)
-            .map(|content| {
-                content
-                    .lines()
-                    .any(|line| line == "state=prepared" || line == "state=committed")
-            })
-            .unwrap_or(false);
-        let recovery = if journal_pending {
-            match FileLock::acquire(root.join("sync.lock"), Duration::from_secs(2)) {
+        // The core predicate distinguishes prepared/committed work from the
+        // completed journal a successful sync leaves behind, and surfaces
+        // unreadable or unknown states instead of silently skipping them.
+        let recovery = match sync::journal_needs_recovery(&journal) {
+            Ok(false) => None,
+            Ok(true) => match FileLock::acquire(root.join("sync.lock"), Duration::from_secs(2)) {
                 Ok(_lock) => Some(
                     SyncCoordinator::new(root.clone())
                         .recover_pending_operations()
                         .map_err(|error| error.to_string()),
                 ),
                 Err(error) => Some(Err(format!("sync lock unavailable: {error}"))),
-            }
-        } else {
-            None
+            },
+            Err(error) => Some(Err(format!("cannot inspect the journal: {error}"))),
         };
         let database = Database::open(root.join("aliases.db"))?;
         let snapshot = data::load_snapshot(&database, &root)?;
@@ -235,6 +237,7 @@ impl App {
             jobs: Jobs::new(),
             saving: false,
             external_pending: false,
+            too_small: false,
             last_external_check: Instant::now(),
         };
         app.recompute_visible();
@@ -307,6 +310,7 @@ impl App {
         match data::load_snapshot(&self.database, &self.root) {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
+                self.external_pending = false;
                 self.recompute_visible();
                 if let Some(id) = selected_id {
                     if let Some(position) = self
@@ -378,6 +382,15 @@ impl App {
         if !is_actionable(&key) {
             return;
         }
+        if self.too_small {
+            let plain_q = !key.modifiers.contains(KeyModifiers::CONTROL)
+                && !key.modifiers.contains(KeyModifiers::ALT)
+                && matches!(key.code, KeyCode::Char('q'));
+            if is_ctrl(&key, 'c') || plain_q {
+                self.should_quit = true;
+            }
+            return;
+        }
         if is_ctrl(&key, 'c') {
             self.request_quit();
             return;
@@ -444,6 +457,11 @@ impl App {
     }
 
     fn handle_browser_key(&mut self, key: KeyEvent) {
+        if key.modifiers.contains(KeyModifiers::CONTROL)
+            || key.modifiers.contains(KeyModifiers::ALT)
+        {
+            return;
+        }
         if self.filter.active {
             match key.code {
                 KeyCode::Enter => {
@@ -595,7 +613,8 @@ impl App {
             return;
         };
         self.modal = Some(Modal::Rename {
-            input: TextInput::new(alias.name),
+            input: TextInput::new(alias.name.clone()),
+            alias,
         });
         self.dirty = true;
     }
@@ -872,18 +891,39 @@ impl App {
                 }
                 _ => self.modal = Some(Modal::ConfirmDiscard),
             },
-            Modal::Rename { mut input } => match key.code {
-                KeyCode::Enter => self.perform_rename(input.value().to_string()),
+            Modal::Rename { alias, mut input } => match key.code {
+                KeyCode::Enter => self.perform_rename(alias, input.value().to_string()),
                 KeyCode::Esc => {
                     self.set_status(StatusKind::Info, "rename cancelled");
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
-                    self.modal = Some(Modal::Rename { input });
+                    self.modal = Some(Modal::Rename { alias, input });
                 }
                 _ => {
                     input.handle_key(key);
-                    self.modal = Some(Modal::Rename { input });
+                    self.modal = Some(Modal::Rename { alias, input });
                 }
+            },
+            Modal::Deleted { name } => match key.code {
+                KeyCode::Char('d') | KeyCode::Char('D') | KeyCode::Esc => {
+                    self.screen = Screen::Browse;
+                    self.reload();
+                    self.set_status(
+                        StatusKind::Info,
+                        format!("{name} was deleted externally; draft discarded"),
+                    );
+                }
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    if let Screen::Editor(editor) = &mut self.screen {
+                        editor.is_new = true;
+                        editor.base_revision = 0;
+                        editor.saving = false;
+                        editor.conflict_revision = None;
+                    }
+                    self.saving = false;
+                    self.save_editor();
+                }
+                _ => self.modal = Some(Modal::Deleted { name }),
             },
             Modal::TagFilter {
                 mut entries,
@@ -932,6 +972,7 @@ impl App {
             },
             Modal::Conflict { current } => match key.code {
                 KeyCode::Char('r') | KeyCode::Char('R') => {
+                    self.external_pending = false;
                     if let Screen::Editor(editor) = &mut self.screen {
                         editor.reload_from(&current);
                     }
@@ -941,10 +982,12 @@ impl App {
                     );
                 }
                 KeyCode::Char('d') | KeyCode::Char('D') => {
+                    self.external_pending = false;
                     self.screen = Screen::Browse;
                     self.set_status(StatusKind::Info, "local changes discarded");
                 }
                 KeyCode::Char('o') | KeyCode::Char('O') => {
+                    self.external_pending = false;
                     if let Screen::Editor(editor) = &mut self.screen {
                         editor.base_revision = current.revision;
                         editor.conflict_revision = None;
@@ -1055,6 +1098,23 @@ impl App {
                     format!("not saved: {message}. Choose reload, discard, or overwrite"),
                 );
             }
+            Err(AliasError::NotFound(message)) if !is_new => {
+                let name = match &self.screen {
+                    Screen::Editor(editor) => editor.draft.name.clone(),
+                    _ => message,
+                };
+                if let Screen::Editor(editor) = &mut self.screen {
+                    editor.saving = false;
+                    editor.error = None;
+                }
+                self.modal = Some(Modal::Deleted { name: name.clone() });
+                self.set_status(
+                    StatusKind::Warning,
+                    format!(
+                        "{name} was deleted in another front end; discard the draft or recreate it"
+                    ),
+                );
+            }
             Err(error) => {
                 let message = error.to_string();
                 if let Screen::Editor(editor) = &mut self.screen {
@@ -1113,14 +1173,10 @@ impl App {
         self.dirty = true;
     }
 
-    fn perform_rename(&mut self, new_name: String) {
+    fn perform_rename(&mut self, alias: AliasRecord, new_name: String) {
         if self.writes_blocked() {
             return;
         }
-        let Some(alias) = self.selected_alias_cloned() else {
-            self.set_status(StatusKind::Warning, "no alias selected");
-            return;
-        };
         let service = AliasService::new(&self.database);
         match service.rename_checked(&alias, &new_name, alias.revision) {
             Ok(saved) => {
@@ -1138,6 +1194,13 @@ impl App {
                 self.set_status(
                     StatusKind::Error,
                     format!("not renamed: {message}. Refresh and try again"),
+                );
+            }
+            Err(AliasError::NotFound(_)) => {
+                self.reload();
+                self.set_status(
+                    StatusKind::Error,
+                    "not renamed: the alias was deleted in another front end; list refreshed",
                 );
             }
             Err(error) => {
@@ -1234,20 +1297,38 @@ impl App {
             JobResult::Sync(Ok(run)) => {
                 let failed = run.failed();
                 let count = run.results.len();
+                let editor_open = matches!(self.screen, Screen::Editor(_));
                 self.reload();
-                self.screen = Screen::SyncReport(SyncReportState { run, scroll: 0 });
-                if failed {
-                    self.set_status(
-                        StatusKind::Warning,
-                        "sync finished with failures; generated files may be stale; reload is still manual",
-                    );
+                if editor_open {
+                    // Never discard an unsaved draft because a background job
+                    // happened to finish. Keep the editor; the report is
+                    // summarized in the status line.
+                    if failed {
+                        self.set_status(
+                            StatusKind::Warning,
+                            "sync finished with failures; editor kept; reload is still manual",
+                        );
+                    } else {
+                        self.set_status(
+                            StatusKind::Success,
+                            format!("synced {count} shell(s); editor kept; reload is still manual"),
+                        );
+                    }
                 } else {
-                    self.set_status(
-                        StatusKind::Success,
-                        format!(
-                            "synced {count} shell(s); run the shown reload command in this terminal"
-                        ),
-                    );
+                    self.screen = Screen::SyncReport(SyncReportState { run, scroll: 0 });
+                    if failed {
+                        self.set_status(
+                            StatusKind::Warning,
+                            "sync finished with failures; generated files may be stale; reload is still manual",
+                        );
+                    } else {
+                        self.set_status(
+                            StatusKind::Success,
+                            format!(
+                                "synced {count} shell(s); run the shown reload command in this terminal"
+                            ),
+                        );
+                    }
                 }
             }
             JobResult::Sync(Err(error)) => {
@@ -1279,6 +1360,16 @@ impl App {
                     state.error = Some(error.clone());
                 }
                 self.set_status(StatusKind::Error, format!("doctor failed: {error}"));
+            }
+            JobResult::WorkerFailed(message) => {
+                if let Screen::Doctor(state) = &mut self.screen {
+                    state.busy = false;
+                    state.error = Some(message.clone());
+                }
+                self.set_status(
+                    StatusKind::Error,
+                    format!("background job failed: {message}"),
+                );
             }
             JobResult::Loader(result) => match result {
                 Ok(outcome) => {
@@ -1409,7 +1500,7 @@ pub fn help_lines() -> Vec<String> {
         String::new(),
         "PREVIEW / DOCTOR".to_string(),
         "  j/k PgUp/PgDn scroll    Tab/[ ] switch preview shell".to_string(),
-        "  Doctor: s sync, r rescan    Esc back".to_string(),
+        "  Doctor: j/k PgUp/PgDn Home/End scroll, s sync, r rescan, Esc back".to_string(),
         String::new(),
         "TARGET TYPES".to_string(),
     ];
@@ -1430,7 +1521,7 @@ pub fn help_lines() -> Vec<String> {
         "NOTES".to_string(),
         "  Environment values are masked in details, previews and errors.".to_string(),
         "  Preview renders environment values as *** before the core renderer sees them.".to_string(),
-        "  Terminal smaller than 80x20 shows a clear message; resize to continue.".to_string(),
+        "  Terminal smaller than 80x24 shows a clear message, ignores other keys, and clears modals; resize to continue.".to_string(),
         "  No mouse, clipboard, Nerd Font or emoji dependency; ASCII fallback via ALIASMGR_TUI_ASCII=1.".to_string(),
         "  Ctrl+C quits (asks before discarding an unsaved editor draft).".to_string(),
     ]);
@@ -1500,6 +1591,32 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_journal_state_is_surfaced_without_blocking_startup() {
+        let root = temp_root("unknown-journal");
+        std::fs::write(
+            root.join("operation.journal"),
+            "revision_from=0\nrevision_to=1\nstate=half-written\nbackups_json=[]\n",
+        )
+        .unwrap();
+        let app = App::new(root.clone()).unwrap();
+        assert!(app.status.text.contains("could not be recovered"));
+        assert!(app.status.text.contains("unknown operation journal state"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn an_unreadable_journal_is_surfaced_without_blocking_startup() {
+        let root = temp_root("unreadable-journal");
+        std::fs::create_dir(root.join("operation.journal")).unwrap();
+        let app = App::new(root.clone()).unwrap();
+        assert!(app.status.text.contains("could not be recovered"));
+        assert!(app.status.text.contains("cannot inspect the journal"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn a_completed_sync_journal_is_left_alone_and_does_not_warn() {
         let root = temp_root("completed-journal");
         let path = root.join("operation.journal");
@@ -1511,6 +1628,115 @@ mod tests {
         let app = App::new(root.clone()).unwrap();
         assert!(path.exists());
         assert!(!app.status.text.contains("recovered"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rename_modal_stays_bound_to_the_alias_it_was_opened_on() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('r')));
+        if let Some(Modal::Rename { input, .. }) = &mut app.modal {
+            input.set_value("renamed");
+        }
+        // Another front end deletes the record. The poll refreshes the list and
+        // the selection falls onto the remaining alias.
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        AliasService::new(&other).delete("gs").unwrap();
+        app.last_external_check = Instant::now() - Duration::from_secs(5);
+        app.poll_external_changes();
+        assert_eq!(app.selected_alias().unwrap().name, "ll");
+        app.handle_key(key(KeyCode::Enter));
+        let names = app
+            .snapshot
+            .aliases
+            .iter()
+            .map(|alias| alias.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["ll"]);
+        assert!(app.status.text.contains("not renamed"));
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_completion_keeps_an_open_editor_and_its_draft() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('e')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.description = "unsaved draft".into();
+        }
+        let revision = app.snapshot.revision;
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::Sync,
+            result: JobResult::Sync(Ok(SyncRun {
+                revision,
+                results: Vec::new(),
+            })),
+        });
+        app.poll_jobs();
+        let Screen::Editor(editor) = &app.screen else {
+            panic!("sync completion replaced the open editor");
+        };
+        assert_eq!(editor.draft.description, "unsaved draft");
+        assert!(app.status.text.contains("editor kept"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn external_deletion_while_editing_offers_discard_or_recreate() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('e')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.description = "kept".into();
+        }
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        AliasService::new(&other).delete("gs").unwrap();
+        app.save_editor();
+        assert!(matches!(app.modal, Some(Modal::Deleted { .. })));
+        app.handle_key(key(KeyCode::Char('d')));
+        assert!(matches!(app.screen, Screen::Browse));
+        assert!(AliasService::new(&app.database)
+            .get_by_name("gs")
+            .unwrap()
+            .is_none());
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn external_deletion_can_be_recreated_from_the_draft() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('e')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.description = "recreated carefully".into();
+        }
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        AliasService::new(&other).delete("gs").unwrap();
+        app.save_editor();
+        assert!(matches!(app.modal, Some(Modal::Deleted { .. })));
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(matches!(app.screen, Screen::Browse));
+        let restored = AliasService::new(&app.database)
+            .get_by_name("gs")
+            .unwrap()
+            .expect("recreated alias");
+        assert_eq!(restored.description, "recreated carefully");
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ctrl_s_in_browse_does_not_start_a_background_sync() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(!app.jobs.is_busy());
+        assert!(matches!(app.screen, Screen::Browse));
+        assert!(app.modal.is_none());
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -1796,11 +2022,11 @@ mod tests {
         let (root, mut app) = app_with_two();
         // Selected alias sorts first: gs.
         app.handle_key(key(KeyCode::Char('r')));
-        let Some(Modal::Rename { mut input }) = app.modal.take() else {
+        let Some(Modal::Rename { alias, mut input }) = app.modal.take() else {
             panic!("rename modal");
         };
         input.set_value("git-status");
-        app.modal = Some(Modal::Rename { input });
+        app.modal = Some(Modal::Rename { alias, input });
         app.handle_key(key(KeyCode::Enter));
         assert!(app.snapshot.aliases.iter().any(|a| a.name == "git-status"));
         app.handle_key(key(KeyCode::Char(' ')));
@@ -1940,6 +2166,8 @@ mod tests {
         app.poll_external_changes();
         assert!(app.external_pending);
         assert!(app.status.text.contains("saving will ask"));
+        app.reload();
+        assert!(!app.external_pending);
         let Screen::Editor(editor) = &app.screen else {
             panic!("editor");
         };

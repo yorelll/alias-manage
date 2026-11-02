@@ -20,15 +20,19 @@ The TUI is a presentation and input-state layer:
 - Reads and writes go through `AliasService` / `Database`. Optimistic
   concurrency uses `AliasService::{update_checked, delete_checked,
   rename_checked, set_enabled_checked}`, which add a revision guard to the
-  database `UPDATE`/transaction. A rename or a removed shell retires the old
+  database `UPDATE`/transaction. Those transactions use `BEGIN IMMEDIATE` so a
+  concurrent commit waits instead of surfacing `SQLITE_BUSY_SNAPSHOT`. A rename or a removed shell retires the old
   name through the same tombstone rules as the CLI.
 - Sync uses `sync::sync_config_dir_collect_io`, so per-shell results, the
   monotonic revision, lock, backups, journal and atomic writes stay in core.
-  Sync, Doctor and loader actions run on a `std::thread` and report through an
-  `mpsc` channel; one job writes at a time and the UI never blocks.
-- Doctor uses `doctor::diagnose`; loader status/install/uninstall use
-  `integration`; previews use `SyncCoordinator::render_shell`; reload commands
-  come from `sync::reload_command`.
+  Sync and Doctor actions run on a `std::thread` and report through an `mpsc`
+  channel; one job writes at a time and the UI never blocks. The job runner also
+  understands loader install/uninstall results, but this version exposes no TUI
+  action that starts them.
+- Doctor uses `doctor::diagnose`; loader status probing uses `integration`
+  (install/uninstall plumbing exists in the job runner but has no TUI action);
+  previews use `SyncCoordinator::render_shell`; reload commands come from
+  `sync::reload_command`.
 - At startup an interrupted sync journal is recovered through
   `SyncCoordinator::recover_pending_operations` under the shared sync lock;
   the TUI does not implement its own recovery.

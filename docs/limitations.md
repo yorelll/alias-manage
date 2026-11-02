@@ -35,6 +35,6 @@
 - The TUI does not implement import/export, `config.toml` settings editing, loader install/uninstall actions, bulk multi-select, or `uninstall`. Those remain CLI features; Doctor points at the CLI for loader work.
 - The TUI search field searches all fields. Tag filtering and sorting are available; selecting a single search field is not.
 - Real-terminal behaviour (raw mode/alternate screen restoration, resize, Ctrl+C, CJK font width, colour fallback, Windows Terminal/ConPTY/mintty differences) is not proven by `TestBackend` tests. Windows PowerShell 5.1/pwsh and Linux Bash/Zsh acceptance remains manual. This implementation was built and tested on Windows only.
-- The TUI requires at least 80x20. Below that it shows only a resize/exit message; it does not attempt a compressed layout.
+- The TUI requires at least 80x24. Below that it shows only a resize/exit message and ignores every key except `q`/`Ctrl+C`; it does not attempt a compressed layout or render invisible confirmation modals.
 - Mouse input, clipboard integration, Nerd Font icons and emoji are deliberately unsupported. Terminal text can still be selected with the terminal's own selection mode.
 - Terminal output can only be sanitized at the TUI boundary: control characters in stored values are replaced with `?`/spaces for single-line rendering, but a terminal or font may still display wide/CJK glyphs differently from `unicode-width`'s tables.

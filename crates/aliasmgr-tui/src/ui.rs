@@ -25,6 +25,9 @@ use ratatui::{
 };
 
 const MIN_WIDTH: u16 = 80;
+/// Minimum frame height (header + body + footer).
+const MIN_FRAME_HEIGHT: u16 = 24;
+/// Minimum body height once the 2-line header and 2-line footer are removed.
 const MIN_HEIGHT: u16 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +64,11 @@ fn block<'a>(title: &str, theme: Theme) -> Block<'a> {
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
-    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+    app.too_small = area.width < MIN_WIDTH || area.height < MIN_FRAME_HEIGHT;
+    if app.too_small {
+        // No modal may stay armed while it cannot be seen: otherwise `d`, `y`
+        // or a quit confirmation would act invisibly.
+        app.modal = None;
         render_too_small(frame, area, app);
         return;
     }
@@ -113,13 +120,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             }
         }
         Screen::Editor(editor) => {
-            let inner_height = body.height.saturating_sub(2) as usize;
-            let (_, selected_line) = editor_lines(editor, app.theme);
-            editor.scroll = if selected_line >= inner_height {
-                (selected_line + 1 - inner_height) as u16
-            } else {
-                0
-            };
+            let (fields, _) = editor_panes(body);
+            let inner_width = fields.width.saturating_sub(2).max(1);
+            let inner_height = fields.height.saturating_sub(2).max(1) as usize;
+            let (lines, selected_line) = editor_lines(editor, app.theme);
+            let last = selected_line.min(lines.len().saturating_sub(1));
+            let up_to_selected = lines[..=last].to_vec();
+            // Paragraph::line_count accounts for word wrapping at the real pane
+            // width; the old height-only estimate was wrong in narrow layouts
+            // and for wrapped rows.
+            let rows = wrapped_rows(&up_to_selected, inner_width as usize);
+            editor.scroll = rows.saturating_sub(inner_height) as u16;
         }
         _ => {}
     }
@@ -146,7 +157,7 @@ fn render_too_small(frame: &mut Frame, area: Rect, app: &App) {
         line(vec![span(
             format!(
                 "{}x{}; the TUI needs at least {}x{}.",
-                area.width, area.height, MIN_WIDTH, MIN_HEIGHT
+                area.width, area.height, MIN_WIDTH, MIN_FRAME_HEIGHT
             ),
             app.theme.muted(),
         )]),
@@ -609,48 +620,95 @@ fn detail_lines(app: &App, alias: &AliasRecord) -> Vec<Line<'static>> {
     lines
 }
 
+/// Approximates the wrapped row count of a list of styled lines at `width`.
+/// Ratatui's exact line-count API is unstable, so count words and break
+/// over-long tokens the way `Wrap { trim: false }` does. Overestimating only
+/// scrolls a little further; it can never leave the selected field invisible.
+fn wrapped_rows(lines: &[Line<'static>], width: usize) -> usize {
+    if width == 0 {
+        return lines.len().max(1);
+    }
+    lines
+        .iter()
+        .map(|line| {
+            let text = line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            wrapped_text_rows(&text, width)
+        })
+        .sum::<usize>()
+        .max(1)
+}
+
+fn wrapped_text_rows(text: &str, width: usize) -> usize {
+    if width == 0 {
+        return 1;
+    }
+    let mut rows = 1usize;
+    let mut used = 0usize;
+    for word in text.split(' ') {
+        let mut word_width = text::display_width(word);
+        if word_width == 0 {
+            // Consecutive spaces (or an empty leading segment).
+            if used < width {
+                used += 1;
+            } else {
+                rows += 1;
+                used = 1;
+            }
+            continue;
+        }
+        if used > 0 && used + 1 + word_width <= width {
+            used += 1 + word_width;
+            continue;
+        }
+        if used > 0 {
+            rows += 1;
+        }
+        while word_width > width {
+            rows += 1;
+            word_width -= width;
+        }
+        used = word_width;
+    }
+    rows
+}
+
+fn editor_panes(area: Rect) -> (Rect, Rect) {
+    if area.width >= 100 {
+        let panes = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(area);
+        (panes[0], panes[1])
+    } else {
+        let chunks = Layout::vertical([Constraint::Min(8), Constraint::Length(7)]).split(area);
+        (chunks[0], chunks[1])
+    }
+}
+
 fn render_editor(frame: &mut Frame, area: Rect, app: &App, editor: &Editor) {
     let title = if editor.is_dirty() {
         format!("{} *", editor.title())
     } else {
         editor.title()
     };
-    if area.width >= 100 {
-        let panes = Layout::horizontal([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(area);
-        let (lines, _) = editor_lines(editor, app.theme);
-        frame.render_widget(
-            Paragraph::new(Text::from(lines))
-                .block(block(&title, app.theme))
-                .wrap(Wrap { trim: false })
-                .scroll((editor.scroll, 0)),
-            panes[0],
-        );
-        let info = editor_side_lines(editor, app.theme);
-        frame.render_widget(
-            Paragraph::new(Text::from(info))
-                .block(block("Draft checks", app.theme))
-                .wrap(Wrap { trim: false }),
-            panes[1],
-        );
-    } else {
-        let chunks = Layout::vertical([Constraint::Min(8), Constraint::Length(7)]).split(area);
-        let (lines, _) = editor_lines(editor, app.theme);
-        frame.render_widget(
-            Paragraph::new(Text::from(lines))
-                .block(block(&title, app.theme))
-                .wrap(Wrap { trim: false })
-                .scroll((editor.scroll, 0)),
-            chunks[0],
-        );
-        let info = editor_side_lines(editor, app.theme);
-        frame.render_widget(
-            Paragraph::new(Text::from(info))
-                .block(block("Draft checks", app.theme))
-                .wrap(Wrap { trim: false }),
-            chunks[1],
-        );
-    }
+    let (fields, side) = editor_panes(area);
+    let (lines, _) = editor_lines(editor, app.theme);
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block(&title, app.theme))
+            .wrap(Wrap { trim: false })
+            .scroll((editor.scroll, 0)),
+        fields,
+    );
+    let info = editor_side_lines(editor, app.theme);
+    frame.render_widget(
+        Paragraph::new(Text::from(info))
+            .block(block("Draft checks", app.theme))
+            .wrap(Wrap { trim: false }),
+        side,
+    );
 }
 
 fn text_field_value(editor: &Editor, field: Field) -> String {
@@ -1269,6 +1327,7 @@ fn footer_keys(app: &App) -> String {
             Modal::ConfirmQuit => "y discard and quit   n/Esc keep editing".to_string(),
             Modal::ConfirmDiscard => "y discard   n/Esc keep editing".to_string(),
             Modal::Rename { .. } => "type a new name   Enter rename   Esc cancel".to_string(),
+            Modal::Deleted { .. } => "d/Esc discard draft   r recreate alias".to_string(),
             Modal::TagFilter { .. } => {
                 "j/k move   Space toggle   c clear   Enter apply   Esc cancel".to_string()
             }
@@ -1292,7 +1351,9 @@ fn footer_keys(app: &App) -> String {
         Screen::Preview(_) => {
             "j/k scroll  PgUp/PgDn  Tab/[ ] switch shell  Esc back  q quit".to_string()
         }
-        Screen::Doctor(_) => "j/k move  s sync  r rescan  Esc back  q quit".to_string(),
+        Screen::Doctor(_) => {
+            "j/k move  PgUp/PgDn  Home/End  s sync  r rescan  Esc back  q quit".to_string()
+        }
         Screen::Help(_) => "j/k scroll  PgUp/PgDn  Home/End  Esc back  q quit".to_string(),
         Screen::SyncReport(_) => "j/k scroll  PgUp/PgDn  Esc back  q quit".to_string(),
     }
@@ -1358,11 +1419,11 @@ fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'stati
                 )]),
             ],
         ),
-        Modal::Rename { input } => {
+        Modal::Rename { alias, input } => {
             let mut spans = vec![span("New name: ", theme.label())];
             spans.extend(input_spans(input, theme));
             (
-                "Rename alias".to_string(),
+                format!("Rename {}", text::one_line(&alias.name)),
                 vec![
                     line(spans),
                     Line::default(),
@@ -1373,6 +1434,27 @@ fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'stati
                 ],
             )
         }
+        Modal::Deleted { name } => (
+            "Record deleted elsewhere".to_string(),
+            vec![
+                line(vec![span(
+                    format!("{} was deleted in another front end.", text::one_line(name)),
+                    theme.warning(),
+                )]),
+                Line::default(),
+                line(vec![span(
+                    "The draft is NOT saved. Choose explicitly:",
+                    theme.title(),
+                )]),
+                line(vec![span("d discard the draft and go back", theme.muted())]),
+                line(vec![span(
+                    "r recreate the alias from this draft",
+                    theme.warning(),
+                )]),
+                Line::default(),
+                line(vec![span("Esc/D discard", theme.muted())]),
+            ],
+        ),
         Modal::TagFilter { entries, cursor } => {
             let mut lines = Vec::new();
             let visible = area.height.saturating_sub(6).max(1) as usize;
@@ -1503,6 +1585,20 @@ mod tests {
     }
 
     #[test]
+    fn wrapped_row_count_accounts_for_spaces_wide_chars_and_long_tokens() {
+        let width = 10;
+        assert_eq!(super::wrapped_text_rows("short", width), 1);
+        assert_eq!(super::wrapped_text_rows("one two three four", width), 2);
+        // A long unbroken token is broken into width-sized rows.
+        assert_eq!(super::wrapped_text_rows(&"x".repeat(25), width), 3);
+        // CJK cells count as two.
+        assert_eq!(super::wrapped_text_rows("中文中文中文", width), 2);
+        let lines = vec![Line::from("one two three four"), Line::from("short")];
+        assert_eq!(super::wrapped_rows(&lines, width), 3);
+        assert_eq!(super::wrapped_rows(&[], width), 1);
+    }
+
+    #[test]
     fn layout_switches_wide_narrow_and_too_small() {
         assert_eq!(
             browser_layout(Rect::new(0, 0, 120, 40)),
@@ -1537,8 +1633,100 @@ mod tests {
         app.reload();
         let rendered = render_string(&mut app, 40, 15);
         assert!(rendered.contains("Terminal too small"));
-        assert!(rendered.contains("80x20"));
+        assert!(rendered.contains("80x24"));
         // The app did not panic and no layout metrics were invented.
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn too_small_state_ignores_destructive_keys_and_clears_modals() {
+        let (root, mut app) = test_app("too-small-guard");
+        let alias = seed(&app, "gs", "git");
+        app.reload();
+        app.modal = Some(Modal::ConfirmDelete {
+            alias: alias.clone(),
+        });
+        // 80x23 is one row below the advertised 80x24 minimum.
+        let rendered = render_string(&mut app, 80, 23);
+        assert!(app.too_small);
+        assert!(app.modal.is_none(), "invisible modal must be cleared");
+        assert!(rendered.contains("Terminal too small"));
+        assert!(rendered.contains("80x24"));
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(app.modal.is_none());
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('y'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert_eq!(app.snapshot.aliases.len(), 1);
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('q'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(app.should_quit);
+
+        // 80x24 is usable again.
+        app.should_quit = false;
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(!app.too_small);
+        assert!(rendered.contains("gs"));
+
+        // Ctrl+C in a dirty editor at the too-small size cannot arm an
+        // invisible confirmation either.
+        app.screen = Screen::Editor(Box::new(Editor::new(Some(&alias))));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.description = "dirty".into();
+        }
+        let rendered = render_string(&mut app, 80, 23);
+        assert!(app.too_small);
+        assert!(rendered.contains("Terminal too small"));
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('c'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        assert!(app.should_quit);
+        assert!(app.modal.is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn editor_scroll_uses_the_narrow_pane_height_and_wrapped_rows() {
+        let (root, mut app) = test_app("editor-scroll");
+        let alias = seed(&app, "gs", "git");
+        app.reload();
+        app.screen = Screen::Editor(Box::new(Editor::new(Some(&alias))));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.advanced = true;
+            editor.set_field(Field::Tags);
+            editor.draft.description = "short".into();
+        }
+        let _ = render_string(&mut app, 80, 24);
+        let short_scroll = match &app.screen {
+            Screen::Editor(editor) => editor.scroll,
+            _ => panic!("editor"),
+        };
+        assert!(
+            short_scroll > 0,
+            "the selected Tags field is below an 11-row narrow viewport"
+        );
+
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.description = "wrapped description ".repeat(40);
+        }
+        let _ = render_string(&mut app, 80, 24);
+        let long_scroll = match &app.screen {
+            Screen::Editor(editor) => editor.scroll,
+            _ => panic!("editor"),
+        };
+        assert!(
+            long_scroll > short_scroll,
+            "wrapped rows must push the selected field further down"
+        );
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

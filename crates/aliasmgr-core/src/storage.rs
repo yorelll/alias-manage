@@ -4,7 +4,7 @@ use crate::{
     model::{record_checksum, AliasRecord, PathRestriction, ShellKind},
 };
 use chrono::{DateTime, Utc};
-use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::{
     path::{Path, PathBuf},
     str::FromStr,
@@ -586,7 +586,10 @@ impl Database {
         expected_revision: i64,
         tombstones: &[(String, ShellKind, i64)],
     ) -> Result<bool, AliasError> {
-        let tx = self.conn.unchecked_transaction()?;
+        // IMMEDIATE takes the write lock before the revision read. A DEFERRED
+        // transaction could read an older WAL snapshot and then fail the write
+        // with SQLITE_BUSY_SNAPSHOT instead of the intended conflict path.
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
         let changed = self.update_alias_inner(alias, Some(expected_revision))?;
         if changed {
             for (name, shell, revision) in tombstones {
@@ -615,7 +618,10 @@ impl Database {
         id: Uuid,
         expected_revision: Option<i64>,
     ) -> Result<bool, AliasError> {
-        let tx = self.conn.unchecked_transaction()?;
+        // IMMEDIATE takes the write lock before the revision read. A DEFERRED
+        // transaction could read an older WAL snapshot and then fail the write
+        // with SQLITE_BUSY_SNAPSHOT instead of the intended conflict path.
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
         let stored = tx
             .query_row(
                 "SELECT name, revision, shells_json FROM aliases WHERE id = ?1",
