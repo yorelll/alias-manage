@@ -88,3 +88,18 @@
   ```
   🤖 Generated with [Claude Code](https://claude.com/claude-code)
   ```
+
+## CI 验证
+
+- 远程 GitHub Actions 验证可用 `gh.exe`（或 `gh`）监控：`gh run list`、`gh run watch <id>`、`gh run view <id> --log`、`gh run download <id>`。
+- CI 结果只能作为自动化边界的证据，不得用来填写 `docs/task21-2/test-matrix.md` 的人工验收结果。
+- 需要 CI artifact 时，记录 run id、commit SHA、artifact 名称与 SHA256。
+
+## 新 CLI / TUI 功能的测试要求
+
+- 新增或修改 CLI 端、TUI（后续功能）时，必须同时提供并在真实 Shell 中执行测试：
+  - 本机：Windows PowerShell 5.1、PowerShell 7（pwsh）；
+  - 远程：Bash、Zsh（`ssh guest_homeserver`）。
+- 测试应优先写成可重复执行的小脚本（放在 `scripts/` 或临时目录），覆盖新增参数/交互路径、错误路径与清理路径。
+- 每个 Shell 的结果独立记录，不能用一种 Shell 的结果替代另一种。
+- 测试脚本与证据必须满足本文件“测试证据要求”；测试后清理临时配置根、脚本、二进制与远端临时目录。
