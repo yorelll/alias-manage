@@ -6,10 +6,12 @@ import {
   TARGET_TYPES,
   aliasFiltersActive,
   clearAliasFilters,
+  detectionSourceLabel,
   doctorFindingText,
   emptyAliasDraft,
   environmentToRows,
   finalizeAliasDraft,
+  findingCodeLabel,
   fixedArgsPlaceholderHint,
   importContentArgs,
   importReportCounts,
@@ -32,6 +34,7 @@ import {
   parseKeepCount,
   parseKeepCountInput,
   pathModeLabel,
+  pathOriginLabel,
   previewAliasArgs,
   rowsToEnvironment,
   settingsDirty,
@@ -103,7 +106,11 @@ test("status shell text prefers installed_shells and falls back to the detected 
   assert.equal(statusShellText({
     version: "0.1.0", detected_shell: "bash", detection_source: "shell_env", config_directory: "/tmp",
     installed_shells: null,
-  }), "Bash (shell_env)");
+  }), "Bash (Shell 环境变量)");
+  assert.equal(statusShellText({
+    version: "0.1.0", detected_shell: "bash", detection_source: "shell_env", config_directory: "/tmp",
+    installed_shells: null,
+  }, "en"), "Bash (shell environment)");
   assert.equal(statusShellText({
     version: "0.1.0", detected_shell: null, detection_source: "installed", config_directory: "/tmp",
   }), "未检测到");
@@ -143,6 +150,28 @@ test("display labels cover every shell, target type, and path mode in both langu
   assert.equal(pathModeLabel("relative_to_working_directory"), "相对于工作目录");
   assert.equal(pathModeLabel(null, "en"), "Not recorded");
   assert.equal(pathModeLabel(null), "未记录");
+});
+
+test("controlled enum displays are localized and unknown values stay raw", () => {
+  assert.equal(pathOriginLabel("gui_file_picker", "en"), "GUI file picker");
+  assert.equal(pathOriginLabel("gui_file_picker"), "GUI 文件选择器");
+  assert.equal(pathOriginLabel("cli_argument"), "CLI 参数");
+  assert.equal(pathOriginLabel("import", "en"), "Import");
+  assert.equal(pathOriginLabel("mystery_origin"), "mystery_origin");
+  assert.equal(pathOriginLabel(null, "en"), "Not recorded");
+  assert.equal(detectionSourceLabel("explicit", "en"), "explicit");
+  assert.equal(detectionSourceLabel("parent"), "父 Shell");
+  assert.equal(detectionSourceLabel("shell_env", "en"), "shell environment");
+  assert.equal(detectionSourceLabel("login_shell"), "登录 Shell");
+  assert.equal(detectionSourceLabel("installed", "en"), "installed");
+  assert.equal(detectionSourceLabel("custom_source"), "custom_source");
+  assert.equal(targetTypeLabel("raw_shell_command", "en"), "Raw shell command");
+  assert.equal(targetTypeLabel("raw_shell_command"), "原始 Shell 命令");
+  assert.equal(targetTypeLabel("totally_unknown"), "totally_unknown");
+  assert.equal(findingCodeLabel("stale", "en"), "Generated file out of date");
+  assert.equal(findingCodeLabel("stale"), "生成文件已过期");
+  assert.equal(findingCodeLabel("custom_code"), "custom_code");
+  assert.equal(findingCodeLabel(""), "问题");
 });
 
 test("fixed argument rows accept both placeholder spellings and keep literal spaces", () => {
@@ -359,6 +388,11 @@ test("overridden definitions keep metadata only and never expose captured defini
   assert.match(metadataZh, /名称: old/);
   assert.match(metadataZh, /可恢复: true/);
   assert.match(metadataZh, /捕获时间: 2026-01-01/);
+  const unnamed = normalizeOverriddenDefinitions([{ shell: "bash" }])[0];
+  assert.equal(unnamed.name, "");
+  assert.equal(overrideSummary(unnamed, "en"), "(unnamed) (Bash)");
+  assert.equal(overrideSummary(unnamed), "（未命名） (Bash)");
+  assert.match(overrideMetadataText(unnamed, "en"), /name: \(unnamed\)/);
 });
 
 test("manual-only boundary is explicit about profile, policy, and shell restart limits in both languages", () => {
@@ -588,6 +622,19 @@ test("TagInput has a real label, id, and accessible remove controls", async () =
   const tagInput = await source("TagInput");
   for (const fragment of ['htmlFor={inputId}', 'id={inputId}', "aria-label", "useId", 't("common.remove")', "datalist"]) {
     assert.ok(tagInput.includes(fragment), `tag input is missing ${fragment}`);
+  }
+});
+
+test("localized transient messages are cleared when the language changes", async () => {
+  const cases: Array<[string, string]> = [
+    ["AliasWizard", "useEffect(() => { setError(null); setPreviewError(null); }, [language]);"],
+    ["DoctorPanel", "useEffect(() => { setCopyNotice(null); }, [language]);"],
+    ["GeneratedFilePanel", "useEffect(() => { setCopied(null); setError(null); }, [language]);"],
+    ["ImportPanel", "useEffect(() => { setError(null); }, [language]);"],
+  ];
+  for (const [name, effect] of cases) {
+    const component = await source(name);
+    assert.ok(component.includes(effect), `${name} does not clear transient copy on language change`);
   }
 });
 

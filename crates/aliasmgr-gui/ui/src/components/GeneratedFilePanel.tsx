@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SHELLS, copyToClipboard, shellLabel, tauriInvoke } from "../lib";
 import { useI18n } from "../language";
 
@@ -13,6 +13,9 @@ export function GeneratedFilePanel() {
   const [copied, setCopied] = useState<string | null>(null);
   const [busy, setBusy] = useState<RunKind | null>(null);
   const requestToken = useRef(0);
+
+  // Copy notices and clipboard errors are localized; clear them on language change.
+  useEffect(() => { setCopied(null); setError(null); }, [language]);
 
   const changeShell = (value: string) => {
     requestToken.current += 1;

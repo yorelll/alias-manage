@@ -195,8 +195,10 @@ export const en = {
   "override.true": "true",
   "override.false": "false",
   "override.unknownShell": "unknown shell",
+  "override.unnamed": "(unnamed)",
   "override.kindFunction": "function",
   "override.kindAlias": "alias",
+  "override.kindSetAlias": "set-alias",
   "import.title": "Import",
   "import.hint": "Choose a JSON or TOML file. The preview is read-only; nothing is written until you confirm.",
   "import.fileLabel": "Import file (.json or .toml)",
@@ -293,11 +295,20 @@ export const en = {
   "target.javaJar": "Java JAR",
   "target.cmdlet": "Cmdlet",
   "target.changeDirectory": "Change directory",
+  "target.rawShellCommand": "Raw shell command",
   "target.unknown": "Unknown target type",
   "path.absolute": "Absolute",
   "path.relativeWorkingDirectory": "Relative to working directory",
   "path.relativePath": "Relative to PATH",
   "path.notRecorded": "Not recorded",
+  "pathOrigin.guiFilePicker": "GUI file picker",
+  "pathOrigin.cliArgument": "CLI argument",
+  "pathOrigin.import": "Import",
+  "detection.explicit": "explicit",
+  "detection.parent": "parent shell",
+  "detection.shellEnv": "shell environment",
+  "detection.loginShell": "login shell",
+  "detection.installed": "installed",
   "error.clipboardUnavailable": "Clipboard is not available in this environment.",
 } as const;
 
@@ -485,8 +496,10 @@ export const zh: Record<TranslationKey, string> = {
   "override.true": "true",
   "override.false": "false",
   "override.unknownShell": "未知 Shell",
+  "override.unnamed": "（未命名）",
   "override.kindFunction": "函数",
   "override.kindAlias": "别名",
+  "override.kindSetAlias": "设置别名",
   "import.title": "导入",
   "import.hint": "选择 JSON 或 TOML 文件。预览为只读，确认前不会写入任何内容。",
   "import.fileLabel": "导入文件（.json 或 .toml）",
@@ -583,11 +596,20 @@ export const zh: Record<TranslationKey, string> = {
   "target.javaJar": "Java JAR",
   "target.cmdlet": "Cmdlet",
   "target.changeDirectory": "切换目录",
+  "target.rawShellCommand": "原始 Shell 命令",
   "target.unknown": "未知目标类型",
   "path.absolute": "绝对路径",
   "path.relativeWorkingDirectory": "相对于工作目录",
   "path.relativePath": "相对于 PATH",
   "path.notRecorded": "未记录",
+  "pathOrigin.guiFilePicker": "GUI 文件选择器",
+  "pathOrigin.cliArgument": "CLI 参数",
+  "pathOrigin.import": "导入",
+  "detection.explicit": "显式指定",
+  "detection.parent": "父 Shell",
+  "detection.shellEnv": "Shell 环境变量",
+  "detection.loginShell": "登录 Shell",
+  "detection.installed": "已安装",
   "error.clipboardUnavailable": "此环境不支持剪贴板。",
 };
 
@@ -635,9 +657,12 @@ export function hasTranslation(key: string): key is TranslationKey {
 
 function interpolate(template: string, params?: Record<string, string | number>): string {
   if (!params) return template;
-  return template.replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string) => (
-    Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match
-  ));
+  // Consume doubled braces as literal text so `{{args}}` (and `{{{{args}}}}`)
+  // are never rewritten even when a caller happens to pass an `args` param.
+  return template.replace(/\{\{|\}\}|\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (match, name: string | undefined) => {
+    if (!name) return match;
+    return Object.prototype.hasOwnProperty.call(params, name) ? String(params[name]) : match;
+  });
 }
 
 /** Translate `key` into `language`, interpolating `{name}` placeholders. */

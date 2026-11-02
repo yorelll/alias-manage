@@ -66,6 +66,9 @@ test("interpolation replaces named placeholders without touching literal braces"
   assert.match(t("en", "wizard.fixedArgsHint"), /\{\{args\}\}/);
   assert.match(t("zh", "wizard.fixedArgsHint"), /\{\{args\}\}/);
   assert.match(t("en", "wizard.fixedArgsHint"), /\{\{\{\{args\}\}\}\}/);
+  // Doubled braces are literal even when the caller passes an `args` param.
+  assert.equal(t("en", "wizard.fixedArgsHint", { args: "X" }), t("en", "wizard.fixedArgsHint"));
+  assert.equal(t("zh", "wizard.fixedArgsHint", { args: "X", name: "Y" }), t("zh", "wizard.fixedArgsHint"));
 });
 
 test("App loads the persisted language at startup and keeps Chinese on failure", async () => {

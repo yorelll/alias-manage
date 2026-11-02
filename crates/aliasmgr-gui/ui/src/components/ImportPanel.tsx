@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { ImportReport, ImportSkipEntry } from "../lib";
 import {
@@ -58,6 +58,9 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
   const [busy, setBusy] = useState<"preview" | "confirm" | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const requestToken = useRef(0);
+
+  // Invalid-file/import errors are localized at render time; clear stale copy.
+  useEffect(() => { setError(null); }, [language]);
 
   const reset = () => {
     requestToken.current += 1;

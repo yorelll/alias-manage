@@ -56,6 +56,9 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
     };
   }, []);
 
+  // Localized validation/save/preview messages must not survive a language switch.
+  useEffect(() => { setError(null); setPreviewError(null); }, [language]);
+
   const invalidatePreview = () => {
     previewToken.current += 1;
     setPreviews(null);
@@ -143,7 +146,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
           </select>
           {!TARGET_TYPES.some((option) => option.value === draft.target_type) && (
             <span className="hint">
-              {t("wizard.unsupportedType", { type: draft.target_type })}
+              {t("wizard.unsupportedType", { type: targetTypeLabel(draft.target_type, language) })}
             </span>
           )}
         </label>

@@ -61,8 +61,20 @@ export function statusShellText(status: StartupStatus | null, language: Language
     ? [...new Set(status.installed_shells.filter((shell): shell is string => typeof shell === "string" && shell.length > 0))]
     : [];
   if (installed.length > 0) return installed.map((shell) => shellLabel(shell, language)).join(", ");
-  if (status.detected_shell) return `${shellLabel(status.detected_shell, language)} (${status.detection_source})`;
+  if (status.detected_shell) return `${shellLabel(status.detected_shell, language)} (${detectionSourceLabel(status.detection_source, language)})`;
   return t(language, "status.noneDetected");
+}
+
+/** Localized labels for the controlled detection-source values. */
+export function detectionSourceLabel(source: string, language: Language = DEFAULT_LANGUAGE): string {
+  switch (source) {
+    case "explicit": return t(language, "detection.explicit");
+    case "parent": return t(language, "detection.parent");
+    case "shell_env": return t(language, "detection.shellEnv");
+    case "login_shell": return t(language, "detection.loginShell");
+    case "installed": return t(language, "detection.installed");
+    default: return source;
+  }
 }
 
 /** Invalidate data-consuming pages after an import or uninstall. */
@@ -229,6 +241,7 @@ export function shellLabel(shell: string, language: Language = DEFAULT_LANGUAGE)
 }
 
 export function targetTypeLabel(value: string, language: Language = DEFAULT_LANGUAGE): string {
+  if (value === "raw_shell_command") return t(language, "target.rawShellCommand");
   const option = TARGET_TYPES.find((entry) => entry.value === value);
   return option ? t(language, option.labelKey) : (value || t(language, "target.unknown"));
 }
@@ -245,6 +258,19 @@ export function pathModeLabel(mode?: string | null, language: Language = DEFAULT
   }
 }
 
+/** Localized labels for controlled path-origin values; unknown values stay raw. */
+export function pathOriginLabel(origin?: string | null, language: Language = DEFAULT_LANGUAGE): string {
+  switch (origin) {
+    case "gui_file_picker": return t(language, "pathOrigin.guiFilePicker");
+    case "cli_argument": return t(language, "pathOrigin.cliArgument");
+    case "import": return t(language, "pathOrigin.import");
+    case null:
+    case undefined:
+    case "": return t(language, "path.notRecorded");
+    default: return origin;
+  }
+}
+
 /** Localized severity badge text; unknown severities fall back to the backend value. */
 export function severityLabel(severity: string, language: Language = DEFAULT_LANGUAGE): string {
   const key = `severity.${severity}`;
@@ -256,6 +282,7 @@ export function definitionKindLabel(kind: string, language: Language = DEFAULT_L
   switch (kind) {
     case "function": return t(language, "override.kindFunction");
     case "alias": return t(language, "override.kindAlias");
+    case "set_alias": return t(language, "override.kindSetAlias");
     default: return kind;
   }
 }
@@ -488,6 +515,12 @@ export interface DoctorFindingText {
  * Prefer local copy for known diagnostic codes in both languages; unknown
  * codes fall back to the backend text (which may already be localized).
  */
+export function findingCodeLabel(code: string, language: Language = DEFAULT_LANGUAGE): string {
+  const titleKey = `doctor.code.${code}.title`;
+  if (hasTranslation(titleKey)) return t(language, titleKey);
+  return code || t(language, "doctor.findingFallback");
+}
+
 export function doctorFindingText(finding: DoctorFinding, language: Language = DEFAULT_LANGUAGE): DoctorFindingText {
   const titleKey = `doctor.code.${finding.code}.title`;
   if (hasTranslation(titleKey)) {
@@ -500,7 +533,7 @@ export function doctorFindingText(finding: DoctorFinding, language: Language = D
     };
   }
   return {
-    title: finding.code || t(language, "doctor.findingFallback"),
+    title: findingCodeLabel(finding.code, language),
     message: finding.message || t(language, "doctor.noMessage"),
     action: finding.action,
   };
@@ -522,7 +555,7 @@ export interface OverriddenDefinition {
 export function normalizeOverriddenDefinitions(value: unknown): OverriddenDefinition[] {
   if (!Array.isArray(value)) return [];
   return value.filter(isRecord).map((entry) => ({
-    name: typeof entry.name === "string" && entry.name ? entry.name : "(unnamed)",
+    name: typeof entry.name === "string" ? entry.name : "",
     shell: normalizeShellValue(entry.shell),
     definition_kind: typeof entry.definition_kind === "string" && entry.definition_kind ? entry.definition_kind : "function",
     recoverable: entry.recoverable === true || entry.recoverable === 1 || entry.recoverable === "true",
@@ -537,7 +570,7 @@ export function normalizeOverriddenDefinitions(value: unknown): OverriddenDefini
 export function overrideMetadataText(entry: OverriddenDefinition, language: Language = DEFAULT_LANGUAGE): string {
   return [
     t(language, "override.header"),
-    `${t(language, "override.name")}: ${entry.name}`,
+    `${t(language, "override.name")}: ${entry.name || t(language, "override.unnamed")}`,
     `${t(language, "override.shell")}: ${entry.shell || t(language, "override.unknown")}`,
     `${t(language, "override.kind")}: ${definitionKindLabel(entry.definition_kind, language)}`,
     `${t(language, "override.recoverable")}: ${entry.recoverable ? t(language, "override.true") : t(language, "override.false")}`,
@@ -546,7 +579,7 @@ export function overrideMetadataText(entry: OverriddenDefinition, language: Lang
 }
 
 export function overrideSummary(entry: OverriddenDefinition, language: Language = DEFAULT_LANGUAGE): string {
-  return `${entry.name} (${entry.shell ? shellLabel(entry.shell, language) : t(language, "override.unknownShell")})`;
+  return `${entry.name || t(language, "override.unnamed")} (${entry.shell ? shellLabel(entry.shell, language) : t(language, "override.unknownShell")})`;
 }
 
 export interface Settings {

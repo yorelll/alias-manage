@@ -1,6 +1,6 @@
 import { Fragment, useState } from "react";
 import type { AliasDto } from "../lib";
-import { pathModeLabel, shellLabel, targetTypeLabel } from "../lib";
+import { pathModeLabel, pathOriginLabel, shellLabel, targetTypeLabel } from "../lib";
 import { useI18n } from "../language";
 
 interface AliasTableProps {
@@ -102,7 +102,7 @@ export function AliasTable({ aliases, onEdit, onToggle, onDelete, onCancelDelete
                           ? <ul className="detail-env">{env.map(([key, value]) => <li key={key}><code>{key}</code> = <code>{value}</code></li>)}</ul>
                           : "—"}</dd>
                         <dt>{t("detail.pathMode")}</dt><dd>{pathModeLabel(alias.path_mode, language)}</dd>
-                        <dt>{t("detail.pathOrigin")}</dt><dd>{alias.path_origin ?? "—"}</dd>
+                        <dt>{t("detail.pathOrigin")}</dt><dd>{pathOriginLabel(alias.path_origin, language)}</dd>
                         <dt>{t("detail.revision")}</dt><dd>{alias.revision}</dd>
                         <dt>{t("detail.id")}</dt><dd className="mono">{alias.id}</dd>
                       </dl>

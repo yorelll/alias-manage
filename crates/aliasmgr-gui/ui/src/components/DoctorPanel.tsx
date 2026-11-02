@@ -31,6 +31,9 @@ export function DoctorPanel() {
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
+  // Copy notices are built from localized copy; drop them when the language changes.
+  useEffect(() => { setCopyNotice(null); }, [language]);
+
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
