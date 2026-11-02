@@ -32,7 +32,6 @@ fn environment_root_drives_add_sync_and_reload_without_local_fallback() {
             description: None,
             restrict: None,
             restrict_paths: vec![],
-            clear_restriction: false,
             no_pass_args: false,
             target_type: None,
             path_mode: None,

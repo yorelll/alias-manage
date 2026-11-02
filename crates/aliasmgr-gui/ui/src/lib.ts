@@ -357,9 +357,46 @@ export function normalizeRestriction(
   return { mode: restriction.mode, paths };
 }
 
-/** Absolute path check used by the wizard; existence is not required. */
-export function isAbsolutePath(value: string): boolean {
-  return value.startsWith("/") || /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+/**
+ * Fold a path typed into the wizard input but not yet confirmed with Enter or
+ * the Add button into the draft, so saving or previewing never silently drops
+ * it.
+ */
+export function foldRestrictionPath(draft: AliasDto, pending: string): AliasDto {
+  const path = pending.trim();
+  if (!path || !draft.restriction || draft.restriction.paths.includes(path)) {
+    return draft;
+  }
+  return {
+    ...draft,
+    restriction: { ...draft.restriction, paths: [...draft.restriction.paths, path] },
+  };
+}
+
+export type PathPlatform = "windows" | "posix";
+
+/** Best-effort host platform detection for path-form validation. */
+export function detectPathPlatform(): PathPlatform {
+  const nav = (globalThis as {
+    navigator?: { platform?: string; userAgent?: string };
+  }).navigator;
+  const value = `${nav?.platform ?? ""} ${nav?.userAgent ?? ""}`;
+  return /win/i.test(value) ? "windows" : "posix";
+}
+
+/**
+ * Absolute path check used by the wizard; existence is not required. The
+ * platform argument mirrors Rust's `Path::is_absolute`, so a Windows host
+ * rejects POSIX paths and vice versa.
+ */
+export function isAbsolutePath(
+  value: string,
+  platform: PathPlatform = detectPathPlatform(),
+): boolean {
+  if (platform === "windows") {
+    return /^[A-Za-z]:[\\/]/.test(value) || value.startsWith("\\\\");
+  }
+  return value.startsWith("/");
 }
 
 export function validateAliasDraft(draft: AliasDto, language: Language = DEFAULT_LANGUAGE): string[] {

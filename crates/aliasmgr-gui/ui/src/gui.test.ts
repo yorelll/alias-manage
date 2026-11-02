@@ -13,6 +13,7 @@ import {
   finalizeAliasDraft,
   findingCodeLabel,
   fixedArgsPlaceholderHint,
+  foldRestrictionPath,
   importContentArgs,
   importReportCounts,
   importSkipEntries,
@@ -667,14 +668,37 @@ test("restriction helpers trim paths, validate absolute paths, and survive edits
     { mode: "blacklist", paths: ["/srv/cache"] },
   );
 
-  assert.equal(isAbsolutePath("/srv/a"), true);
-  assert.equal(isAbsolutePath("C:\\work"), true);
-  assert.equal(isAbsolutePath("C:/work"), true);
-  assert.equal(isAbsolutePath("\\\\server\\share"), true);
-  assert.equal(isAbsolutePath("relative/path"), false);
+  assert.equal(isAbsolutePath("/srv/a", "posix"), true);
+  assert.equal(isAbsolutePath("C:\\work", "windows"), true);
+  assert.equal(isAbsolutePath("C:/work", "windows"), true);
+  assert.equal(isAbsolutePath("\\\\server\\share", "windows"), true);
+  assert.equal(isAbsolutePath("relative/path", "posix"), false);
+  assert.equal(isAbsolutePath("/srv/a", "windows"), false);
+  assert.equal(isAbsolutePath("C:\\work", "posix"), false);
   assert.equal(restrictionModeLabel("whitelist", "en"), "whitelist");
   assert.equal(restrictionModeLabel("blacklist", "zh"), "黑名单");
   assert.equal(restrictionModeLabel("custom", "en"), "custom");
+
+  const restrictedDraft = {
+    ...baseAlias(),
+    restriction: { mode: "whitelist" as const, paths: ["/srv/a"] },
+  };
+  assert.deepEqual(foldRestrictionPath(restrictedDraft, " /srv/b ").restriction, {
+    mode: "whitelist",
+    paths: ["/srv/a", "/srv/b"],
+  });
+  assert.deepEqual(foldRestrictionPath(restrictedDraft, " /srv/a ").restriction, {
+    mode: "whitelist",
+    paths: ["/srv/a"],
+  });
+  assert.deepEqual(foldRestrictionPath(restrictedDraft, "   ").restriction, {
+    mode: "whitelist",
+    paths: ["/srv/a"],
+  });
+  assert.equal(
+    foldRestrictionPath({ ...baseAlias(), restriction: null }, "/srv/b").restriction,
+    null,
+  );
 
   const original = baseAlias();
   const edited = {

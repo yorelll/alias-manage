@@ -194,8 +194,6 @@ pub struct AddArgs {
     pub restrict: Option<RestrictionModeArg>,
     #[arg(long = "restrict-path")]
     pub restrict_paths: Vec<String>,
-    #[arg(long, conflicts_with_all = ["restrict", "restrict_paths"])]
-    pub clear_restriction: bool,
     #[arg(long)]
     pub no_pass_args: bool,
     #[arg(long, value_enum)]

@@ -15,7 +15,6 @@ fn args(name: &str) -> AddArgs {
         description: None,
         restrict: None,
         restrict_paths: vec![],
-        clear_restriction: false,
         no_pass_args: false,
         target_type: None,
         path_mode: None,

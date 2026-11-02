@@ -59,6 +59,31 @@ impl RestrictionMode {
     }
 }
 
+impl PathRestriction {
+    /// Trim every path, drop blanks, and deduplicate while preserving order.
+    pub fn normalized(&self) -> Self {
+        let mut paths: Vec<String> = Vec::new();
+        for path in &self.paths {
+            let trimmed = path.trim();
+            if trimmed.is_empty() || paths.iter().any(|existing| existing == trimmed) {
+                continue;
+            }
+            paths.push(trimmed.to_string());
+        }
+        Self {
+            mode: self.mode,
+            paths,
+        }
+    }
+}
+
+/// Normalizes an optional restriction in place. `None` stays `None`.
+pub fn normalize_restriction(restriction: &mut Option<PathRestriction>) {
+    if let Some(value) = restriction.as_ref() {
+        *restriction = Some(value.normalized());
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum PathOrigin {
@@ -224,5 +249,29 @@ mod tests {
     #[test]
     fn unknown_enum_value_is_rejected() {
         assert!(serde_json::from_str::<ShellKind>("\"unknown\"").is_err());
+    }
+
+    #[test]
+    fn restriction_normalization_trims_dedupes_and_drops_blanks() {
+        let restriction = PathRestriction {
+            mode: RestrictionMode::Blacklist,
+            paths: vec![
+                " /a ".into(),
+                "".into(),
+                "   ".into(),
+                "/a".into(),
+                "/b".into(),
+            ],
+        };
+        let normalized = restriction.normalized();
+        assert_eq!(normalized.mode, RestrictionMode::Blacklist);
+        assert_eq!(normalized.paths, vec!["/a", "/b"]);
+
+        let mut none = None;
+        normalize_restriction(&mut none);
+        assert_eq!(none, None);
+        let mut some = Some(restriction);
+        normalize_restriction(&mut some);
+        assert_eq!(some.unwrap().paths, vec!["/a", "/b"]);
     }
 }

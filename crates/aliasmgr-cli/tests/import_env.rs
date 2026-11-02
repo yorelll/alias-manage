@@ -22,7 +22,6 @@ fn preview_and_confirm_agree_when_only_the_environment_config_dir_is_set() {
         description: None,
         restrict: None,
         restrict_paths: vec![],
-        clear_restriction: false,
         no_pass_args: false,
         target_type: None,
         path_mode: None,

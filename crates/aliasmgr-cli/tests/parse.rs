@@ -171,10 +171,22 @@ fn parses_description_and_restriction_flags() {
             assert_eq!(args.description.as_deref(), Some("Remove build output"));
             assert!(matches!(args.restrict, Some(RestrictionModeArg::Whitelist)));
             assert_eq!(args.restrict_paths, vec!["/srv/project", "/srv/shared"]);
-            assert!(!args.clear_restriction);
         }
         _ => panic!("expected add"),
     }
+
+    assert!(
+        Cli::try_parse_from([
+            "aliasmgr",
+            "add",
+            "rma",
+            "--exec",
+            "rm",
+            "--clear-restriction"
+        ])
+        .is_err(),
+        "add must not accept --clear-restriction"
+    );
 
     let cli = Cli::try_parse_from([
         "aliasmgr",

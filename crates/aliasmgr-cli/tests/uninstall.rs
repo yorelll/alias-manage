@@ -61,7 +61,6 @@ fn cli_uninstall_removes_marked_loader_blocks_and_keeps_user_content_and_targets
         description: None,
         restrict: None,
         restrict_paths: vec![],
-        clear_restriction: false,
         no_pass_args: false,
         target_type: None,
         path_mode: None,

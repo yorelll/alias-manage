@@ -1,6 +1,6 @@
 use crate::{
     error::AliasError,
-    model::{record_checksum, AliasRecord},
+    model::{normalize_restriction, record_checksum, AliasRecord},
     search::{search, SearchQuery, SearchResult},
     storage::Database,
     validation::validate_alias,
@@ -35,6 +35,7 @@ impl<'a> AliasService<'a> {
     }
 
     pub fn create(&self, mut alias: AliasRecord) -> Result<AliasRecord, AliasError> {
+        normalize_restriction(&mut alias.restriction);
         validate_alias(&alias)?;
         alias.record_checksum = record_checksum(&alias)?;
         self.database.insert_alias(&alias)?;
@@ -42,6 +43,7 @@ impl<'a> AliasService<'a> {
     }
 
     pub fn update(&self, mut alias: AliasRecord) -> Result<AliasRecord, AliasError> {
+        normalize_restriction(&mut alias.restriction);
         validate_alias(&alias)?;
         alias.record_checksum = record_checksum(&alias)?;
         if !self.database.update_alias(&alias)? {
@@ -140,5 +142,45 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].created_at, stored.created_at);
         assert_eq!(listed[0].description, "changed by gui");
+    }
+
+    #[test]
+    fn service_normalizes_restriction_paths_on_create_and_update() {
+        let database = Database::open_in_memory().unwrap();
+        let service = AliasService::new(&database);
+        let path = std::env::temp_dir()
+            .join("aliasmgr-service-restriction")
+            .to_string_lossy()
+            .into_owned();
+        let created = service
+            .create(AliasRecord {
+                name: "rma".into(),
+                executable: "rm".into(),
+                restriction: Some(crate::model::PathRestriction {
+                    mode: crate::model::RestrictionMode::Whitelist,
+                    paths: vec![format!(" {path} "), path.clone()],
+                }),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(
+            created.restriction.as_ref().unwrap().paths,
+            vec![path.clone()]
+        );
+
+        let mut update = created;
+        update.restriction = Some(crate::model::PathRestriction {
+            mode: crate::model::RestrictionMode::Blacklist,
+            paths: vec![format!("  {path}  ")],
+        });
+        let saved = service.update(update).unwrap();
+        assert_eq!(
+            saved.restriction.as_ref().unwrap().paths,
+            vec![path.clone()]
+        );
+        assert_eq!(
+            saved.restriction.as_ref().unwrap().mode,
+            crate::model::RestrictionMode::Blacklist
+        );
     }
 }

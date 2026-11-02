@@ -318,7 +318,7 @@ fn render_shell_preview(alias: &AliasRecord, shell: &ShellKind) -> Result<String
         ShellKind::Bash => bash::render(alias, &names),
         ShellKind::Zsh => zsh::render(alias, &names),
         ShellKind::PowerShell5 | ShellKind::PowerShell7 => {
-            powershell::render(alias, shell.clone(), &names)
+            powershell::render_with_restriction_support(alias, shell.clone(), &names)
         }
         other => return Err(format!("unsupported shell: {}", shell_kind_to_str(other))),
     }

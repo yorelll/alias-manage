@@ -211,3 +211,30 @@ fn binary_doctor_reports_a_tampered_generated_file() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn binary_rejects_relative_restriction_path_with_validation_exit_code() {
+    let root = temp_root("restriction-exit");
+    std::fs::create_dir_all(&root).unwrap();
+    let output = run(
+        &root,
+        &[
+            "add",
+            "rma",
+            "--exec",
+            "rm",
+            "--restrict",
+            "whitelist",
+            "--restrict-path",
+            "relative/path",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(5), "stderr: {}", stderr(&output));
+    assert!(
+        stderr(&output).contains("absolute path for this platform"),
+        "stderr: {}",
+        stderr(&output)
+    );
+    assert!(!root.join("aliases.db").exists());
+    let _ = std::fs::remove_dir_all(root);
+}

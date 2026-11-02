@@ -297,11 +297,25 @@ pub fn import_records(
         }
         // Imports must satisfy the same rules as `add`/`create`; otherwise a
         // file could persist names the CLI itself rejects (invalid characters
-        // or PowerShell-reserved names). The warning carries only the error
-        // text, never environment values.
+        // or PowerShell-reserved names). Normalize restriction paths first so
+        // surrounding whitespace is never persisted. The warning carries only
+        // the error text, never environment values.
+        crate::model::normalize_restriction(&mut alias.restriction);
         if let Err(error) = validate_alias(&alias) {
+            let cross_platform = alias.restriction.is_some()
+                && matches!(
+                    &error,
+                    AliasError::InvalidAliasRecord(message) if message.contains("absolute path for this platform")
+                );
+            let reason = if cross_platform {
+                format!(
+                    "restriction path is not absolute on this platform; records with cross-platform restriction paths are skipped wholesale ({error})"
+                )
+            } else {
+                error.to_string()
+            };
             report.warnings.push(format!(
-                "invalid alias rejected: {} ({error})",
+                "invalid alias rejected: {} ({reason})",
                 sanitized_name(&alias.name)
             ));
             report.skipped.push(alias.name);
@@ -877,5 +891,79 @@ mod tests {
         let report = import_records(records, &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
         assert_eq!(report.imported, vec!["old"]);
         assert_eq!(report.accepted_records[0].restriction, None);
+    }
+
+    #[test]
+    fn import_normalizes_untrimmed_restriction_paths_before_persisting() {
+        let base = std::env::temp_dir().join("aliasmgr-normalized-restriction");
+        let path = base.to_string_lossy().into_owned();
+        let alias = AliasRecord {
+            name: "trimmed".into(),
+            executable: "rm".into(),
+            restriction: Some(crate::model::PathRestriction {
+                mode: crate::model::RestrictionMode::Whitelist,
+                paths: vec![format!("  {path}  "), "".into(), path.clone()],
+            }),
+            ..Default::default()
+        };
+        let report = import_records(vec![alias], &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
+        assert_eq!(report.imported, vec!["trimmed"]);
+        let accepted = &report.accepted_records[0];
+        assert_eq!(
+            accepted.restriction.as_ref().unwrap().paths,
+            vec![path.clone()]
+        );
+
+        let database = crate::storage::Database::open_in_memory().unwrap();
+        database
+            .insert_aliases_atomic(&report.accepted_records)
+            .unwrap();
+        let stored = database.get_alias_by_name("trimmed").unwrap().unwrap();
+        assert_eq!(
+            stored.restriction.as_ref().unwrap().paths,
+            vec![path.clone()]
+        );
+        let text = crate::shells::bash::render(
+            &stored,
+            &crate::model::ManagedNameSet {
+                current: vec![],
+                retired: vec![],
+            },
+        )
+        .unwrap();
+        assert!(text.contains(&format!("builtin cd -- '{path}'")), "{text}");
+        assert!(!text.contains("builtin cd -- '  "), "{text}");
+    }
+
+    #[test]
+    fn cross_platform_restriction_paths_skip_the_whole_record() {
+        let foreign = if cfg!(windows) {
+            "/srv/project"
+        } else {
+            r"C:\srv\project"
+        };
+        let alias = AliasRecord {
+            name: "foreign".into(),
+            executable: "rm".into(),
+            restriction: Some(crate::model::PathRestriction {
+                mode: crate::model::RestrictionMode::Blacklist,
+                paths: vec![foreign.into()],
+            }),
+            ..Default::default()
+        };
+        let report = import_records(vec![alias], &BTreeMap::new(), ConflictStrategy::Ask).unwrap();
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["foreign"]);
+        assert!(report.accepted_records.is_empty());
+        let warning = report
+            .warnings
+            .iter()
+            .find(|warning| warning.contains("invalid alias rejected"))
+            .expect("cross-platform restriction must warn");
+        assert!(warning.contains("cross-platform"), "{warning}");
+        assert!(
+            warning.contains("not absolute on this platform"),
+            "{warning}"
+        );
     }
 }

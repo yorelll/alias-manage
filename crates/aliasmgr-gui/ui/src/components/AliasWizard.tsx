@@ -7,6 +7,7 @@ import {
   environmentToRows,
   finalizeAliasDraft,
   fixedArgsPlaceholderHint,
+  foldRestrictionPath,
   latestPreviewResponse,
   normalizePreviewSnippets,
   previewAliasArgs,
@@ -78,7 +79,10 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
     update({ environment: rowsToEnvironment(rows) });
   };
 
-  const currentDraft = () => ({ ...draft, environment: rowsToEnvironment(envRows) });
+  const currentDraft = () => foldRestrictionPath(
+    { ...draft, environment: rowsToEnvironment(envRows) },
+    restrictionPath,
+  );
 
   const restriction = draft.restriction ?? null;
   const setRestriction = (next: PathRestriction | null) => update({ restriction: next });
@@ -211,11 +215,14 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
           <input
             type="checkbox"
             checked={restriction !== null}
-            onChange={(event) => update({
-              restriction: event.target.checked
-                ? { mode: "whitelist", paths: [] }
-                : null,
-            })}
+            onChange={(event) => {
+              if (!event.target.checked) setRestrictionPath("");
+              update({
+                restriction: event.target.checked
+                  ? { mode: "whitelist", paths: [] }
+                  : null,
+              });
+            }}
           />
           <span>{t("wizard.restriction")}</span>
         </label>

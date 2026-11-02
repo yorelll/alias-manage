@@ -63,39 +63,60 @@ fn render_wrapper(alias: &AliasRecord, body: &str) -> String {
 fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
     let restriction = alias.restriction.as_ref()?;
     let mut lines = vec![
-        "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_restriction_hit".to_string(),
+        "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_hit __aliasmgr_cwd_cmp __aliasmgr_dir_cmp __aliasmgr_cygpath".to_string(),
+        "__aliasmgr_cygpath=".to_string(),
+        "if command -v cygpath >/dev/null 2>&1; then __aliasmgr_cygpath=cygpath; fi".to_string(),
         "__aliasmgr_cwd=$(builtin pwd -P 2>/dev/null) || __aliasmgr_cwd=$PWD".to_string(),
-        "case \"$__aliasmgr_cwd\" in /) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac"
-            .to_string(),
-        "__aliasmgr_restriction_hit=0".to_string(),
+        "if [ -n \"$__aliasmgr_cygpath\" ]; then".to_string(),
+        "    __aliasmgr_cwd=$(\"$__aliasmgr_cygpath\" -m -- \"$__aliasmgr_cwd\" 2>/dev/null) || __aliasmgr_cwd=$PWD".to_string(),
+        "fi".to_string(),
+        "case \"$__aliasmgr_cwd\" in /|?:/) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac".to_string(),
+        "__aliasmgr_cwd_cmp=$__aliasmgr_cwd".to_string(),
+        "if [ -n \"$__aliasmgr_cygpath\" ]; then".to_string(),
+        "    __aliasmgr_cwd_cmp=$(printf '%s' \"$__aliasmgr_cwd\" | tr '[:upper:]' '[:lower:]')".to_string(),
+        "fi".to_string(),
+        "__aliasmgr_hit=0".to_string(),
     ];
     for path in &restriction.paths {
+        // `/` is the universal root. On Git Bash/Cygwin `cygpath -m /` maps to
+        // the MSYS installation directory (for example `D:/Program Files/Git`),
+        // so special-case it before canonicalization.
+        if path == "/" {
+            lines.push("__aliasmgr_hit=1".to_string());
+            continue;
+        }
         lines.push(format!(
             "__aliasmgr_dir=$(builtin cd -- {} 2>/dev/null && builtin pwd -P) || __aliasmgr_dir=",
             quote_posix(path)
         ));
+        lines.push(
+            "if [ -n \"$__aliasmgr_dir\" ] && [ -n \"$__aliasmgr_cygpath\" ]; then".to_string(),
+        );
+        lines.push("    __aliasmgr_dir=$(\"$__aliasmgr_cygpath\" -m -- \"$__aliasmgr_dir\" 2>/dev/null) || __aliasmgr_dir=".to_string());
+        lines.push("fi".to_string());
         lines.push("if [ -n \"$__aliasmgr_dir\" ]; then".to_string());
         lines.push(
-            "    case \"$__aliasmgr_dir\" in /) ;; *) __aliasmgr_dir=${__aliasmgr_dir%/} ;; esac"
+            "    case \"$__aliasmgr_dir\" in /|?:/) ;; *) __aliasmgr_dir=${__aliasmgr_dir%/} ;; esac"
                 .to_string(),
         );
-        lines.push("    if [ \"$__aliasmgr_dir\" = / ]; then".to_string());
-        lines.push("        __aliasmgr_restriction_hit=1".to_string());
-        lines.push("    else".to_string());
-        lines.push(
-            "        case \"$__aliasmgr_cwd\" in \"$__aliasmgr_dir\"|\"$__aliasmgr_dir\"/*) __aliasmgr_restriction_hit=1 ;; esac"
-                .to_string(),
-        );
+        lines.push("    __aliasmgr_dir_cmp=$__aliasmgr_dir".to_string());
+        lines.push("    if [ -n \"$__aliasmgr_cygpath\" ]; then".to_string());
+        lines.push("        __aliasmgr_dir_cmp=$(printf '%s' \"$__aliasmgr_dir\" | tr '[:upper:]' '[:lower:]')".to_string());
         lines.push("    fi".to_string());
+        lines.push("    case \"$__aliasmgr_dir\" in".to_string());
+        lines.push("        /) __aliasmgr_hit=1 ;;".to_string());
+        lines.push("        ?:/) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"*) __aliasmgr_hit=1 ;; esac ;;".to_string());
+        lines.push("        *) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"/*) __aliasmgr_hit=1 ;; esac ;;".to_string());
+        lines.push("    esac".to_string());
         lines.push("fi".to_string());
     }
     let (condition, message) = match restriction.mode {
         RestrictionMode::Whitelist => (
-            "[ \"$__aliasmgr_restriction_hit\" -eq 0 ]",
+            "[ \"$__aliasmgr_hit\" -eq 0 ]",
             "current directory is not in the whitelist",
         ),
         RestrictionMode::Blacklist => (
-            "[ \"$__aliasmgr_restriction_hit\" -eq 1 ]",
+            "[ \"$__aliasmgr_hit\" -eq 1 ]",
             "current directory is in the blacklist",
         ),
     };
@@ -393,19 +414,27 @@ mod tests {
             ..Default::default()
         };
         let text = render(&alias, &names()).unwrap();
-        assert!(text.contains("local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_restriction_hit"));
+        assert!(text.contains(
+            "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_hit __aliasmgr_cwd_cmp __aliasmgr_dir_cmp __aliasmgr_cygpath"
+        ));
         assert!(
             text.contains("__aliasmgr_cwd=$(builtin pwd -P 2>/dev/null) || __aliasmgr_cwd=$PWD")
         );
         assert!(text.contains(
-            "case \"$__aliasmgr_cwd\" in /) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac"
+            "if command -v cygpath >/dev/null 2>&1; then __aliasmgr_cygpath=cygpath; fi"
+        ));
+        assert!(text.contains(
+            "__aliasmgr_cwd=$(\"$__aliasmgr_cygpath\" -m -- \"$__aliasmgr_cwd\" 2>/dev/null) || __aliasmgr_cwd=$PWD"
+        ));
+        assert!(text.contains(
+            "case \"$__aliasmgr_cwd\" in /|?:/) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac"
         ));
         assert!(text.contains("builtin cd -- '/srv/project one'"));
         assert!(text.contains("builtin cd -- '/srv/it'\\''s'"));
         assert!(text.contains(
-            "case \"$__aliasmgr_cwd\" in \"$__aliasmgr_dir\"|\"$__aliasmgr_dir\"/*) __aliasmgr_restriction_hit=1 ;; esac"
+            "case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"/*) __aliasmgr_hit=1 ;; esac"
         ));
-        assert!(text.contains("if [ \"$__aliasmgr_restriction_hit\" -eq 0 ]; then"));
+        assert!(text.contains("if [ \"$__aliasmgr_hit\" -eq 0 ]; then"));
         assert!(text.contains(
             "printf '%s\\n' \"aliasmgr: refusing to run 'rma' in '$__aliasmgr_cwd': current directory is not in the whitelist\" >&2"
         ));
@@ -430,9 +459,30 @@ mod tests {
             ..Default::default()
         };
         let text = render(&alias, &names()).unwrap();
-        assert!(text.contains("if [ \"$__aliasmgr_restriction_hit\" -eq 1 ]; then"));
+        assert!(text.contains("if [ \"$__aliasmgr_hit\" -eq 1 ]; then"));
         assert!(text.contains("current directory is in the blacklist"));
-        assert!(text.contains("if [ \"$__aliasmgr_dir\" = / ]; then"));
+        // `/` is special-cased before canonicalization because `cygpath -m /`
+        // points at the MSYS installation directory.
+        assert!(text.contains("__aliasmgr_hit=1"));
+        assert!(!text.contains("builtin cd -- '/'"));
+    }
+
+    #[test]
+    fn drive_root_uses_prefix_matching() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "rm".into(),
+            pass_args: false,
+            restriction: Some(PathRestriction {
+                mode: RestrictionMode::Whitelist,
+                paths: vec!["C:/".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, &names()).unwrap();
+        assert!(text.contains(
+            "        ?:/) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"*) __aliasmgr_hit=1 ;; esac ;;"
+        ));
     }
 
     #[test]

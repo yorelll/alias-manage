@@ -297,6 +297,15 @@ impl SyncCoordinator {
             ShellKind::PowerShell5 | ShellKind::PowerShell7 => powershell::render_cleanup(names),
             _ => return Err(AliasError::ShellNotInstalled),
         });
+        // The canonicalization helper is shared by every restriction guard in
+        // the file, so emit it once rather than per alias.
+        if matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7)
+            && aliases
+                .iter()
+                .any(|alias| alias.enabled && alias.restriction.is_some())
+        {
+            output.push_str(powershell::render_restriction_support());
+        }
         for alias in aliases.iter().filter(|alias| alias.enabled) {
             output.push_str(&match shell {
                 ShellKind::Bash => bash::render(alias, names)?,
@@ -786,5 +795,46 @@ mod tests {
         let bytes = fs::read(root.join("generated/powershell5.ps1")).unwrap();
         assert!(!bytes.starts_with(&[0xEF, 0xBB, 0xBF]));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn powershell_restriction_support_is_emitted_once_per_generated_file() {
+        let names = ManagedNameSet {
+            current: vec!["rma".into(), "clean".into(), "plain".into()],
+            retired: vec![],
+        };
+        let restricted = |name: &str| AliasRecord {
+            name: name.into(),
+            executable: "Remove-Item".into(),
+            restriction: Some(crate::model::PathRestriction {
+                mode: crate::model::RestrictionMode::Whitelist,
+                paths: vec!["C:\\work".into()],
+            }),
+            ..Default::default()
+        };
+        let aliases = vec![
+            restricted("rma"),
+            restricted("clean"),
+            AliasRecord {
+                name: "plain".into(),
+                executable: "git.exe".into(),
+                ..Default::default()
+            },
+        ];
+        let body = SyncCoordinator::new(std::env::temp_dir())
+            .render_shell(&aliases, &ShellKind::PowerShell7, 1, &names)
+            .unwrap();
+        assert_eq!(body.matches("# aliasmgr restriction support").count(), 1);
+        assert_eq!(
+            body.matches("function global:__aliasmgr_canonical_path")
+                .count(),
+            1
+        );
+        assert_eq!(body.matches("$PSCmdlet.WriteError").count(), 4, "{body}");
+
+        let plain = SyncCoordinator::new(std::env::temp_dir())
+            .render_shell(&aliases[2..], &ShellKind::PowerShell7, 1, &names)
+            .unwrap();
+        assert!(!plain.contains("# aliasmgr restriction support"));
     }
 }

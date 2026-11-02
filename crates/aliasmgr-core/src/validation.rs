@@ -8,6 +8,11 @@ pub fn validate_alias_name(name: &str) -> Result<(), AliasError> {
     if name.is_empty() || name.chars().count() > 64 {
         return Err(AliasError::InvalidAliasName);
     }
+    // `__aliasmgr_*` is reserved for generated guard internals. A user alias
+    // with this prefix could shadow the PowerShell canonicalization helper.
+    if name.to_ascii_lowercase().starts_with("__aliasmgr_") {
+        return Err(AliasError::InvalidAliasName);
+    }
     for (index, character) in name.chars().enumerate() {
         let valid = if index == 0 {
             character.is_ascii_alphabetic() || character == '_'
@@ -77,9 +82,14 @@ pub fn validate_restriction(alias: &AliasRecord) -> Result<(), AliasError> {
                 "restriction paths must not contain NUL".into(),
             ));
         }
+        if path.as_str() != trimmed {
+            return Err(AliasError::InvalidAliasRecord(
+                "restriction paths must not contain leading or trailing whitespace".into(),
+            ));
+        }
         if !Path::new(trimmed).is_absolute() {
             return Err(AliasError::InvalidAliasRecord(format!(
-                "restriction path must be absolute: {trimmed}"
+                "restriction path must be an absolute path for this platform (Windows drive/UNC paths on Windows, POSIX paths on Unix): {trimmed}"
             )));
         }
     }
@@ -135,6 +145,14 @@ mod tests {
             assert!(validate_alias_name(name).is_err());
         }
         assert!(validate_alias_name(&"a".repeat(65)).is_err());
+        for name in [
+            "__aliasmgr_canonical_path",
+            "__ALIASMGR_CANONICAL_PATH",
+            "__aliasmgr_",
+        ] {
+            assert!(validate_alias_name(name).is_err());
+        }
+        assert!(validate_alias_name("__user_alias").is_ok());
     }
 
     #[test]
@@ -199,6 +217,15 @@ mod tests {
             paths: vec![absolute.clone()],
         });
         assert!(validate_alias(&value).is_ok());
+
+        value.restriction = Some(PathRestriction {
+            mode: RestrictionMode::Whitelist,
+            paths: vec![format!(" {absolute} ")],
+        });
+        assert!(matches!(
+            validate_alias(&value),
+            Err(AliasError::InvalidAliasRecord(message)) if message.contains("leading or trailing whitespace")
+        ));
 
         value.restriction = Some(PathRestriction {
             mode: RestrictionMode::Whitelist,

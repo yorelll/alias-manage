@@ -6,7 +6,11 @@ use aliasmgr_core::{
         zsh,
     },
 };
-use std::{fs, path::Path, process::Command};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 fn names() -> ManagedNameSet {
     ManagedNameSet {
@@ -15,7 +19,7 @@ fn names() -> ManagedNameSet {
     }
 }
 
-fn restricted_alias(directory: &Path, blacklist: bool) -> AliasRecord {
+fn restricted_alias_with_paths(paths: Vec<String>, blacklist: bool) -> AliasRecord {
     AliasRecord {
         name: "rma".into(),
         executable: "echo".into(),
@@ -27,10 +31,14 @@ fn restricted_alias(directory: &Path, blacklist: bool) -> AliasRecord {
             } else {
                 aliasmgr_core::model::RestrictionMode::Whitelist
             },
-            paths: vec![directory.to_string_lossy().into_owned()],
+            paths,
         }),
         ..Default::default()
     }
+}
+
+fn restricted_alias(directory: &Path, blacklist: bool) -> AliasRecord {
+    restricted_alias_with_paths(vec![directory.to_string_lossy().into_owned()], blacklist)
 }
 
 fn run_wrapper(directory: &Path, script: &Path) -> std::process::Output {
@@ -236,4 +244,195 @@ fn loader_is_syntax_valid_when_sourced_by_bash() {
 fn shell_syntax_fixture_matrix_is_enabled() {
     let marker = "shell-matrix";
     assert_eq!(marker, "shell-matrix");
+}
+
+fn unique_root(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "aliasmgr-shell-{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default()
+    ))
+}
+
+fn run_with_shell(shell: &str, directory: &Path, script: &Path) -> std::process::Output {
+    Command::new(shell)
+        .arg(script)
+        .current_dir(directory)
+        .output()
+        .unwrap()
+}
+
+#[test]
+fn restricted_wrapper_whitelist_root_and_missing_dirs() {
+    if !command_available("bash") {
+        return;
+    }
+    let root = unique_root("root-missing");
+    let inside = root.join("inside");
+    fs::create_dir_all(&inside).unwrap();
+
+    let root_alias = restricted_alias_with_paths(vec!["/".into()], false);
+    let mut script = bash::render(&root_alias, &names()).unwrap();
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("root.sh");
+    fs::write(&script_path, script).unwrap();
+    let output = run_wrapper(&inside, &script_path);
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("ran"),
+        "root whitelist should allow: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let missing = root.join("does-not-exist");
+    let missing_alias =
+        restricted_alias_with_paths(vec![missing.to_string_lossy().into_owned()], false);
+    let mut script = bash::render(&missing_alias, &names()).unwrap();
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("missing.sh");
+    fs::write(&script_path, script).unwrap();
+    let output = run_wrapper(&inside, &script_path);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("current directory is not in the whitelist"));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn restricted_wrapper_reports_status_and_stops_and_for_bash() {
+    if !command_available("bash") {
+        return;
+    }
+    let root = unique_root("status-and");
+    let allowed = root.join("allowed");
+    let outside = root.join("outside");
+    for directory in [&allowed, &outside] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let alias = restricted_alias(&allowed, false);
+    let mut script = bash::render(&alias, &names()).unwrap();
+    script.push_str("\nrma\necho \"status=$?\"\nrma && echo CONTINUED\nexit 0\n");
+    let script_path = root.join("run.sh");
+    fs::write(&script_path, script).unwrap();
+
+    let denied = run_wrapper(&outside, &script_path);
+    let denied_stdout = String::from_utf8_lossy(&denied.stdout);
+    assert!(denied_stdout.contains("status=1"), "{denied_stdout}");
+    assert!(!denied_stdout.contains("CONTINUED"), "{denied_stdout}");
+    assert!(String::from_utf8_lossy(&denied.stderr)
+        .contains("current directory is not in the whitelist"));
+
+    let allowed_output = run_wrapper(&allowed, &script_path);
+    let allowed_stdout = String::from_utf8_lossy(&allowed_output.stdout);
+    assert!(allowed_stdout.contains("ran"), "{allowed_stdout}");
+    assert!(allowed_stdout.contains("status=0"), "{allowed_stdout}");
+    assert!(allowed_stdout.contains("CONTINUED"), "{allowed_stdout}");
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn restricted_wrapper_resolves_symlinked_directory() {
+    if !command_available("bash") {
+        return;
+    }
+    let root = unique_root("symlink");
+    let real = root.join("real");
+    fs::create_dir_all(&real).unwrap();
+    let link = root.join("link");
+    #[cfg(unix)]
+    let created = std::os::unix::fs::symlink(&real, &link).is_ok();
+    #[cfg(windows)]
+    let created = std::os::windows::fs::symlink_dir(&real, &link).is_ok();
+    #[cfg(not(any(unix, windows)))]
+    let created = false;
+    if !created {
+        eprintln!("skipping symlink execution test: symlink creation unavailable");
+        let _ = fs::remove_dir_all(root);
+        return;
+    }
+
+    let alias = restricted_alias(&real, false);
+    let mut script = bash::render(&alias, &names()).unwrap();
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("run.sh");
+    fs::write(&script_path, script).unwrap();
+    let output = run_wrapper(&link, &script_path);
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("ran"),
+        "symlink to allowed dir should resolve: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn restricted_wrapper_matches_cygwin_mount_aliases() {
+    if !command_available("bash") {
+        return;
+    }
+    let root = unique_root("cygwin-alias");
+    let subdirectory = root.join("sub");
+    fs::create_dir_all(&subdirectory).unwrap();
+
+    // Windows-form restriction path, invoked from a directory Git Bash may
+    // expose as /tmp/...; cygpath canonicalization must make them agree.
+    let windows_path = restricted_alias(&root, false);
+    let mut script = bash::render(&windows_path, &names()).unwrap();
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("windows.sh");
+    fs::write(&script_path, script).unwrap();
+    let output = run_wrapper(&subdirectory, &script_path);
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("ran"),
+        "Windows-form restriction should allow a Git Bash mount alias: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // MSYS-form /tmp restriction path, invoked from the Windows temp subtree.
+    let msys_path = restricted_alias_with_paths(vec!["/tmp".into()], false);
+    let mut script = bash::render(&msys_path, &names()).unwrap();
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("msys.sh");
+    fs::write(&script_path, script).unwrap();
+    let output = run_wrapper(&subdirectory, &script_path);
+    assert!(
+        output.status.success() && String::from_utf8_lossy(&output.stdout).contains("ran"),
+        "MSYS-form /tmp restriction should match the Windows temp dir: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
+fn zsh_restricted_wrapper_runs_and_denies() {
+    if !command_available("zsh") {
+        return;
+    }
+    let root = unique_root("zsh-runtime");
+    let allowed = root.join("allowed");
+    let outside = root.join("outside");
+    for directory in [&allowed, &outside] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let alias = restricted_alias(&allowed, false);
+    let mut script = zsh::render(&alias, &names()).unwrap();
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("run.zsh");
+    fs::write(&script_path, script).unwrap();
+
+    let allowed_output = run_with_shell("zsh", &allowed, &script_path);
+    assert!(
+        allowed_output.status.success()
+            && String::from_utf8_lossy(&allowed_output.stdout).contains("ran"),
+        "zsh allowed dir: {}",
+        String::from_utf8_lossy(&allowed_output.stderr)
+    );
+    let denied = run_with_shell("zsh", &outside, &script_path);
+    assert!(!denied.status.success());
+    assert!(String::from_utf8_lossy(&denied.stderr)
+        .contains("current directory is not in the whitelist"));
+    let _ = fs::remove_dir_all(root);
 }

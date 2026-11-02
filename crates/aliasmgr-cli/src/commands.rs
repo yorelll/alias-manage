@@ -4,7 +4,10 @@ use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
 use aliasmgr_core::{
     config::AppPaths,
     error::AliasError,
-    model::{record_checksum, AliasRecord, PathRestriction, ShellKind, ShellStatus},
+    model::{
+        normalize_restriction, record_checksum, AliasRecord, PathRestriction, ShellKind,
+        ShellStatus,
+    },
     storage::Database,
     validation::validate_alias,
 };
@@ -80,11 +83,7 @@ fn trimmed_restriction_paths(paths: &[String]) -> Vec<String> {
 fn new_alias_restriction(
     mode: Option<RestrictionModeArg>,
     paths: &[String],
-    clear: bool,
 ) -> Result<Option<PathRestriction>, AliasError> {
-    if clear {
-        return Ok(None);
-    }
     let paths = trimmed_restriction_paths(paths);
     match mode {
         Some(mode) => {
@@ -165,11 +164,7 @@ pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, Alia
         working_directory: args.cwd.clone(),
         environment: parse_environment(&args.environment)?,
         tags: args.tags.clone(),
-        restriction: new_alias_restriction(
-            args.restrict,
-            &args.restrict_paths,
-            args.clear_restriction,
-        )?,
+        restriction: new_alias_restriction(args.restrict, &args.restrict_paths)?,
         ..Default::default()
     };
     if let Some(target_type) = args.target_type {
@@ -181,6 +176,7 @@ pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, Alia
     if !args.shell.is_empty() {
         alias.shells = parse_shells(&args.shell)?;
     }
+    normalize_restriction(&mut alias.restriction);
     validate_alias(&alias)?;
     alias.record_checksum = record_checksum(&alias)?;
     database(config_dir)?.insert_alias(&alias)?;
@@ -316,6 +312,7 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
         &args.restrict_paths,
         args.clear_restriction,
     )?;
+    normalize_restriction(&mut alias.restriction);
     if let Some(target_type) = args.target_type {
         alias.target_type = target_type.into();
     }
