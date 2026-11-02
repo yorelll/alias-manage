@@ -204,6 +204,181 @@ export function fixedArgsPlaceholderHint(language: Language = DEFAULT_LANGUAGE):
   return t(language, "wizard.fixedArgsHint");
 }
 
+/** Explanation shown next to the wizard's target-type selector. */
+export function targetTypeExplanation(language: Language = DEFAULT_LANGUAGE): string {
+  return t(language, "wizard.targetTypeHint");
+}
+
+function looksLikePath(executable: string): boolean {
+  return /[\\/]/.test(executable);
+}
+
+/**
+ * Warn when a target contains whitespace that probably belongs in fixed
+ * arguments. This is advisory only: the draft is never rewritten, so existing
+ * records that intentionally use spaces keep working.
+ *
+ * `native_executable` with a real path (contains a separator) is accepted; a
+ * bare `python test.py` is flagged because the executor treats it as one
+ * program name.
+ */
+export function targetExecutableWarning(draft: AliasDto, language: Language = DEFAULT_LANGUAGE): string | null {
+  const executable = draft.executable.trim();
+  if (!/\s/.test(executable)) return null;
+  if (draft.target_type === "batch") return null;
+  if (draft.target_type === "native_executable") {
+    if (looksLikePath(executable)) return null;
+    const [program, ...rest] = executable.split(/\s+/);
+    if (rest.length === 0) return null;
+    return t(language, "wizard.targetWhitespaceNative", {
+      program,
+      rest: rest.join(" "),
+    });
+  }
+  return t(language, "wizard.targetWhitespaceScript");
+}
+
+export type DoctorAction = "sync" | "install_loader";
+
+const DOCTOR_SYNC_CODES: ReadonlySet<string> = new Set([
+  "generated_missing",
+  "generated_unreadable",
+  "generated_modified",
+  "render_failed",
+  "stale",
+  "sync_failed",
+]);
+
+/** Which actionable button (if any) a Doctor finding offers. */
+export function doctorActionFor(finding: DoctorFinding): DoctorAction | null {
+  if (finding.code === "loader_missing") {
+    return finding.shell ? "install_loader" : null;
+  }
+  if (DOCTOR_SYNC_CODES.has(finding.code)) return "sync";
+  return null;
+}
+
+export function doctorActionLabel(action: DoctorAction, language: Language = DEFAULT_LANGUAGE): string {
+  return action === "sync"
+    ? t(language, "doctor.actionSync")
+    : t(language, "doctor.actionInstallLoader");
+}
+
+/** Argument envelope for the no-argument `sync_aliases` command. */
+export function syncAliasesArgs(): Record<string, never> {
+  return {};
+}
+
+/** Argument envelope for `shell_install`. */
+export function shellInstallArgs(shell: string): { shell: string } {
+  return { shell };
+}
+
+export interface SyncShellResult {
+  shell: string;
+  status: string;
+  error: string | null;
+  generated_path: string;
+  reload_command: string;
+  loader_installed: boolean;
+}
+
+export interface SyncRun {
+  revision: number;
+  failed: boolean;
+  results: SyncShellResult[];
+}
+
+/** Defensive adapter for the `sync_aliases` response. */
+export function normalizeSyncRun(value: unknown): SyncRun {
+  const source = isRecord(value) ? value : {};
+  const results = Array.isArray(source.results)
+    ? source.results.filter(isRecord).map((entry) => ({
+        shell: normalizeShellValue(entry.shell),
+        status: typeof entry.status === "string" ? entry.status : "unknown",
+        error: textOrNull(entry.error),
+        generated_path: typeof entry.generated_path === "string" ? entry.generated_path : "",
+        reload_command: typeof entry.reload_command === "string" ? entry.reload_command : "",
+        loader_installed: entry.loader_installed === true,
+      }))
+    : [];
+  return {
+    revision: typeof source.revision === "number" && Number.isFinite(source.revision) ? source.revision : 0,
+    failed: source.failed === true || results.some((result) => result.status === "failed"),
+    results,
+  };
+}
+
+function isPowerShell(shell: string): boolean {
+  const normalized = normalizeShellValue(shell).toLowerCase();
+  return normalized === "powershell5" || normalized === "powershell7" || normalized === "power_shell5" || normalized === "power_shell7";
+}
+
+/** Heading for the reload command; makes dot-sourcing explicit for PowerShell. */
+export function reloadCommandLabel(shell: string, language: Language = DEFAULT_LANGUAGE): string {
+  return isPowerShell(shell)
+    ? t(language, "generated.reloadTitlePowerShell")
+    : t(language, "generated.reloadTitlePosix");
+}
+
+/** Full reload explanation including the shell-specific operator meaning. */
+export function reloadCommandExplanation(shell: string, language: Language = DEFAULT_LANGUAGE): string {
+  const base = t(language, "generated.reloadExplanation");
+  const specific = isPowerShell(shell)
+    ? t(language, "generated.reloadExplanationPowerShell")
+    : t(language, "generated.reloadExplanationPosix");
+  return `${base} ${specific}`;
+}
+
+/** Short hover text for reload affordances. */
+export function reloadHover(language: Language = DEFAULT_LANGUAGE): string {
+  return t(language, "generated.reloadHover");
+}
+
+/**
+ * Map a backend generated-preview error code (`code:shell`) to localized,
+ * actionable copy. Raw OS text ("os error 3") is never the primary message.
+ */
+export function generatedPreviewErrorMessage(reason: unknown, language: Language = DEFAULT_LANGUAGE): string {
+  const text = typeof reason === "string" ? reason : String(reason);
+  const separator = text.indexOf(":");
+  const code = separator >= 0 ? text.slice(0, separator) : text;
+  const shell = separator >= 0 ? text.slice(separator + 1) : "";
+  const label = shell ? shellLabel(shell, language) : "";
+  switch (code) {
+    case "generated_missing":
+      return t(language, "generated.missingFile", { shell: label });
+    case "generated_unreadable":
+      return t(language, "generated.unreadableFile", { shell: label });
+    case "generated_permission":
+      return t(language, "generated.permissionFile", { shell: label });
+    case "generated_unsupported_shell":
+      return t(language, "generated.unsupportedShell");
+    case "generated_read_error":
+      return t(language, "generated.readError", { shell: label });
+    default:
+      return text;
+  }
+}
+
+/** Copy-paste command that points a new process at another config directory. */
+export function configDirExampleCommand(platform: PathPlatform = detectPathPlatform()): string {
+  return platform === "windows"
+    ? 'setx ALIASMGR_CONFIG_DIR "D:\\alias-manager"'
+    : 'export ALIASMGR_CONFIG_DIR="/home/user/.alias-manager"';
+}
+
+export function configDirPlatformLabel(platform: PathPlatform, language: Language = DEFAULT_LANGUAGE): string {
+  return platform === "windows"
+    ? t(language, "settings.configDirPlatformWindows")
+    : t(language, "settings.configDirPlatformPosix");
+}
+
+/** Full config-directory explanation, also used as the field's hover text. */
+export function configDirExplanation(language: Language = DEFAULT_LANGUAGE): string {
+  return `${t(language, "settings.configDirHintBefore")} ALIASMGR_CONFIG_DIR=<path> ${t(language, "settings.configDirHintAfter")}`;
+}
+
 export function manualOnlyBoundary(language: Language = DEFAULT_LANGUAGE): string {
   return t(language, "doctor.manualBoundary");
 }

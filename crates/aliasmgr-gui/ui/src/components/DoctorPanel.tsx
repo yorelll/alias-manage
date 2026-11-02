@@ -2,17 +2,22 @@ import { useCallback, useEffect, useState } from "react";
 import type { DoctorFinding, OverriddenDefinition } from "../lib";
 import {
   definitionKindLabel,
+  doctorActionFor,
+  doctorActionLabel,
   doctorFindingText,
   findingCodeLabel,
   manualOnlyBoundary,
   normalizeDoctorFindings,
   normalizeOverriddenDefinitions,
+  normalizeSyncRun,
   orderedSeverities,
   overrideMetadataText,
   overrideSummary,
   severityCounts,
   severityLabel,
+  shellInstallArgs,
   shellLabel,
+  syncAliasesArgs,
   tauriInvoke,
 } from "../lib";
 import { useI18n } from "../language";
@@ -31,10 +36,19 @@ export function DoctorPanel() {
   const [overridesLoading, setOverridesLoading] = useState(false);
   const [copyNotice, setCopyNotice] = useState<string | null>(null);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
 
-  // Copy notices are built from localized copy; drop them when the language changes.
-  useEffect(() => { setCopyNotice(null); setCopyError(null); }, [language]);
+  // Copy/action notices and localized errors are rebuilt from i18n; drop them
+  // when the language changes so no stale message survives the switch.
+  useEffect(() => {
+    setCopyNotice(null);
+    setCopyError(null);
+    setActionNotice(null);
+    setActionError(null);
+  }, [language]);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +102,58 @@ export function DoctorPanel() {
     }
   }, []);
 
+  /**
+   * Run the one action a finding offers (sync or loader install), then rescan
+   * Doctor automatically. The action set is decided by `doctorActionFor`, so
+   * read-only findings never grow a button by accident.
+   */
+  const runAction = useCallback(async (finding: DoctorFinding, index: number) => {
+    const action = doctorActionFor(finding);
+    if (!action || actionBusy !== null) return;
+    const key = `${finding.code}-${finding.shell ?? "global"}-${index}`;
+    setActionBusy(key);
+    setActionError(null);
+    setActionNotice(null);
+    setCopyNotice(null);
+    setCopyError(null);
+    try {
+      if (action === "sync") {
+        const run = normalizeSyncRun(await tauriInvoke("sync_aliases", syncAliasesArgs()));
+        if (run.failed) {
+          const failures = run.results
+            .filter((result) => result.status === "failed")
+            .map((result) => `${shellLabel(result.shell, language)}: ${result.error ?? ""}`)
+            .join("; ");
+          setActionError(t("doctor.syncFailedResult", { error: failures }));
+        } else {
+          setActionNotice(
+            `${t("doctor.syncResult", {
+              count: run.results.length,
+              revision: run.revision,
+            })} ${t("doctor.reloadAfterSync")}`,
+          );
+        }
+      } else {
+        const shell = finding.shell ?? "";
+        const outcome = await tauriInvoke("shell_install", shellInstallArgs(shell)) as {
+          target?: unknown;
+        };
+        setActionNotice(
+          `${t("doctor.installResult", {
+            shell: shellLabel(shell, language),
+            path: typeof outcome?.target === "string" ? outcome.target : "",
+          })} ${t("doctor.reloadAfterInstall")}`,
+        );
+      }
+      // Re-scan so the finding reflects the new state without a manual click.
+      setReloadToken((value) => value + 1);
+    } catch (reason) {
+      setActionError(t("doctor.actionFailed", { error: String(reason) }));
+    } finally {
+      setActionBusy(null);
+    }
+  }, [actionBusy, language, t]);
+
   const counts = severityCounts(findings);
   const severities = orderedSeverities(counts);
 
@@ -100,8 +166,13 @@ export function DoctorPanel() {
         </button>
       </div>
 
-      <p className="boundary-note" data-testid="manual-boundary">{manualOnlyBoundary(language)}</p>
+      <p className="hint" data-testid="doctor-purpose" title={t("doctor.purposeHover")}>
+        {t("doctor.purpose")}
+      </p>
+      <p className="boundary-note" data-testid="manual-boundary" title={t("doctor.purposeHover")}>{manualOnlyBoundary(language)}</p>
 
+      {actionNotice && <p role="status">{actionNotice}</p>}
+      {actionError && <p className="form-error" role="alert">{actionError}</p>}
       {error && <p className="form-error" role="alert">{t("doctor.loadError", { error })}</p>}
 
       {severities.length > 0 && (
@@ -118,6 +189,8 @@ export function DoctorPanel() {
       <div className="finding-list">
         {findings.map((finding, index) => {
           const text = doctorFindingText(finding, language);
+          const action = doctorActionFor(finding);
+          const actionKey = `${finding.code}-${finding.shell ?? "global"}-${index}`;
           return (
             <details className="finding" key={`${finding.shell ?? "global"}-${finding.code}-${index}`}>
               <summary>
@@ -133,6 +206,19 @@ export function DoctorPanel() {
                     <p><strong>{t("doctor.suggestedAction")}</strong> {text.action}</p>
                     <button type="button" onClick={() => void copy(text.action ?? "", t("doctor.labelSuggestion"))}>
                       {t("doctor.copySuggestion")}
+                    </button>
+                  </div>
+                )}
+                {action && (
+                  <div className="finding-action">
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => void runAction(finding, index)}
+                      disabled={actionBusy !== null || loading}
+                      aria-busy={actionBusy === actionKey}
+                    >
+                      {actionBusy === actionKey ? t("doctor.actionRunning") : doctorActionLabel(action, language)}
                     </button>
                   </div>
                 )}

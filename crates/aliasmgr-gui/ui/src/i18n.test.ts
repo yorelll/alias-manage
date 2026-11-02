@@ -57,6 +57,46 @@ test("representative GUI strings switch with the selected language", () => {
   assert.equal(t("en", "doctor.code.stale.title"), "Generated file out of date");
 });
 
+test("explanations for reload, target types, doctor, and the config directory exist in both languages", () => {
+  for (const language of ["zh", "en"] as const) {
+    for (const key of [
+      "generated.reloadExplanation",
+      "generated.reloadHover",
+      "generated.reloadExplanationPowerShell",
+      "generated.reloadExplanationPosix",
+      "generated.reloadTitlePowerShell",
+      "generated.reloadTitlePosix",
+      "generated.reloadRequired",
+      "generated.loaderMissing",
+      "generated.missingFile",
+      "generated.permissionFile",
+      "wizard.targetTypeHint",
+      "wizard.targetWhitespaceScript",
+      "wizard.targetWhitespaceNative",
+      "doctor.purpose",
+      "doctor.purposeHover",
+      "doctor.actionSync",
+      "doctor.actionInstallLoader",
+      "doctor.reloadAfterSync",
+      "doctor.reloadAfterInstall",
+      "settings.configDirHintBefore",
+      "settings.configDirHintAfter",
+      "settings.configDirExample",
+      "settings.copyExample",
+    ] as const) {
+      assert.ok(t(language, key).trim().length > 0, `${language}:${key} is empty`);
+    }
+  }
+  assert.match(t("en", "generated.reloadExplanation"), /New shells/);
+  assert.match(t("en", "generated.reloadExplanation"), /does not modify the database/);
+  assert.match(t("zh", "generated.reloadExplanation"), /新 Shell/);
+  assert.match(t("zh", "generated.reloadExplanation"), /不会修改数据库/);
+  assert.match(t("en", "generated.reloadExplanationPowerShell"), /dot-source operator/);
+  assert.match(t("zh", "generated.reloadExplanationPowerShell"), /点源/);
+  assert.match(t("en", "doctor.purpose"), /does not repair anything automatically/);
+  assert.match(t("zh", "doctor.purpose"), /不会自动修复/);
+});
+
 test("interpolation replaces named placeholders without touching literal braces", () => {
   assert.equal(t("en", "table.editAria", { name: "gs" }), "Edit gs");
   assert.equal(t("zh", "table.editAria", { name: "gs" }), "编辑 gs");

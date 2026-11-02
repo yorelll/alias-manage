@@ -17,6 +17,8 @@ fn main() {
             commands::doctor_status,
             commands::generated_preview,
             commands::reload_command,
+            commands::sync_aliases,
+            commands::shell_install,
             commands::import_preview,
             commands::import_confirm,
             commands::import_preview_content,

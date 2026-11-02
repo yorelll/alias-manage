@@ -320,6 +320,165 @@ impl SyncCoordinator {
     }
 }
 
+/// Shells the database would render on the next sync: every shell referenced by
+/// an alias, plus every shell that still holds tombstoned names.
+///
+/// Shared by the CLI and the GUI so both compute the same target set.
+pub fn referenced_shells(
+    database: &crate::storage::Database,
+    aliases: &[AliasRecord],
+) -> Result<Vec<ShellKind>, AliasError> {
+    let mut shells = aliases
+        .iter()
+        .flat_map(|alias| alias.shells.clone())
+        .collect::<Vec<_>>();
+    for shell in [
+        ShellKind::Bash,
+        ShellKind::Zsh,
+        ShellKind::PowerShell5,
+        ShellKind::PowerShell7,
+    ] {
+        if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) {
+            shells.push(shell);
+        }
+    }
+    shells.sort();
+    shells.dedup();
+    Ok(shells)
+}
+
+/// Monotonic revision for the next sync. Deletes advance tombstones too, so the
+/// revision never moves backwards.
+pub fn current_revision(
+    database: &crate::storage::Database,
+    aliases: &[AliasRecord],
+) -> Result<i64, AliasError> {
+    Ok(aliases
+        .iter()
+        .map(|alias| alias.revision)
+        .max()
+        .unwrap_or(1)
+        .max(database.max_retired_revision()?)
+        .max(1))
+}
+
+/// Per-shell result of a full sync, including the path that was written and
+/// whether the shell's loader block is actually installed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellSyncOutcome {
+    pub shell: ShellKind,
+    pub status: ShellStatus,
+    pub error: Option<String>,
+    pub generated_path: PathBuf,
+    pub loader_installed: bool,
+}
+
+/// Result of syncing every referenced shell in one config root.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncRun {
+    pub revision: i64,
+    pub results: Vec<ShellSyncOutcome>,
+}
+
+impl SyncRun {
+    pub fn failed(&self) -> bool {
+        self.results
+            .iter()
+            .any(|result| result.status == ShellStatus::Failed)
+    }
+
+    pub fn failure_summary(&self) -> Vec<String> {
+        self.results
+            .iter()
+            .filter(|result| result.status == ShellStatus::Failed)
+            .map(|result| {
+                format!(
+                    "{:?}: {}",
+                    result.shell,
+                    result.error.as_deref().unwrap_or("unknown error")
+                )
+            })
+            .collect()
+    }
+}
+
+/// Dot-source / source command that reloads a generated file in the current
+/// Shell session. Paths are quoted for the target Shell so spaces, quotes and
+/// non-ASCII characters survive.
+pub fn reload_command(config_dir: &Path, shell: &ShellKind) -> String {
+    let path = AppPaths {
+        root: config_dir.to_path_buf(),
+    }
+    .generated_path(shell.as_str());
+    match shell {
+        ShellKind::PowerShell5 | ShellKind::PowerShell7 => {
+            // PowerShell single-quoted strings escape a quote by doubling it;
+            // the leading `.` is the dot-source operator.
+            let quoted = path.to_string_lossy().replace('\'', "''");
+            format!(". '{quoted}'")
+        }
+        _ => format!(
+            "source {}",
+            crate::shells::common::quote_posix(&path.to_string_lossy())
+        ),
+    }
+}
+
+/// Syncs every referenced shell using the shared revision and target rules.
+///
+/// Orchestration failures (database/config/lock errors) return `Err`. A shell
+/// whose generated content fails validation is reported in `results` with
+/// `ShellStatus::Failed`, matching the coordinator's partial-failure model.
+pub fn sync_config_dir(config_dir: &Path) -> Result<SyncRun, AliasError> {
+    let database = crate::storage::Database::open(config_dir.join("aliases.db"))?;
+    let aliases = database.list_aliases()?;
+    sync_with_database(config_dir, &database, &aliases)
+}
+
+/// Same as [`sync_config_dir`] but reuses an already-open database and alias
+/// list. Kept public so diagnostics and tests can avoid a second connection.
+pub fn sync_with_database(
+    config_dir: &Path,
+    database: &crate::storage::Database,
+    aliases: &[AliasRecord],
+) -> Result<SyncRun, AliasError> {
+    let shells = referenced_shells(database, aliases)?;
+    let revision = current_revision(database, aliases)?;
+    let coordinator = SyncCoordinator::new(config_dir);
+    let paths = AppPaths {
+        root: config_dir.to_path_buf(),
+    };
+    let mut results = Vec::new();
+    for shell in shells {
+        let names = database.managed_name_set(&shell)?;
+        let shell_aliases = aliases
+            .iter()
+            .filter(|alias| alias.shells.contains(&shell))
+            .cloned()
+            .collect::<Vec<_>>();
+        let receipt = coordinator.apply_with_managed_names(
+            &shell_aliases,
+            std::slice::from_ref(&shell),
+            revision,
+            &names,
+        )?;
+        let loader_installed = crate::integration::loader_status(&paths, shell.as_str())
+            .map(|outcome| outcome.installed)
+            .unwrap_or(false);
+        for result in receipt.results {
+            let generated_path = paths.generated_path(result.shell.as_str());
+            results.push(ShellSyncOutcome {
+                shell: result.shell,
+                status: result.status,
+                error: result.error,
+                generated_path,
+                loader_installed,
+            });
+        }
+    }
+    Ok(SyncRun { revision, results })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -803,6 +962,7 @@ mod tests {
             current: vec!["rma".into(), "clean".into(), "plain".into()],
             retired: vec![],
         };
+
         let restricted = |name: &str| AliasRecord {
             name: name.into(),
             executable: "Remove-Item".into(),
@@ -836,5 +996,361 @@ mod tests {
             .render_shell(&aliases[2..], &ShellKind::PowerShell7, 1, &names)
             .unwrap();
         assert!(!plain.contains("# aliasmgr restriction support"));
+    }
+
+    fn sync_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "aliasmgr-sync-run-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ))
+    }
+
+    #[test]
+    fn sync_config_dir_writes_a_file_for_every_referenced_shell() {
+        let root = sync_root("referenced");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "lsend2".into(),
+                executable: r"D:\Program Files\LocalSend\localsend_app.exe".into(),
+                shells: vec![ShellKind::PowerShell5, ShellKind::PowerShell7],
+                revision: 3,
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.revision, 3);
+        assert_eq!(run.results.len(), 2);
+        assert!(!run.failed());
+        for result in &run.results {
+            assert_eq!(result.status, ShellStatus::Ok);
+            assert!(result.generated_path.exists());
+            let content = fs::read_to_string(&result.generated_path).unwrap();
+            assert!(content.contains("# revision: 3"), "{content}");
+            assert!(content.contains("lsend2"), "{content}");
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_config_dir_with_no_aliases_or_shells_is_a_noop() {
+        let root = sync_root("empty");
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.revision, 1);
+        assert!(run.results.is_empty());
+        assert!(!run.failed());
+        assert!(
+            !root.join("generated").exists(),
+            "an empty install must not create generated files"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_config_dir_includes_shells_that_only_have_tombstones() {
+        let root = sync_root("tombstones");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database.retire_name("gone", &ShellKind::Zsh, 5).unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.revision, 5);
+        assert_eq!(run.results.len(), 1);
+        assert_eq!(run.results[0].shell, ShellKind::Zsh);
+        let content = fs::read_to_string(root.join("generated/zsh.sh")).unwrap();
+        assert!(content.contains("# revision: 5"));
+        assert!(content.contains("unalias 'gone'"), "{content}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_config_dir_reports_per_shell_failures_without_losing_successes() {
+        let root = sync_root("partial");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        for (name, shells, advanced) in [
+            ("good", vec![ShellKind::Bash], false),
+            ("bad", vec![ShellKind::Zsh], true),
+        ] {
+            database
+                .insert_alias(&AliasRecord {
+                    name: name.into(),
+                    executable: "git".into(),
+                    shells,
+                    advanced_shell_mode: advanced,
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert!(run.failed());
+        assert_eq!(run.results.len(), 2);
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == ShellKind::Bash)
+            .unwrap();
+        let zsh = run
+            .results
+            .iter()
+            .find(|result| result.shell == ShellKind::Zsh)
+            .unwrap();
+        assert_eq!(bash.status, ShellStatus::Ok);
+        assert_eq!(zsh.status, ShellStatus::Failed);
+        assert!(zsh.error.is_some());
+        assert!(bash.generated_path.exists());
+        assert!(!run.failure_summary().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repeated_sync_is_idempotent() {
+        let root = sync_root("idempotent");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::PowerShell7],
+                revision: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let first = sync_config_dir(&root).unwrap();
+        let first_files = first
+            .results
+            .iter()
+            .map(|result| fs::read(&result.generated_path).unwrap())
+            .collect::<Vec<_>>();
+        let second = sync_config_dir(&root).unwrap();
+        let second_files = second
+            .results
+            .iter()
+            .map(|result| fs::read(&result.generated_path).unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(first.revision, second.revision);
+        assert_eq!(first_files, second_files);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_revision_outranks_tombstones_after_a_delete() {
+        let root = sync_root("revision");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                revision: 2,
+                ..Default::default()
+            })
+            .unwrap();
+        database
+            .retire_name("deleted", &ShellKind::Bash, 9)
+            .unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.revision, 9);
+        let content = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
+        assert!(content.contains("# revision: 9"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_supports_a_config_root_with_spaces_quotes_and_cjk() {
+        let root = sync_root("路径 path's dir");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "unicode_path".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.results.len(), 1);
+        assert!(run.results[0].generated_path.exists());
+        let command = reload_command(&root, &ShellKind::Bash);
+        assert!(command.starts_with("source '"), "{command}");
+        assert!(command.contains("路径 path'\\''s dir"), "{command}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reload_commands_are_label_safe_for_every_supported_shell() {
+        let root = Path::new("/tmp/alias mgr");
+        for (shell, prefix) in [
+            (ShellKind::Bash, "source "),
+            (ShellKind::Zsh, "source "),
+            (ShellKind::PowerShell5, ". "),
+            (ShellKind::PowerShell7, ". "),
+        ] {
+            let command = reload_command(root, &shell);
+            let generated = AppPaths {
+                root: root.to_path_buf(),
+            }
+            .generated_path(shell.as_str());
+            assert!(command.starts_with(prefix), "{command}");
+            assert!(
+                command.contains(&generated.to_string_lossy().into_owned()),
+                "{command}"
+            );
+        }
+        let quoted = reload_command(Path::new("/tmp/it's"), &ShellKind::PowerShell7);
+        assert!(quoted.contains("it''s"), "{quoted}");
+        let posix = reload_command(Path::new("/tmp/it's"), &ShellKind::Bash);
+        assert!(posix.contains("it'\\''s"), "{posix}");
+    }
+
+    #[test]
+    fn sync_fails_cleanly_when_the_config_file_is_malformed() {
+        let root = sync_root("bad-config");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("config.toml"), "not = [valid").unwrap();
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        assert!(matches!(sync_config_dir(&root), Err(AliasError::Config(_))));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_fails_cleanly_when_the_database_is_malformed() {
+        let root = sync_root("bad-db");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("aliases.db"), b"this is not a sqlite database").unwrap();
+        assert!(sync_config_dir(&root).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_fails_when_the_generated_directory_cannot_be_created() {
+        let root = sync_root("generated-is-file");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("generated"), "not a directory").unwrap();
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        assert!(sync_config_dir(&root).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_maximum_length_alias_name_syncs() {
+        let root = sync_root("long-name");
+        let name = format!("a{}", "b".repeat(63));
+        assert_eq!(name.len(), 64);
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: name.clone(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.results[0].status, ShellStatus::Ok);
+        assert!(fs::read_to_string(root.join("generated/bash.sh"))
+            .unwrap()
+            .contains(&name));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_creates_a_missing_config_root_instead_of_failing() {
+        let root = sync_root("missing-root").join("nested/config");
+        assert!(!root.exists());
+
+        let run = sync_config_dir(&root).unwrap();
+        assert!(run.results.is_empty());
+        assert!(root.join("aliases.db").exists());
+        let _ = fs::remove_dir_all(root.parent().unwrap().parent().unwrap());
+    }
+
+    #[test]
+    fn an_alias_with_no_shells_does_not_create_a_generated_file() {
+        let root = sync_root("no-shells");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "orphan".into(),
+                executable: "git".into(),
+                shells: Vec::new(),
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert!(run.results.is_empty());
+        assert!(!root.join("generated").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_read_only_generated_file_makes_the_sync_report_an_error() {
+        let root = sync_root("readonly");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        sync_config_dir(&root).unwrap();
+
+        let generated = root.join("generated/bash.sh");
+        let mut permissions = fs::metadata(&generated).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&generated, permissions).unwrap();
+        let result = sync_config_dir(&root);
+        // Restore writability before cleanup so remove_dir_all can succeed.
+        let mut permissions = fs::metadata(&generated).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&generated, permissions).unwrap();
+
+        assert!(
+            result.is_err(),
+            "replacing a read-only generated file must surface an error"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 }

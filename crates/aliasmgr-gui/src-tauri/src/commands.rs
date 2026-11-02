@@ -656,20 +656,124 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
     Ok(findings)
 }
 
+/// Stable error code for a generated-file read failure. The UI maps these to
+/// localized, actionable copy; the raw OS message never becomes the primary
+/// user-facing error.
+fn generated_read_error_code(kind: std::io::ErrorKind) -> &'static str {
+    match kind {
+        std::io::ErrorKind::NotFound => "generated_missing",
+        std::io::ErrorKind::PermissionDenied => "generated_permission",
+        std::io::ErrorKind::InvalidData => "generated_unreadable",
+        _ => "generated_read_error",
+    }
+}
+
 #[tauri::command]
 pub fn generated_preview(shell: String) -> Result<String, String> {
-    let paths = AppPaths::discover(None);
-    std::fs::read_to_string(paths.generated_path(&shell)).map_err(|error| error.to_string())
+    let kind = shell_from_str(&shell)?;
+    if matches!(kind, ShellKind::Fish | ShellKind::PosixSh) {
+        return Err("generated_unsupported_shell".into());
+    }
+    let path = AppPaths::discover(None).generated_path(shell_kind_to_str(&kind));
+    match std::fs::read(&path) {
+        Ok(bytes) => String::from_utf8(bytes)
+            .map_err(|_| format!("generated_unreadable:{shell}")),
+        Err(error) => {
+            // Return a stable code instead of the raw OS error ("os error 3").
+            // The UI maps the code to localized, actionable copy.
+            let code = generated_read_error_code(error.kind());
+            Err(format!("{code}:{shell}"))
+        }
+    }
 }
 
 #[tauri::command]
 pub fn reload_command(shell: String) -> Result<String, String> {
+    let kind = shell_from_str(&shell)?;
     let paths = AppPaths::discover(None);
-    let path = paths.generated_path(&shell);
-    Ok(match shell.as_str() {
-        "zsh" => format!("source '{}'", path.display()),
-        "powershell5" | "powershell7" => format!(". '{}'", path.display()),
-        _ => format!(". '{}'", path.display()),
+    Ok(aliasmgr_core::sync::reload_command(&paths.root, &kind))
+}
+
+/// Serializable per-shell sync outcome for the Sync page.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncShellResultDto {
+    pub shell: String,
+    pub status: String,
+    pub error: Option<String>,
+    pub generated_path: String,
+    pub reload_command: String,
+    pub loader_installed: bool,
+}
+
+/// Serializable result of a full sync triggered from the GUI.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncRunDto {
+    pub revision: i64,
+    pub failed: bool,
+    pub results: Vec<SyncShellResultDto>,
+}
+
+fn shell_status_str(status: &aliasmgr_core::model::ShellStatus) -> &'static str {
+    use aliasmgr_core::model::ShellStatus;
+    match status {
+        ShellStatus::Ok => "ok",
+        ShellStatus::Stale => "stale",
+        ShellStatus::Failed => "failed",
+        ShellStatus::LoaderMissing => "loader_missing",
+        ShellStatus::Unknown => "unknown",
+    }
+}
+
+/// Tauri command: generate every referenced shell's definition file.
+///
+/// Uses the same core orchestration as `aliasmgr sync`, so the target-shell
+/// set and monotonic revision rules cannot drift between front ends.
+#[tauri::command]
+pub fn sync_aliases() -> Result<SyncRunDto, String> {
+    let paths = AppPaths::discover(None);
+    let run = aliasmgr_core::sync::sync_config_dir(&paths.root).map_err(|error| error.to_string())?;
+    let failed = run.failed();
+    Ok(SyncRunDto {
+        revision: run.revision,
+        failed,
+        results: run
+            .results
+            .iter()
+            .map(|result| SyncShellResultDto {
+                shell: shell_kind_to_str(&result.shell).to_owned(),
+                status: shell_status_str(&result.status).to_owned(),
+                error: result.error.clone(),
+                generated_path: result.generated_path.to_string_lossy().into_owned(),
+                reload_command: aliasmgr_core::sync::reload_command(&paths.root, &result.shell),
+                loader_installed: result.loader_installed,
+            })
+            .collect(),
+    })
+}
+
+/// Serializable outcome of installing a shell loader block.
+#[derive(Debug, Clone, Serialize)]
+pub struct LoaderInstallDto {
+    pub shell: String,
+    pub target: String,
+    pub changed: bool,
+    pub installed: bool,
+}
+
+/// Tauri command: install the marked loader block for one shell.
+///
+/// Delegates path resolution and profile editing to
+/// `aliasmgr_core::integration`, which is the same code the CLI uses.
+#[tauri::command]
+pub fn shell_install(shell: String) -> Result<LoaderInstallDto, String> {
+    let paths = AppPaths::discover(None);
+    let outcome = aliasmgr_core::integration::install_loader(&paths, &shell)
+        .map_err(|error| error.to_string())?;
+    Ok(LoaderInstallDto {
+        shell: outcome.shell,
+        target: outcome.target.to_string_lossy().into_owned(),
+        changed: outcome.changed,
+        installed: outcome.installed,
     })
 }
 
@@ -895,31 +999,6 @@ pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> {
         .map_err(|error| error.to_string())
 }
 
-/// Default PowerShell profile path used when no override is configured.
-fn default_powershell_profile_path(shell: &ShellKind) -> Option<PathBuf> {
-    if cfg!(windows) {
-        let home = std::env::var_os("USERPROFILE").map(PathBuf::from)?;
-        let folder = match shell {
-            ShellKind::PowerShell5 => "WindowsPowerShell",
-            ShellKind::PowerShell7 => "PowerShell",
-            _ => return None,
-        };
-        Some(
-            home.join("Documents")
-                .join(folder)
-                .join("Microsoft.PowerShell_profile.ps1"),
-        )
-    } else {
-        match shell {
-            // Windows PowerShell 5.1 does not exist outside Windows.
-            ShellKind::PowerShell7 => std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|home| home.join(".config").join("powershell").join("profile.ps1")),
-            _ => None,
-        }
-    }
-}
-
 /// Candidate rc/profile files for a shell: configured path first, then the
 /// platform default. Only paths are collected; nothing is read or written here.
 fn override_scan_paths(
@@ -927,6 +1006,8 @@ fn override_scan_paths(
     root: &Path,
     shell: &ShellKind,
 ) -> Vec<PathBuf> {
+    let default_profile =
+        aliasmgr_core::integration::default_powershell_profile_path(shell_kind_to_str(shell));
     let candidates = match shell {
         ShellKind::Bash => vec![
             config.shells.bash_rc_path.clone(),
@@ -935,11 +1016,11 @@ fn override_scan_paths(
         ShellKind::Zsh => vec![config.shells.zsh_rc_path.clone(), Some(root.join(".zshrc"))],
         ShellKind::PowerShell5 => vec![
             config.shells.powershell5_profile_path.clone(),
-            default_powershell_profile_path(shell),
+            default_profile,
         ],
         ShellKind::PowerShell7 => vec![
             config.shells.powershell7_profile_path.clone(),
-            default_powershell_profile_path(shell),
+            default_profile,
         ],
         _ => Vec::new(),
     };
@@ -2005,5 +2086,276 @@ mod tests {
         app_config.runtime.language = "fr".into();
         app_config.save(&paths).unwrap();
         assert_eq!(config_get().unwrap().language, "zh");
+    }
+
+    fn configure_powershell_profiles(root: &Path) {
+        let paths = AppPaths {
+            root: root.to_path_buf(),
+        };
+        let mut config = aliasmgr_core::config::AppConfig::default();
+        config.shells.powershell5_profile_path = Some(root.join("ps5-profile.ps1"));
+        config.shells.powershell7_profile_path = Some(root.join("ps7-profile.ps1"));
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config.shells.zsh_rc_path = Some(root.join("zshrc"));
+        config.save(&paths).unwrap();
+    }
+
+    #[test]
+    fn create_alias_then_sync_aliases_writes_powershell_files_with_the_definition() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-powershell");
+        configure_powershell_profiles(&config.root);
+
+        let mut dto = preview_dto();
+        dto.name = "lsend2".into();
+        dto.executable = r"D:\Program Files\LocalSend\localsend_app.exe".into();
+        dto.fixed_args = Vec::new();
+        dto.shells = vec!["powershell5".into(), "powershell7".into()];
+        create_alias(dto).unwrap();
+
+        let run = sync_aliases().unwrap();
+        assert!(!run.failed, "{run:?}");
+        assert_eq!(run.results.len(), 2);
+
+        for result in &run.results {
+            assert_eq!(result.status, "ok");
+            assert!(result.error.is_none());
+            let path = PathBuf::from(&result.generated_path);
+            assert!(path.exists(), "missing {}", result.generated_path);
+            let content = std::fs::read_to_string(&path).unwrap();
+            assert!(content.contains("lsend2"), "{content}");
+            assert!(content.contains("localsend_app.exe"), "{content}");
+            assert!(
+                result.reload_command.starts_with(". '"),
+                "{}",
+                result.reload_command
+            );
+            assert!(result.reload_command.contains(&format!(
+                "powershell{}.ps1",
+                if result.shell == "powershell5" { "5" } else { "7" }
+            )));
+            assert!(!result.loader_installed, "no loader was installed yet");
+        }
+
+        assert!(config.root.join("generated/powershell5.ps1").exists());
+        assert!(config.root.join("generated/powershell7.ps1").exists());
+
+        // Installing the loader is reported by the next sync.
+        shell_install("powershell7".into()).unwrap();
+        let second = sync_aliases().unwrap();
+        let seven = second
+            .results
+            .iter()
+            .find(|result| result.shell == "powershell7")
+            .unwrap();
+        assert!(seven.loader_installed);
+    }
+
+    #[test]
+    fn sync_aliases_with_no_aliases_is_a_noop() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-empty");
+
+        let run = sync_aliases().unwrap();
+        assert!(!run.failed);
+        assert!(run.results.is_empty());
+        assert_eq!(run.revision, 1);
+        assert!(!config.root.join("generated").exists());
+    }
+
+    #[test]
+    fn sync_aliases_reports_partial_failures() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-partial");
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "good".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "bad".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Zsh],
+                advanced_shell_mode: true,
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_aliases().unwrap();
+        assert!(run.failed);
+        assert_eq!(run.results.len(), 2);
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == "bash")
+            .unwrap();
+        let zsh = run
+            .results
+            .iter()
+            .find(|result| result.shell == "zsh")
+            .unwrap();
+        assert_eq!(bash.status, "ok");
+        assert_eq!(zsh.status, "failed");
+        assert!(zsh.error.as_deref().unwrap_or_default().contains("advanced"));
+        assert!(PathBuf::from(&bash.generated_path).exists());
+    }
+
+    #[test]
+    fn sync_aliases_surfaces_orchestration_errors() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-error");
+        std::fs::write(config.root.join("aliases.db"), b"not a database").unwrap();
+        assert!(sync_aliases().is_err());
+    }
+
+    #[test]
+    fn generated_read_error_codes_distinguish_failure_kinds() {
+        use std::io::ErrorKind;
+        assert_eq!(generated_read_error_code(ErrorKind::NotFound), "generated_missing");
+        assert_eq!(
+            generated_read_error_code(ErrorKind::PermissionDenied),
+            "generated_permission"
+        );
+        assert_eq!(
+            generated_read_error_code(ErrorKind::InvalidData),
+            "generated_unreadable"
+        );
+        assert_eq!(
+            generated_read_error_code(ErrorKind::Other),
+            "generated_read_error"
+        );
+    }
+
+    #[test]
+    fn generated_preview_distinguishes_missing_unreadable_and_valid_files() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("preview-errors");
+
+        let missing = generated_preview("bash".into()).unwrap_err();
+        assert_eq!(missing, "generated_missing:bash");
+
+        let generated = config.root.join("generated/bash.sh");
+        std::fs::create_dir_all(generated.parent().unwrap()).unwrap();
+        std::fs::write(&generated, [0xFFu8, 0xFE, 0x00, 0x80]).unwrap();
+        assert_eq!(
+            generated_preview("bash".into()).unwrap_err(),
+            "generated_unreadable:bash"
+        );
+
+        std::fs::write(&generated, "alias gs='git status'\n").unwrap();
+        assert_eq!(
+            generated_preview("bash".into()).unwrap(),
+            "alias gs='git status'\n"
+        );
+
+        // Unsupported shells are rejected before touching the filesystem.
+        assert_eq!(
+            generated_preview("fish".into()).unwrap_err(),
+            "generated_unsupported_shell"
+        );
+        assert!(generated_preview("nope".into()).is_err());
+        assert!(generated_preview(String::new()).is_err());
+    }
+
+    #[test]
+    fn generated_preview_reports_non_permission_read_errors_as_a_code() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("preview-directory");
+        // A directory at the generated path cannot be read as a file.
+        std::fs::create_dir_all(config.root.join("generated/bash.sh")).unwrap();
+        let error = generated_preview("bash".into()).unwrap_err();
+        assert!(
+            error.starts_with("generated_read_error:")
+                || error.starts_with("generated_permission:"),
+            "{error}"
+        );
+        assert!(!error.contains("os error"), "raw OS text must not leak: {error}");
+    }
+
+    #[test]
+    fn reload_command_uses_source_or_dot_source() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let _config = TempConfig::new("reload-command");
+
+        assert!(reload_command("bash".into()).unwrap().starts_with("source '"));
+        assert!(reload_command("zsh".into()).unwrap().starts_with("source '"));
+        assert!(reload_command("powershell5".into())
+            .unwrap()
+            .starts_with(". '"));
+        assert!(reload_command("powershell7".into())
+            .unwrap()
+            .starts_with(". '"));
+        assert!(reload_command("nope".into()).is_err());
+        assert!(reload_command(String::new()).is_err());
+    }
+
+    #[test]
+    fn shell_install_writes_the_loader_and_is_idempotent() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("shell-install");
+        configure_powershell_profiles(&config.root);
+        let profile = config.root.join("bashrc");
+        std::fs::write(&profile, "user content\n").unwrap();
+
+        let first = shell_install("bash".into()).unwrap();
+        assert!(first.changed);
+        assert!(first.installed);
+        assert_eq!(first.target, profile.to_string_lossy());
+        let content = std::fs::read_to_string(&profile).unwrap();
+        assert!(content.contains("user content"));
+        assert!(content.contains(aliasmgr_core::shells::common::START_MARKER));
+        assert!(content.contains(
+            &AppPaths {
+                root: config.root.clone()
+            }
+            .generated_path("bash")
+            .to_string_lossy()
+            .into_owned()
+        ));
+
+        let second = shell_install("bash".into()).unwrap();
+        assert!(!second.changed, "re-install must be idempotent");
+    }
+
+    #[test]
+    fn shell_install_reports_failures() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("shell-install-error");
+        configure_powershell_profiles(&config.root);
+        let directory = config.root.join("profile-dir");
+        std::fs::create_dir_all(&directory).unwrap();
+        let paths = AppPaths {
+            root: config.root.clone(),
+        };
+        let mut app_config = paths.load_config().unwrap();
+        app_config.shells.bash_rc_path = Some(directory);
+        app_config.save(&paths).unwrap();
+
+        assert!(shell_install("bash".into()).is_err());
+        assert!(shell_install("fish".into()).is_err());
     }
 }

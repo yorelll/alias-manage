@@ -2,6 +2,11 @@ import { useEffect, useState } from "react";
 import type { Settings } from "../lib";
 import {
   SHELLS,
+  configDirExampleCommand,
+  configDirExplanation,
+  configDirPlatformLabel,
+  copyToClipboard,
+  detectPathPlatform,
   normalizeSettings,
   parseKeepCountInput,
   settingsDirty,
@@ -20,6 +25,16 @@ export function SettingsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [platform] = useState(() => detectPathPlatform());
+  const [exampleCopied, setExampleCopied] = useState<string | null>(null);
+  const [exampleError, setExampleError] = useState<string | null>(null);
+  const exampleCommand = configDirExampleCommand(platform);
+
+  // Localized copy notices must not survive a language switch.
+  useEffect(() => {
+    setExampleCopied(null);
+    setExampleError(null);
+  }, [language]);
 
   const load = async () => {
     setError(null);
@@ -56,6 +71,17 @@ export function SettingsPanel() {
     setLanguage(loaded.language);
     setError(null);
     setSaved(null);
+  };
+
+  const copyExample = async () => {
+    setExampleError(null);
+    setExampleCopied(null);
+    try {
+      await copyToClipboard(exampleCommand, language);
+      setExampleCopied(t("settings.exampleCopied"));
+    } catch (reason) {
+      setExampleError(t("settings.exampleCopyFailed", { error: String(reason) }));
+    }
   };
 
   const save = async () => {
@@ -99,20 +125,35 @@ export function SettingsPanel() {
       <p className="hint">{t("settings.hint")}</p>
 
       <div className="settings-grid">
-        <label className="field field-full">
-          <span>{t("settings.configDirectory")}</span>
+        <div className="field field-full">
+          <span title={configDirExplanation(language)}>{t("settings.configDirectory")}</span>
           <input
             value={draft.config_directory}
             readOnly
             aria-readonly="true"
+            aria-label={t("settings.configDirectory")}
             spellCheck={false}
             aria-describedby="config-directory-hint"
+            title={configDirExplanation(language)}
           />
-          <span id="config-directory-hint" className="hint">
+          <span id="config-directory-hint" className="hint" title={configDirExplanation(language)}>
             {t("settings.configDirHintBefore")}
-            {" "}<code>ALIASMGR_CONFIG_DIR</code> {t("settings.configDirHintAfter")}
+            {" "}<code>ALIASMGR_CONFIG_DIR=&lt;path&gt;</code> {t("settings.configDirHintAfter")}
           </span>
-        </label>
+          <span className="hint" title={configDirExplanation(language)}>
+            {t("settings.configDirExample", {
+              platform: configDirPlatformLabel(platform, language),
+              command: exampleCommand,
+            })}
+          </span>
+          <span>
+            <button type="button" onClick={() => void copyExample()} disabled={busy}>
+              {t("settings.copyExample")}
+            </button>
+          </span>
+          {exampleCopied && <span className="hint" role="status">{exampleCopied}</span>}
+          {exampleError && <span className="form-error" role="alert">{exampleError}</span>}
+        </div>
 
         <label className="field">
           <span>{t("settings.language")}</span>

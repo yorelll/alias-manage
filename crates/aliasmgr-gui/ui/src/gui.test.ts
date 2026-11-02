@@ -6,7 +6,12 @@ import {
   TARGET_TYPES,
   aliasFiltersActive,
   clearAliasFilters,
+  configDirExampleCommand,
+  configDirExplanation,
+  configDirPlatformLabel,
   detectionSourceLabel,
+  doctorActionFor,
+  doctorActionLabel,
   doctorFindingText,
   emptyAliasDraft,
   environmentToRows,
@@ -14,6 +19,7 @@ import {
   findingCodeLabel,
   fixedArgsPlaceholderHint,
   foldRestrictionPath,
+  generatedPreviewErrorMessage,
   importContentArgs,
   importReportCounts,
   importSkipEntries,
@@ -32,6 +38,7 @@ import {
   normalizeSettings,
   normalizeShells,
   normalizeShellValue,
+  normalizeSyncRun,
   orderedSeverities,
   overrideMetadataText,
   overrideSummary,
@@ -40,13 +47,20 @@ import {
   pathModeLabel,
   pathOriginLabel,
   previewAliasArgs,
+  reloadCommandExplanation,
+  reloadCommandLabel,
+  reloadHover,
   restrictionModeLabel,
   rowsToEnvironment,
   settingsDirty,
   settingsValidation,
   severityCounts,
+  shellInstallArgs,
   shellLabel,
   statusShellText,
+  syncAliasesArgs,
+  targetExecutableWarning,
+  targetTypeExplanation,
   targetTypeLabel,
   toggleShell,
   toStringList,
@@ -402,12 +416,12 @@ test("overridden definitions keep metadata only and never expose captured defini
 
 test("manual-only boundary is explicit about profile, policy, and shell restart limits in both languages", () => {
   const boundaryEn = manualOnlyBoundary("en");
-  assert.match(boundaryEn, /Manual-only boundary/);
+  assert.match(boundaryEn, /Doctor is read-only/);
   assert.match(boundaryEn, /never bypasses ExecutionPolicy or restarts your shell/);
-  assert.match(boundaryEn, /edits only the marked Alias Manager block/);
-  assert.match(boundaryEn, /leaves the rest of the profile untouched/);
+  assert.match(boundaryEn, /marked Alias Manager block/);
+  assert.match(boundaryEn, /leave the rest of the profile untouched/);
   const boundaryZh = manualOnlyBoundary("zh");
-  assert.match(boundaryZh, /仅手动边界/);
+  assert.match(boundaryZh, /诊断是只读的/);
   assert.match(boundaryZh, /ExecutionPolicy/);
   assert.match(boundaryZh, /标记为 Alias Manager 的区块/);
 });
@@ -634,14 +648,15 @@ test("TagInput has a real label, id, and accessible remove controls", async () =
 
 test("localized transient messages are cleared when the language changes", async () => {
   const cases: Array<[string, string]> = [
-    ["AliasWizard", "useEffect(() => { setError(null); setPreviewError(null); }, [language]);"],
-    ["DoctorPanel", "useEffect(() => { setCopyNotice(null); setCopyError(null); }, [language]);"],
-    ["GeneratedFilePanel", "useEffect(() => { setCopied(null); setError(null); }, [language]);"],
-    ["ImportPanel", "useEffect(() => { setError(null); }, [language]);"],
+    ["AliasWizard", "setPreviewError(null);"],
+    ["DoctorPanel", "setActionNotice(null);"],
+    ["GeneratedFilePanel", "setSyncMessage(null);"],
+    ["ImportPanel", "setError(null);"],
   ];
   for (const [name, effect] of cases) {
     const component = await source(name);
     assert.ok(component.includes(effect), `${name} does not clear transient copy on language change`);
+    assert.ok(component.includes("[language]"), `${name} does not react to language changes`);
   }
 });
 
@@ -725,4 +740,239 @@ test("restriction helpers trim paths, validate absolute paths, and survive edits
     "Every restriction directory must be an absolute path.",
   ]);
   assert.deepEqual(validateAliasDraft({ ...baseAlias(), restriction: null }, "en"), []);
+});
+
+// ── sync / doctor action / explanations ───────────────────────────
+
+function doctorFinding(code: string, shell: string | null = "bash") {
+  return { shell, severity: "warning", code, message: "", action: null, detail: null };
+}
+
+test("doctor finding codes map to exactly one actionable button", () => {
+  for (const code of ["generated_missing", "stale", "sync_failed", "generated_unreadable", "generated_modified", "render_failed"]) {
+    assert.equal(doctorActionFor(doctorFinding(code)), "sync", code);
+  }
+  assert.equal(doctorActionFor(doctorFinding("loader_missing", "powershell7")), "install_loader");
+  assert.equal(doctorActionFor(doctorFinding("loader_missing", null)), null, "install needs a shell");
+  assert.equal(doctorActionFor(doctorFinding("database_missing", null)), null);
+  assert.equal(doctorActionFor(doctorFinding("unreliable_filesystem", null)), null);
+  assert.equal(doctorActionFor(doctorFinding("unknown_code")), null);
+
+  assert.equal(doctorActionLabel("sync", "en"), "Sync now");
+  assert.equal(doctorActionLabel("sync", "zh"), "立即同步");
+  assert.equal(doctorActionLabel("install_loader", "en"), "Install shell integration");
+  assert.equal(doctorActionLabel("install_loader", "zh"), "安装 Shell 集成");
+});
+
+test("doctor and sync commands use explicit invocation payloads", () => {
+  assert.deepEqual(syncAliasesArgs(), {});
+  assert.deepEqual(shellInstallArgs("powershell7"), { shell: "powershell7" });
+  assert.deepEqual(shellInstallArgs("bash"), { shell: "bash" });
+});
+
+test("sync responses are normalized defensively", () => {
+  assert.deepEqual(normalizeSyncRun(null), { revision: 0, failed: false, results: [] });
+  const run = normalizeSyncRun({
+    revision: 7,
+    failed: false,
+    results: [
+      {
+        shell: "powershell7",
+        status: "failed",
+        error: "boom",
+        generated_path: "C:\\cfg\\generated\\powershell7.ps1",
+        reload_command: ". 'C:\\cfg\\generated\\powershell7.ps1'",
+        loader_installed: false,
+      },
+      { shell: "bash", status: "ok" },
+    ],
+  });
+  assert.equal(run.revision, 7);
+  assert.equal(run.failed, true, "a failed result implies a failed run");
+  assert.equal(run.results.length, 2);
+  assert.equal(run.results[0].error, "boom");
+  assert.equal(run.results[0].loader_installed, false);
+  assert.equal(run.results[1].generated_path, "");
+  assert.equal(run.results[1].loader_installed, false);
+});
+
+test("generated preview errors become localized, actionable copy", () => {
+  assert.equal(
+    generatedPreviewErrorMessage("generated_missing:bash", "en"),
+    "No generated file for Bash yet. Run Sync to create it.",
+  );
+  assert.match(
+    generatedPreviewErrorMessage("generated_permission:powershell7", "en"),
+    /access was denied/,
+  );
+  assert.match(
+    generatedPreviewErrorMessage("generated_unreadable:zsh", "en"),
+    /not valid UTF-8/,
+  );
+  assert.match(
+    generatedPreviewErrorMessage("generated_unsupported_shell", "en"),
+    /does not support/,
+  );
+  assert.match(
+    generatedPreviewErrorMessage("generated_read_error:bash", "en"),
+    /could not be read/,
+  );
+  assert.match(
+    generatedPreviewErrorMessage("generated_missing:bash", "zh"),
+    /还没有生成文件/,
+  );
+  assert.equal(
+    generatedPreviewErrorMessage("some other failure", "en"),
+    "some other failure",
+    "unknown errors stay visible instead of disappearing",
+  );
+});
+
+test("reload copy explains dot-sourcing, when to reload, and that the database is untouched", () => {
+  assert.match(reloadCommandLabel("powershell7", "en"), /Dot-source command/);
+  assert.match(reloadCommandLabel("powershell7", "zh"), /点源命令/);
+  assert.match(reloadCommandLabel("bash", "en"), /Source command/);
+  assert.match(reloadCommandLabel("zsh", "zh"), /source 命令/);
+
+  const powershell = reloadCommandExplanation("powershell7", "en");
+  assert.match(powershell, /leading `.`/);
+  assert.match(powershell, /dot-source operator/);
+  assert.match(powershell, /not a comma/);
+  assert.match(powershell, /does not modify the database/);
+  assert.match(powershell, /New shells/);
+
+  const posix = reloadCommandExplanation("bash", "en");
+  assert.match(posix, /`source`/);
+  assert.match(posix, /current shell session/);
+
+  const powershellZh = reloadCommandExplanation("powershell7", "zh");
+  assert.match(powershellZh, /点源/);
+  assert.match(powershellZh, /不会修改数据库/);
+  assert.match(reloadHover("en"), /does not modify the database/);
+  assert.match(reloadHover("zh"), /不会修改数据库/);
+});
+
+test("target type copy explains metadata semantics and warns without rewriting", () => {
+  assert.match(targetTypeExplanation("en"), /classification and validation metadata/);
+  assert.match(targetTypeExplanation("en"), /python test\.py/);
+  assert.match(targetTypeExplanation("en"), /fixed argument/);
+  assert.match(targetTypeExplanation("zh"), /分类和校验元数据/);
+  assert.match(targetTypeExplanation("zh"), /固定参数/);
+
+  const pythonDraft = {
+    ...emptyAliasDraft(),
+    target_type: "python_script",
+    executable: "python test.py",
+  };
+  assert.match(targetExecutableWarning(pythonDraft, "en") ?? "", /fixed arguments/);
+  assert.match(targetExecutableWarning(pythonDraft, "zh") ?? "", /固定参数/);
+
+  const nativeDraft = {
+    ...emptyAliasDraft(),
+    target_type: "native_executable",
+    executable: "python test.py",
+  };
+  const nativeWarning = targetExecutableWarning(nativeDraft, "en") ?? "";
+  assert.match(nativeWarning, /one program name/);
+  assert.match(nativeWarning, /python/);
+  assert.match(nativeWarning, /test\.py/);
+  // The warning is advisory: the draft itself is untouched.
+  assert.equal(nativeDraft.executable, "python test.py");
+
+  assert.equal(
+    targetExecutableWarning({ ...nativeDraft, executable: "C:\\Program Files\\tool.exe" }, "en"),
+    null,
+    "a real path with spaces is not a suspicious command line",
+  );
+  assert.equal(
+    targetExecutableWarning({ ...nativeDraft, target_type: "batch", executable: "tool.bat arg" }, "en"),
+    null,
+  );
+  assert.equal(
+    targetExecutableWarning({ ...nativeDraft, executable: "git" }, "en"),
+    null,
+  );
+});
+
+test("config directory copy explains the fixed-at-startup rule and shows a platform example", () => {
+  const windows = configDirExampleCommand("windows");
+  assert.match(windows, /setx ALIASMGR_CONFIG_DIR/);
+  assert.match(windows, /D:\\alias-manager/);
+  const posix = configDirExampleCommand("posix");
+  assert.match(posix, /export ALIASMGR_CONFIG_DIR=/);
+
+  assert.match(configDirExplanation("en"), /fixed at startup/);
+  assert.match(configDirExplanation("en"), /ALIASMGR_CONFIG_DIR=<path>/);
+  assert.match(configDirExplanation("en"), /restart the app/);
+  assert.match(configDirExplanation("zh"), /启动时固定/);
+  assert.match(configDirExplanation("zh"), /重启应用/);
+  assert.notEqual(
+    configDirPlatformLabel("windows", "en"),
+    configDirPlatformLabel("posix", "en"),
+  );
+});
+
+test("sync and doctor panels expose actionable, disabled-while-busy controls", async () => {
+  const generated = await source("GeneratedFilePanel");
+  for (const fragment of [
+    "sync_aliases",
+    "syncAliasesArgs",
+    "normalizeSyncRun",
+    "generated.syncNow",
+    "generated.syncComplete",
+    "generated.syncFailed",
+    "generated.syncNoShells",
+    "generated.reloadRequired",
+    "generated.loaderMissing",
+    "generated.generatedPath",
+    "generatedPreviewErrorMessage",
+    "reloadCommandExplanation",
+    "reloadCommandLabel",
+    "reloadHover",
+    "disabled={busy !== null}",
+  ]) {
+    assert.ok(generated.includes(fragment), `generated panel is missing ${fragment}`);
+  }
+
+  const doctor = await source("DoctorPanel");
+  for (const fragment of [
+    "doctorActionFor",
+    "doctorActionLabel",
+    "sync_aliases",
+    "syncAliasesArgs",
+    "shell_install",
+    "shellInstallArgs",
+    "doctor.purpose",
+    "doctor.actionRunning",
+    "doctor.syncResult",
+    "doctor.syncFailedResult",
+    "doctor.installResult",
+    "doctor.actionFailed",
+    "disabled={actionBusy !== null || loading}",
+    "setReloadToken((value) => value + 1)",
+  ]) {
+    assert.ok(doctor.includes(fragment), `doctor panel is missing ${fragment}`);
+  }
+});
+
+test("wizard and settings panels surface the new explanations", async () => {
+  const wizard = await source("AliasWizard");
+  for (const fragment of [
+    "targetTypeExplanation",
+    "targetExecutableWarning",
+    "target-executable-warning",
+  ]) {
+    assert.ok(wizard.includes(fragment), `wizard is missing ${fragment}`);
+  }
+
+  const settings = await source("SettingsPanel");
+  for (const fragment of [
+    "configDirExampleCommand",
+    "configDirExplanation",
+    "copyExample",
+    "settings.copyExample",
+    "title={configDirExplanation(language)}",
+  ]) {
+    assert.ok(settings.includes(fragment), `settings is missing ${fragment}`);
+  }
 });

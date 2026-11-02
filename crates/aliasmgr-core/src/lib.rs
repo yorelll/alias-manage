@@ -2,6 +2,7 @@ pub mod config;
 pub mod detection;
 pub mod error;
 pub mod executor;
+pub mod integration;
 pub mod lock;
 pub mod migrations;
 pub mod model;

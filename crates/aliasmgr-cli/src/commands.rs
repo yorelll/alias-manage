@@ -4,10 +4,7 @@ use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
 use aliasmgr_core::{
     config::AppPaths,
     error::AliasError,
-    model::{
-        normalize_restriction, record_checksum, AliasRecord, PathRestriction, ShellKind,
-        ShellStatus,
-    },
+    model::{normalize_restriction, record_checksum, AliasRecord, PathRestriction, ShellKind},
     storage::Database,
     validation::validate_alias,
 };
@@ -407,207 +404,46 @@ pub fn sync(config_dir: Option<&str>, dry_run: bool) -> Result<String, AliasErro
     if dry_run {
         return Ok(String::new());
     }
-    let aliases = list(config_dir)?;
-    let database = database(config_dir)?;
-    let mut shells = aliases
-        .iter()
-        .flat_map(|alias| alias.shells.clone())
-        .collect::<Vec<_>>();
-    for shell in [
-        ShellKind::Bash,
-        ShellKind::Zsh,
-        ShellKind::PowerShell5,
-        ShellKind::PowerShell7,
-    ] {
-        if !database.managed_name_set(&shell)?.retired.is_empty() && !shells.contains(&shell) {
-            shells.push(shell);
-        }
-    }
-    shells.sort();
-    shells.dedup();
-    // Revisions must stay monotonic across deletes: tombstones advanced the counter too.
-    let revision = aliases
-        .iter()
-        .map(|alias| alias.revision)
-        .max()
-        .unwrap_or(1)
-        .max(database.max_retired_revision()?)
-        .max(1);
-    let coordinator = aliasmgr_core::sync::SyncCoordinator::new(
-        AppPaths::discover(config_dir.map(Path::new)).root,
-    );
-    let mut results = Vec::new();
-    for shell in &shells {
-        let names = database.managed_name_set(shell)?;
-        let shell_aliases = aliases
-            .iter()
-            .filter(|alias| alias.shells.contains(shell))
-            .cloned()
-            .collect::<Vec<_>>();
-        results.extend(
-            coordinator
-                .apply_with_managed_names(
-                    &shell_aliases,
-                    std::slice::from_ref(shell),
-                    revision,
-                    &names,
-                )?
-                .results,
-        );
-    }
-    let failures = results
-        .iter()
-        .filter(|result| result.status == ShellStatus::Failed)
-        .map(|result| {
-            format!(
-                "{:?}: {}",
-                result.shell,
-                result.error.as_deref().unwrap_or("unknown error")
-            )
-        })
-        .collect::<Vec<_>>();
+    let paths = AppPaths::discover(config_dir.map(Path::new));
+    // Target-shell selection and the monotonic revision live in aliasmgr-core
+    // so the CLI and GUI cannot diverge.
+    let run = aliasmgr_core::sync::sync_config_dir(&paths.root)?;
+    let failures = run.failure_summary();
     if !failures.is_empty() {
         return Err(AliasError::PartialSync(failures.join("; ")));
     }
-    Ok(format!("synced {} shell results", results.len()))
+    Ok(format!("synced {} shell results", run.results.len()))
 }
 pub fn reload_print(config_dir: Option<&str>, shell: &str) -> String {
     let root = AppPaths::discover(config_dir.map(Path::new)).root;
-    let root = root.to_string_lossy();
-    match shell {
-        "zsh" => format!("source '{root}/generated/zsh.sh'"),
-        "powershell5" => format!(". '{root}/generated/powershell5.ps1'"),
-        "powershell7" => format!(". '{root}/generated/powershell7.ps1'"),
-        _ => format!(". '{root}/generated/bash.sh'"),
-    }
+    let kind = match shell {
+        "zsh" => ShellKind::Zsh,
+        "powershell5" => ShellKind::PowerShell5,
+        "powershell7" => ShellKind::PowerShell7,
+        _ => ShellKind::Bash,
+    };
+    aliasmgr_core::sync::reload_command(&root, &kind)
 }
 
+#[cfg(test)]
 fn default_powershell_profile_path(shell: &str) -> Option<PathBuf> {
-    if cfg!(windows) {
-        let home = std::env::var_os("USERPROFILE").map(PathBuf::from)?;
-        let folder = match shell {
-            "powershell5" => "WindowsPowerShell",
-            "powershell7" => "PowerShell",
-            _ => return None,
-        };
-        Some(
-            home.join("Documents")
-                .join(folder)
-                .join("Microsoft.PowerShell_profile.ps1"),
-        )
-    } else {
-        match shell {
-            // Windows PowerShell 5.1 does not exist outside Windows.
-            "powershell5" => None,
-            "powershell7" => std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|home| home.join(".config").join("powershell").join("profile.ps1")),
-            _ => None,
-        }
-    }
-}
-
-/// Resolves the profile/RC file for a Shell and whether the loader block must
-/// use PowerShell syntax. A configured path always wins over the platform
-/// default, which keeps tests and custom setups away from real profiles.
-fn loader_target(
-    config: &aliasmgr_core::config::AppConfig,
-    paths: &aliasmgr_core::config::AppPaths,
-    shell: &str,
-) -> Result<(PathBuf, bool), AliasError> {
-    match shell {
-        "bash" => Ok((
-            config
-                .shells
-                .bash_rc_path
-                .clone()
-                .unwrap_or_else(|| paths.root.join(".bashrc")),
-            false,
-        )),
-        "zsh" => Ok((
-            config
-                .shells
-                .zsh_rc_path
-                .clone()
-                .unwrap_or_else(|| paths.root.join(".zshrc")),
-            false,
-        )),
-        "powershell5" => config
-            .shells
-            .powershell5_profile_path
-            .clone()
-            .or_else(|| default_powershell_profile_path("powershell5"))
-            .map(|path| (path, true))
-            .ok_or(AliasError::ShellNotInstalled),
-        "powershell7" => config
-            .shells
-            .powershell7_profile_path
-            .clone()
-            .or_else(|| default_powershell_profile_path("powershell7"))
-            .map(|path| (path, true))
-            .ok_or(AliasError::ShellNotInstalled),
-        _ => Err(AliasError::ShellNotInstalled),
-    }
-}
-
-fn render_shell_loader(generated: &Path, powershell: bool) -> String {
-    if powershell {
-        aliasmgr_core::shells::common::render_powershell_loader(generated)
-    } else {
-        aliasmgr_core::shells::common::render_loader(generated)
-    }
+    aliasmgr_core::integration::default_powershell_profile_path(shell)
 }
 
 pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let name = shell.to_ascii_lowercase();
-    let (rc_path, powershell) = loader_target(&config, &paths, &name)?;
-    let generated = paths.generated_path(&name);
-    let loader = render_shell_loader(&generated, powershell);
-    let before = std::fs::read_to_string(&rc_path).unwrap_or_default();
-    if aliasmgr_core::shells::common::install_loader(&before, &loader)? == before {
-        return Ok(false);
-    }
-    aliasmgr_core::shells::common::write_loader_file_with_keep(
-        &rc_path,
-        &before,
-        &loader,
-        config.backups.rc_keep,
-    )?;
-    Ok(true)
+    Ok(aliasmgr_core::integration::install_loader(&paths, shell)?.changed)
 }
 
 pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let name = shell.to_ascii_lowercase();
-    let (rc_path, _) = loader_target(&config, &paths, &name)?;
-    if !rc_path.exists() {
-        return Ok(false);
-    }
-    let before = std::fs::read_to_string(&rc_path)?;
-    let cleaned = aliasmgr_core::shells::common::remove_loader(&before)?;
-    if cleaned == before {
-        return Ok(false);
-    }
-    aliasmgr_core::shells::common::write_profile_content_with_keep(
-        &rc_path,
-        &cleaned,
-        config.backups.rc_keep,
-    )?;
-    Ok(true)
+    Ok(aliasmgr_core::integration::uninstall_loader(&paths, shell)?.changed)
 }
 
 #[allow(dead_code)]
 pub fn shell_install_status(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    let config = paths.load_config()?;
-    let name = shell.to_ascii_lowercase();
-    let (rc_path, _) = loader_target(&config, &paths, &name)?;
-    Ok(rc_path.exists()
-        && aliasmgr_core::shells::common::loader_position(&std::fs::read_to_string(rc_path)?)?
-            == aliasmgr_core::shells::common::LoaderPosition::AtEnd)
+    Ok(aliasmgr_core::integration::loader_status(&paths, shell)?.installed)
 }
 
 pub fn export_file(config_dir: Option<&str>, file: &str) -> Result<(), AliasError> {
@@ -871,7 +707,7 @@ mod tests {
 
     #[test]
     fn dry_run_and_reload_are_non_mutating_helpers() {
-        assert!(reload_print(Some("cfg"), "bash").contains("generated/bash.sh"));
+        assert!(reload_print(Some("cfg"), "bash").contains("bash.sh"));
     }
     #[test]
     fn reload_shell_honours_explicit_choice_and_detection_stays_within_known_names() {
@@ -882,9 +718,11 @@ mod tests {
         );
         assert!(["bash", "zsh", "powershell5", "powershell7"]
             .contains(&reload_shell(None).unwrap().as_str()));
-        assert!(reload_print(Some("cfg"), "zsh").contains("generated/zsh.sh"));
-        assert!(reload_print(Some("cfg"), "powershell5").contains("generated/powershell5.ps1"));
-        assert!(reload_print(Some("cfg"), "powershell7").contains("generated/powershell7.ps1"));
+        assert!(reload_print(Some("cfg"), "zsh").contains("zsh.sh"));
+        assert!(reload_print(Some("cfg"), "powershell5").contains("powershell5.ps1"));
+        assert!(reload_print(Some("cfg"), "powershell7").contains("powershell7.ps1"));
+        assert!(reload_print(Some("cfg"), "bash").starts_with("source "));
+        assert!(reload_print(Some("cfg"), "powershell7").starts_with(". '"));
     }
 
     #[test]

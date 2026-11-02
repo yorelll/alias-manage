@@ -55,6 +55,13 @@ aliasmgr doctor
 
 已打开的父 Shell 不会被 CLI 子进程自动更新；执行 `reload --print` 输出的命令（或重新打开 Shell）后生效。
 
+- Bash/Zsh 使用 `source '<config-root>/generated/bash.sh'`。
+- PowerShell 使用 `. '<config-root>\generated\powershell7.ps1'`；开头的 `.` 是 **点源（dot-source）运算符**，不是逗号，表示在当前会话中运行该文件。
+
+重载会让当前 Shell 重新读取生成文件，适用于别名变更后或在已打开的 Shell 中同步后；新 Shell/终端会通过 loader 自动加载。重载不会修改数据库。
+
+目标类型（`--target-type`）只是分类/校验元数据，不会自动添加解释器。要运行 `python test.py`，请设置 `--exec python --arg test.py`，不要写成 `--exec "python test.py"`。各类型的运行时行为见 [docs/cli-commands.md](docs/cli-commands.md#target-type-semantics)。
+
 ## 构建 GUI（预发布）
 
 ```bash

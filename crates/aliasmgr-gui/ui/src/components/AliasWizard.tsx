@@ -13,6 +13,8 @@ import {
   previewAliasArgs,
   rowsToEnvironment,
   shellLabel,
+  targetExecutableWarning,
+  targetTypeExplanation,
   targetTypeLabel,
   tauriInvoke,
   toggleShell,
@@ -135,6 +137,8 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   };
 
   const unknownShells = draft.shells.filter((shell) => !(SHELLS as readonly string[]).includes(shell));
+  const targetTypeHint = targetTypeExplanation(language);
+  const executableWarning = targetExecutableWarning(draft, language);
 
   return (
     <section className="alias-wizard" aria-labelledby="alias-wizard-title" data-testid="alias-wizard">
@@ -156,7 +160,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
         </label>
 
         <label className="field">
-          <span>{t("wizard.targetType")}</span>
+          <span title={targetTypeHint}>{t("wizard.targetType")}</span>
           <select value={draft.target_type} onChange={(event) => update({ target_type: event.target.value })}>
             {TARGET_TYPES.map((option) => <option key={option.value} value={option.value}>{targetTypeLabel(option.value, language)}</option>)}
           </select>
@@ -165,6 +169,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
               {t("wizard.unsupportedType", { type: targetTypeLabel(draft.target_type, language) })}
             </span>
           )}
+          <span className="hint" title={targetTypeHint}>{targetTypeHint}</span>
         </label>
 
         <label className="field field-full">
@@ -175,7 +180,13 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
             placeholder={t("wizard.targetPlaceholder")}
             autoComplete="off"
             spellCheck={false}
+            aria-describedby={executableWarning ? "target-executable-warning" : undefined}
           />
+          {executableWarning && (
+            <span id="target-executable-warning" className="hint warning" role="status">
+              {executableWarning}
+            </span>
+          )}
         </label>
 
         <label className="field field-full">

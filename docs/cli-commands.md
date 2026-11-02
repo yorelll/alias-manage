@@ -34,7 +34,7 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
   - `--cwd PATH` applies to each generated invocation without changing the caller's shell: Bash/Zsh run the command in a subshell after `cd`; PowerShell uses `Push-Location` and restores it in `finally`.
   - `--env` values apply only to the generated invocation: Bash/Zsh invoke the target through `env KEY=VALUE ...`; PowerShell saves, sets, and restores each variable in `finally`.
   - `--no-pass-args` sets `pass_args=false`; user arguments are forwarded by default. When fixed arguments contain `{{args}}`, user arguments are inserted at that position; `{{{{args}}}}` renders the literal text `{{args}}`. Without a placeholder, user arguments are appended at the end only when `pass_args` is true.
-  - `--target-type TYPE` accepts `native_executable` (default), `python_script`, `powershell_script`, `batch`, `shell_script`, `java_jar`, `cmdlet`, and `change_directory`. `raw_shell_command` is not exposed as a CLI value and is rejected by clap as a usage error (exit 2); advanced Shell mode remains rejected by validation.
+  - `--target-type TYPE` accepts `native_executable` (default), `python_script`, `powershell_script`, `batch`, `shell_script`, `java_jar`, `cmdlet`, and `change_directory`. `raw_shell_command` is not exposed as a CLI value and is rejected by clap as a usage error (exit 2); advanced Shell mode remains rejected by validation. See [Target type semantics](#target-type-semantics).
   - `--path-mode MODE` accepts `absolute` (default) and `relative_to_working_directory`.
   - `--description TEXT` stores a free-form memo. `--description ""` stores an empty description.
   - `--restrict whitelist|blacklist` with one or more `--restrict-path PATH` attaches an execution-directory restriction. `--restrict` without a path and `--restrict-path` without `--restrict` are configuration errors (exit 1); path validation failures are validation errors (exit 5). `--clear-restriction` is an `update`-only flag; `add` rejects it as a usage error (exit 2). Paths are trimmed, deduplicated, must be absolute on the current platform, at most 64 paths of at most 4096 characters each. See `docs/restrictions.md`.
@@ -58,6 +58,30 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
 - `enable <NAME>` / `disable <NAME>`: flips the `enabled` flag. A missing alias is `NotFound` (exit 4).
 - `remove <NAME> [--yes]`: retires the name for every bound shell (tombstones advance the revision) and deletes the row. A missing alias is `NotFound` (exit 4). Without `--yes` in a non-interactive process, the command fails with `ConfirmationRequired` (exit 14).
 
+## Target type semantics
+
+Target type is **classification and validation metadata**, not an interpreter
+launcher. Only `batch` and `change_directory` change runtime behavior. Every
+other type runs the `executable` field directly through the structured executor.
+
+| Type | Runtime behavior | Example |
+| --- | --- | --- |
+| `native_executable` (default) | Runs `executable` + fixed args as an argv array. | `--exec git --arg status` |
+| `python_script` | Same structured execution; it does **not** prepend `python`. | `--exec python3 --arg script.py` |
+| `powershell_script` | Same structured execution; pick the PowerShell host yourself. | `--exec pwsh --arg -File --arg build.ps1` |
+| `shell_script` | Same structured execution; pick `bash`/`sh`/`zsh` yourself. | `--exec bash --arg deploy.sh` |
+| `java_jar` | Same structured execution; pass `java -jar` explicitly. | `--exec java --arg -jar --arg app.jar` |
+| `cmdlet` | Same structured execution; PowerShell invokes the named command. | `--exec Get-ChildItem` |
+| `batch` | Structured execution plus extra metacharacter validation (`% ! & \| ^ < >`). | `--exec tool.bat --arg safe` |
+| `change_directory` | The generated wrapper changes to the target directory instead of running a program. | `--exec /srv/project` |
+
+To run `python test.py`, set `executable` to `python` (or `python3`) and put
+`test.py` in fixed arguments. Do **not** put `python test.py` in the executable
+field: a `native_executable` record with that value tries to run a program
+literally named `python test.py` and fails. The GUI wizard shows this guidance
+next to the target-type selector and displays an advisory warning (never a
+silent rewrite) when the executable contains whitespace.
+
 ## Synchronization and diagnostics
 
 - `sync [--dry-run]`
@@ -72,7 +96,29 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
   - Without `--print`, prints the reminder that an already-open parent Shell is not updated by a child process.
   - With `--print`, prints the Shell-specific command that sources the generated file. `--shell` accepts `bash`, `zsh`, `powershell5`, and `powershell7`; when omitted, the Shell is detected and falls back to Bash. An unknown explicit Shell is a configuration error (exit 1).
   - `reload` never modifies files or Shell state by itself.
+
+### What "reload" means
+
+Reloading makes the **current** shell re-read the generated definition file. It
+is needed after aliases change, or after a sync in an already-open shell. New
+shells and terminals pick the file up automatically through the loader block in
+the shell profile. Reloading does not modify the database.
+
+The printed command depends on the shell:
+
+- Bash/Zsh: `source '<config-root>/generated/bash.sh'` (the POSIX `.` operator is
+  equivalent to `source`).
+- PowerShell 5.1/7: `. '<config-root>\generated\powershell7.ps1'`. The leading
+  `.` is PowerShell's **dot-source operator** — it runs the file in the current
+  session. It is not a comma, and it is not punctuation.
+
+Paths are single-quoted for the target shell, so spaces and non-ASCII directory
+names survive. PowerShell doubles embedded single quotes; POSIX shells use
+`'\''`.
+
 - `doctor`: reports missing database, missing generated files, stale generated files (recorded `applied_revision` behind the current revision), recorded sync errors, missing loader blocks, and a filesystem-reliability finding when one is available. It also recomputes each generated file's embedded `# file_checksum:` and reports `生成文件校验和不匹配（可能被手工修改）` for a file edited by hand or missing its checksum line. It does not repair anything.
+  - Doctor inspects database presence, generated files and checksums, staleness, sync errors, loader installation, and filesystem reliability. It is read-only.
+  - The GUI Doctor page adds an action button to actionable findings: **Sync now** for `generated_missing`, `stale`, `sync_failed`, `generated_unreadable`, `generated_modified`, and `render_failed`; **Install shell integration** for `loader_missing`. Actions run the same core operations as `sync` and `shell install`, then rescan automatically. The CLI has no action buttons: run `aliasmgr sync` or `aliasmgr shell install <SHELL>` yourself.
 - `shell detect`: reports the detected Shell.
 - `shell install <SHELL>` / `shell uninstall <SHELL>`: installs or removes the marked loader block for `bash`, `zsh`, `powershell5`, or `powershell7`. Other Shell names return `ShellNotInstalled` (exit 12).
   - The loader path comes from `config.toml` (`shells.bash_rc_path`, `shells.zsh_rc_path`, `shells.powershell5_profile_path`, `shells.powershell7_profile_path`).
@@ -107,3 +153,18 @@ Package-manager hooks and MSI integration are documented in `docs/uninstall.md` 
 See `README.md`, `docs/security.md`, `docs/limitations.md`, `docs/exit-codes.md`, `docs/uninstall.md`, and `docs/architecture.md`.
 
 GUI commands, visual acceptance, and installer workflows are outside this pre-GUI CLI document.
+
+## GUI notes
+
+- Sync page: **Sync now (generate definitions)** runs the same orchestration as
+  `aliasmgr sync`. It lists per-shell success/failure, the generated path, the
+  reload command, and whether that shell's loader block is installed. An
+  already-open shell must reload; new shells load the file automatically.
+- Generated-file preview: if no file exists yet, the UI shows a localized
+  "Run Sync to create it" message instead of the raw OS error. Missing,
+  unreadable (invalid UTF-8), and permission-denied files are distinguished.
+- Config directory: fixed at startup. The Settings page shows a platform
+  example (`setx ALIASMGR_CONFIG_DIR "D:\alias-manager"` on Windows,
+  `export ALIASMGR_CONFIG_DIR="/home/user/.alias-manager"` on macOS/Linux) and
+  refuses to save a different directory. Restart the app after changing the
+  environment variable.

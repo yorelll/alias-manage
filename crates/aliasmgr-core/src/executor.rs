@@ -149,6 +149,25 @@ mod tests {
     }
 
     #[test]
+    fn python_script_classification_does_not_prepend_an_interpreter() {
+        // `python_script` is metadata: the caller must put the interpreter in
+        // `executable` and the script in fixed args.
+        let mut value = alias(TargetType::PythonScript);
+        value.executable = "python".into();
+        value.fixed_args = vec!["test.py".into()];
+        assert_eq!(
+            render_argv(&value, &["--flag".into()]).unwrap(),
+            vec!["python", "test.py", "--flag"]
+        );
+
+        // Putting the whole command line in `executable` runs one program
+        // literally named "python test.py"; it is not split.
+        let mut joined = alias(TargetType::NativeExecutable);
+        joined.executable = "python test.py".into();
+        assert_eq!(render_argv(&joined, &[]).unwrap(), vec!["python test.py"]);
+    }
+
+    #[test]
     fn batch_executor_rejects_command_metacharacters() {
         let value = AliasRecord {
             target_type: TargetType::Batch,
