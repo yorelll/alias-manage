@@ -2144,10 +2144,20 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let config = TempConfig::new("sync-powershell");
         configure_powershell_profiles(&config.root);
+        // A real, existing target whose path contains spaces. Creating it under
+        // the isolated config root keeps the test hermetic across machines.
+        let target = config
+            .root
+            .join("Program Files")
+            .join("LocalSend")
+            .join("localsend_app.exe");
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"stub").unwrap();
+        let target_string = target.to_string_lossy().into_owned();
 
         let mut dto = preview_dto();
         dto.name = "lsend2".into();
-        dto.executable = r"D:\Program Files\LocalSend\localsend_app.exe".into();
+        dto.executable = target_string.clone();
         dto.fixed_args = Vec::new();
         dto.shells = vec!["powershell5".into(), "powershell7".into()];
         create_alias(dto).unwrap();
@@ -2164,6 +2174,11 @@ mod tests {
             let content = std::fs::read_to_string(&path).unwrap();
             assert!(content.contains("lsend2"), "{content}");
             assert!(content.contains("localsend_app.exe"), "{content}");
+            assert!(
+                content.contains("Program Files") && content.contains("LocalSend"),
+                "the spaced temp target must be the one rendered: {content}"
+            );
+            assert!(content.contains(&target_string), "{content}");
             assert!(
                 result.reload_command.starts_with(". '"),
                 "{}",
