@@ -1128,11 +1128,20 @@ mod tests {
     #[test]
     fn sync_config_dir_writes_a_file_for_every_referenced_shell() {
         let root = sync_root("referenced");
+        // A real, existing target with spaces in its path. Creating it under
+        // the sync temp root keeps this test hermetic on Linux and Windows.
+        let target = root
+            .join("Program Files")
+            .join("LocalSend")
+            .join("localsend_app.exe");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(&target, b"stub").unwrap();
+        let target_string = target.to_string_lossy().into_owned();
         let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
         database
             .insert_alias(&AliasRecord {
                 name: "lsend2".into(),
-                executable: r"D:\Program Files\LocalSend\localsend_app.exe".into(),
+                executable: target_string.clone(),
                 shells: vec![ShellKind::PowerShell5, ShellKind::PowerShell7],
                 revision: 3,
                 ..Default::default()
@@ -1150,6 +1159,11 @@ mod tests {
             let content = fs::read_to_string(&result.generated_path).unwrap();
             assert!(content.contains("# revision: 3"), "{content}");
             assert!(content.contains("lsend2"), "{content}");
+            assert!(
+                content.contains("Program Files") && content.contains("LocalSend"),
+                "the spaced temp target must be rendered: {content}"
+            );
+            assert!(content.contains(&target_string), "{content}");
         }
         let _ = fs::remove_dir_all(root);
     }
