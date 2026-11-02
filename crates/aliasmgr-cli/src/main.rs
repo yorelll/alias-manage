@@ -37,9 +37,9 @@ fn main() {
         cli::Command::Remove { name, .. } => commands::remove(cli.config_dir.as_deref(), name)
             .map(|_| messages::ALIAS_REMOVED.to_string()),
         cli::Command::Enable { name } => commands::enable(cli.config_dir.as_deref(), name, true)
-            .map(|_| messages::ALIAS_ADDED.to_string()),
+            .map(|_| messages::ALIAS_ENABLED.to_string()),
         cli::Command::Disable { name } => commands::enable(cli.config_dir.as_deref(), name, false)
-            .map(|_| messages::ALIAS_REMOVED.to_string()),
+            .map(|_| messages::ALIAS_DISABLED.to_string()),
         cli::Command::Update(args) => commands::update(cli.config_dir.as_deref(), args)
             .map(|_| messages::ALIAS_UPDATED.to_string()),
         cli::Command::Rename { old, new } => commands::rename(cli.config_dir.as_deref(), old, new)

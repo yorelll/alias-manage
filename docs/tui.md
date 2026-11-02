@@ -170,6 +170,13 @@ generated-content preview replaces every environment value with `***` before
 the core renderer runs, so previews, errors and logs cannot leak a value.
 Environment keys remain visible. The preview is read-only.
 
+The preview renders the whole generated file for the selected Shell, not only
+the selected alias's definition. If an unrelated alias in that Shell has an
+invalid or missing target, the preview can show `preview unavailable: target is
+missing: <other alias>` even though the selected alias is valid. Per-alias
+preview is not implemented; inspect the record with the CLI or fix/remove the
+other alias.
+
 ## Conflicts and external edits
 
 The TUI re-reads the database on refresh and detects writes from the CLI/GUI.
