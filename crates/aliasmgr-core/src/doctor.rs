@@ -359,7 +359,14 @@ pub fn diagnose(
             "stale",
             format!("Shell {} 生成文件过期", shell_label(&shell)),
         );
-        value.action = Some("执行同步".into());
+        // `sync` only targets shells referenced by aliases or tombstones. A
+        // leftover file or a shell_state-only shell cannot be cleared by it,
+        // so point at the manual remedy instead of an ineffective sync action.
+        value.action = Some(if referenced_shells.contains(&shell) {
+            "执行同步".into()
+        } else {
+            "该 Shell 已无别名；请手动删除对应生成文件，或创建别名后重新同步".into()
+        });
         value.detail = Some(detail);
         findings.push(value);
     }
@@ -389,6 +396,34 @@ mod tests {
 
     fn finding_code<'a>(findings: &'a [DoctorFinding], code: &str) -> Option<&'a DoctorFinding> {
         findings.iter().find(|finding| finding.code == code)
+    }
+
+    #[test]
+    fn orphan_generated_file_is_reported_with_manual_guidance_and_removal_clears_it() {
+        let root = temp_root("orphan");
+        std::fs::create_dir_all(root.join("generated")).unwrap();
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let body = "# Alias Manager\n# revision: 1\nghost() { true; }\n";
+        let checksum = sync::content_checksum(body);
+        let path = root.join("generated/bash.sh");
+        std::fs::write(&path, format!("{body}# file_checksum: {checksum}\n")).unwrap();
+
+        let findings = diagnose(&root, true, &database, &[]).unwrap();
+        let stale = findings
+            .iter()
+            .find(|finding| finding.code == "stale" && finding.shell == Some(ShellKind::Bash))
+            .expect("orphan file must be stale");
+        let action = stale.action.as_deref().unwrap_or_default();
+        assert!(action.contains("删除"), "manual remedy expected: {action}");
+
+        // The documented remedy (manual removal) clears the finding; there is
+        // no alias for sync to target.
+        std::fs::remove_file(&path).unwrap();
+        let findings = diagnose(&root, true, &database, &[]).unwrap();
+        assert!(!findings
+            .iter()
+            .any(|finding| finding.code == "stale" && finding.shell == Some(ShellKind::Bash)));
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

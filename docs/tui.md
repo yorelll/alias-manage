@@ -197,6 +197,12 @@ actionable fix for stale/missing generated files); `r` rescans. The TUI does
 not install or remove loaders in this version; use
 `aliasmgr shell install|uninstall` with the CLI.
 
+A leftover generated file with no alias or tombstone, and a `shell_state`-only
+shell, are not targeted by `sync`. They therefore never keep the header at
+"sync: needed"; Doctor reports them with manual-removal guidance instead.
+Deleting the orphan file (or creating an alias for that Shell) is the documented
+remedy, and the finding disappears after it.
+
 ## Not implemented in the TUI (Phase 5 remainder)
 
 - Import/export preview and confirmation.

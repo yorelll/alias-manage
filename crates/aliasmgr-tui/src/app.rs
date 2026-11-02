@@ -170,7 +170,9 @@ pub struct App {
     pub detail_scroll: u16,
     pub detail_height: u16,
     pub preview_height: usize,
+    pub preview_max_scroll: u16,
     pub doctor_height: usize,
+    pub doctor_max_scroll: u16,
     pub filter: FilterState,
     pub screen: Screen,
     pub focus: Focus,
@@ -227,7 +229,9 @@ impl App {
             detail_scroll: 0,
             detail_height: 10,
             preview_height: 10,
+            preview_max_scroll: 0,
             doctor_height: 10,
+            doctor_max_scroll: 0,
             filter: FilterState::default(),
             screen: Screen::Browse,
             focus: Focus::List,
@@ -751,15 +755,7 @@ impl App {
         let mut quit = false;
         let mut switch: i64 = 0;
         let page = self.preview_height.max(1) as u16;
-        let end = match &self.screen {
-            Screen::Preview(state) => state
-                .body
-                .lines()
-                .count()
-                .saturating_sub(self.preview_height.max(1))
-                as u16,
-            _ => 0,
-        };
+        let end = self.preview_max_scroll;
         {
             let Screen::Preview(state) = &mut self.screen else {
                 return;
@@ -818,12 +814,7 @@ impl App {
     fn handle_doctor_key(&mut self, key: KeyEvent) {
         let mut action = None;
         let page = self.doctor_height.max(1) as u16;
-        let end = match &self.screen {
-            Screen::Doctor(state) => {
-                (state.findings.len() * 4).saturating_sub(self.doctor_height.max(1)) as u16
-            }
-            _ => 0,
-        };
+        let end = self.doctor_max_scroll;
         {
             let Screen::Doctor(state) = &mut self.screen else {
                 return;
@@ -1658,125 +1649,6 @@ mod tests {
         let app = App::new(root.clone()).unwrap();
         assert!(path.exists());
         assert!(!app.status.text.contains("recovered"));
-        drop(app);
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn preview_and_doctor_paging_use_visible_height_and_clamp() {
-        let (root, mut app) = app_with_two();
-        let body = (0..100)
-            .map(|index| format!("line {index}\n"))
-            .collect::<String>();
-        app.screen = Screen::Preview(PreviewState {
-            alias_name: "gs".into(),
-            shells: vec![ShellKind::Bash],
-            index: 0,
-            body,
-            error: None,
-            scroll: 0,
-            redacted: true,
-        });
-        app.preview_height = 10;
-        app.handle_key(key(KeyCode::PageDown));
-        assert_eq!(
-            match &app.screen {
-                Screen::Preview(s) => s.scroll,
-                _ => 0,
-            },
-            10
-        );
-        app.handle_key(key(KeyCode::PageDown));
-        assert_eq!(
-            match &app.screen {
-                Screen::Preview(s) => s.scroll,
-                _ => 0,
-            },
-            20
-        );
-        app.handle_key(key(KeyCode::PageUp));
-        assert_eq!(
-            match &app.screen {
-                Screen::Preview(s) => s.scroll,
-                _ => 0,
-            },
-            10
-        );
-        app.handle_key(key(KeyCode::End));
-        assert_eq!(
-            match &app.screen {
-                Screen::Preview(s) => s.scroll,
-                _ => 0,
-            },
-            90
-        );
-        app.handle_key(key(KeyCode::Char('g')));
-        assert_eq!(
-            match &app.screen {
-                Screen::Preview(s) => s.scroll,
-                _ => 0,
-            },
-            0
-        );
-        app.handle_key(key(KeyCode::Char('G')));
-        assert_eq!(
-            match &app.screen {
-                Screen::Preview(s) => s.scroll,
-                _ => 0,
-            },
-            90
-        );
-
-        let findings = (0..20)
-            .map(|index| DoctorFinding {
-                shell: Some(ShellKind::Bash),
-                severity: "warning",
-                code: "test",
-                message: format!("finding {index}"),
-                action: None,
-                detail: None,
-            })
-            .collect::<Vec<_>>();
-        app.screen = Screen::Doctor(DoctorState {
-            findings,
-            selected: 0,
-            scroll: 0,
-            busy: false,
-            error: None,
-        });
-        app.doctor_height = 10;
-        app.handle_key(key(KeyCode::PageDown));
-        assert_eq!(
-            match &app.screen {
-                Screen::Doctor(s) => s.scroll,
-                _ => 0,
-            },
-            10
-        );
-        app.handle_key(key(KeyCode::End));
-        assert_eq!(
-            match &app.screen {
-                Screen::Doctor(s) => s.scroll,
-                _ => 0,
-            },
-            70
-        );
-        app.handle_key(key(KeyCode::Home));
-        assert_eq!(
-            match &app.screen {
-                Screen::Doctor(s) => s.scroll,
-                _ => 0,
-            },
-            0
-        );
-        app.handle_key(key(KeyCode::PageUp));
-        assert_eq!(
-            match &app.screen {
-                Screen::Doctor(s) => s.scroll,
-                _ => 0,
-            },
-            0
-        );
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

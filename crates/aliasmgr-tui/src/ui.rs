@@ -119,11 +119,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 app.list_offset = offset;
             }
         }
-        Screen::Preview(_) => {
-            app.preview_height = body.height.saturating_sub(2).max(1) as usize;
+        Screen::Preview(state) => {
+            let lines = preview_lines(state, app.theme);
+            let inner_width = body.width.saturating_sub(2).max(1) as usize;
+            let inner_height = body.height.saturating_sub(2).max(1) as usize;
+            app.preview_height = inner_height;
+            app.preview_max_scroll =
+                wrapped_rows(&lines, inner_width).saturating_sub(inner_height) as u16;
         }
-        Screen::Doctor(_) => {
-            app.doctor_height = body.height.saturating_sub(2).max(1) as usize;
+        Screen::Doctor(state) => {
+            let lines = doctor_lines(state, app.theme);
+            let inner_width = body.width.saturating_sub(2).max(1) as usize;
+            let inner_height = body.height.saturating_sub(2).max(1) as usize;
+            app.doctor_height = inner_height;
+            app.doctor_max_scroll =
+                wrapped_rows(&lines, inner_width).saturating_sub(inner_height) as u16;
         }
         Screen::Editor(editor) => {
             let (fields, _) = editor_panes(body);
@@ -247,14 +257,12 @@ fn sync_status(app: &App) -> (String, bool) {
     // revision, and a hand-edited file can diverge at the same revision.
     let needed = app
         .snapshot
-        .shell_states
-        .iter()
-        .any(|state| state.status == ShellStatus::Failed)
-        || app
-            .snapshot
-            .content
-            .values()
-            .any(|status| !status.is_up_to_date());
+        .content
+        .values()
+        .any(|status| !status.is_up_to_date())
+        || app.snapshot.shell_states.iter().any(|state| {
+            state.status == ShellStatus::Failed && app.snapshot.content.contains_key(&state.shell)
+        });
     if needed {
         ("sync: needed".to_string(), true)
     } else {
@@ -1103,6 +1111,21 @@ fn editor_side_lines(editor: &Editor, theme: Theme) -> Vec<Line<'static>> {
     lines
 }
 
+fn preview_lines(state: &PreviewState, theme: Theme) -> Vec<Line<'static>> {
+    if let Some(error) = &state.error {
+        vec![line(vec![span(
+            format!("! preview unavailable: {}", text::one_line(error)),
+            theme.error(),
+        )])]
+    } else {
+        state
+            .body
+            .lines()
+            .map(|line| Line::from(text::one_line(line)))
+            .collect::<Vec<_>>()
+    }
+}
+
 fn render_preview(frame: &mut Frame, area: Rect, app: &App, state: &PreviewState) {
     let shell = state.shell().map(shell_label).unwrap_or("-");
     let title = format!(
@@ -1115,20 +1138,8 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App, state: &PreviewState
             ""
         }
     );
-    let lines = if let Some(error) = &state.error {
-        vec![line(vec![span(
-            format!("! preview unavailable: {}", text::one_line(error)),
-            app.theme.error(),
-        )])]
-    } else {
-        state
-            .body
-            .lines()
-            .map(|line| Line::from(text::one_line(line)))
-            .collect::<Vec<_>>()
-    };
     frame.render_widget(
-        Paragraph::new(Text::from(lines))
+        Paragraph::new(Text::from(preview_lines(state, app.theme)))
             .block(block(&title, app.theme))
             .wrap(Wrap { trim: false })
             .scroll((state.scroll, 0)),
@@ -1136,68 +1147,72 @@ fn render_preview(frame: &mut Frame, area: Rect, app: &App, state: &PreviewState
     );
 }
 
-fn render_doctor(frame: &mut Frame, area: Rect, app: &App, state: &DoctorState) {
-    let title = format!("Doctor ({} findings)", state.findings.len());
+fn doctor_lines(state: &DoctorState, theme: Theme) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
     if state.busy {
         lines.push(line(vec![span(
             "Scanning read-only diagnostics...",
-            app.theme.muted(),
+            theme.muted(),
         )]));
     }
     if let Some(error) = &state.error {
         lines.push(line(vec![span(
             format!("! doctor failed: {}", text::one_line(error)),
-            app.theme.error(),
+            theme.error(),
         )]));
     }
     if !state.busy && state.findings.is_empty() && state.error.is_none() {
-        lines.push(line(vec![span("No findings.", app.theme.success())]));
+        lines.push(line(vec![span("No findings.", theme.success())]));
         lines.push(line(vec![span(
             "Press r to rescan, s to sync, Esc to go back.",
-            app.theme.muted(),
+            theme.muted(),
         )]));
     }
     for (index, finding) in state.findings.iter().enumerate() {
         let (marker, style) = match finding.severity {
-            "error" => ("[error]", app.theme.error()),
-            "warning" => ("[warn]", app.theme.warning()),
-            _ => ("[info]", app.theme.muted()),
+            "error" => ("[error]", theme.error()),
+            "warning" => ("[warn]", theme.warning()),
+            _ => ("[info]", theme.muted()),
         };
         let selected = index == state.selected;
         let mut spans = vec![
-            span(if selected { "> " } else { "  " }, app.theme.accent()),
+            span(if selected { "> " } else { "  " }, theme.accent()),
             span(format!("{marker} "), style),
         ];
         if let Some(shell) = &finding.shell {
-            spans.push(span(format!("{}: ", shell_label(shell)), app.theme.label()));
+            spans.push(span(format!("{}: ", shell_label(shell)), theme.label()));
         }
         spans.push(span(
             text::one_line(&finding.message),
             if selected {
-                app.theme.selected()
+                theme.selected()
             } else {
                 Style::default()
             },
         ));
-        spans.push(span(format!("  ({})", finding.code), app.theme.muted()));
+        spans.push(span(format!("  ({})", finding.code), theme.muted()));
         lines.push(line(spans));
         if let Some(action) = &finding.action {
             lines.push(line(vec![span(
                 format!("      action: {}", text::one_line(action)),
-                app.theme.success(),
+                theme.success(),
             )]));
         }
         if let Some(detail) = &finding.detail {
             lines.push(line(vec![span(
                 format!("      detail: {}", text::one_line(detail)),
-                app.theme.muted(),
+                theme.muted(),
             )]));
         }
         lines.push(Line::default());
     }
+    lines
+}
+
+fn render_doctor(frame: &mut Frame, area: Rect, app: &App, state: &DoctorState) {
+    let title = format!("Doctor ({} findings)", state.findings.len());
     frame.render_widget(
-        Paragraph::new(Text::from(lines))
+        Paragraph::new(Text::from(doctor_lines(state, app.theme)))
             .block(block(&title, app.theme))
             .wrap(Wrap { trim: false })
             .scroll((state.scroll, 0)),
@@ -1916,6 +1931,145 @@ mod tests {
         assert!(rendered.contains("reload: source"));
         assert!(rendered.contains("NOT executed automatically"));
         assert!(rendered.contains("[ok]"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn leftover_generated_file_does_not_make_the_header_claim_sync_needed() {
+        let root = temp_root("orphan-header");
+        std::fs::create_dir_all(root.join("generated")).unwrap();
+        std::fs::write(
+            root.join("generated/bash.sh"),
+            "# Alias Manager\n# revision: 1\nghost() { true; }\n",
+        )
+        .unwrap();
+        let mut app = App::new(root.clone()).unwrap();
+        app.theme = Theme::color();
+        app.reload();
+        let rendered = render_string(&mut app, 120, 24);
+        assert!(rendered.contains("sync: up to date"), "{rendered}");
+
+        // A shell_state-only shell with no file is not syncable either; it must
+        // not make the header loop forever.
+        app.database
+            .upsert_shell_state(&aliasmgr_core::model::ShellState {
+                shell: ShellKind::Bash,
+                applied_revision: 0,
+                file_checksum: String::new(),
+                loader_installed: false,
+                status: ShellStatus::Ok,
+                last_error: None,
+            })
+            .unwrap();
+        app.reload();
+        let rendered = render_string(&mut app, 120, 24);
+        assert!(rendered.contains("sync: up to date"), "{rendered}");
+
+        // Removing the leftover (the documented remedy) keeps it up to date.
+        std::fs::remove_file(root.join("generated/bash.sh")).unwrap();
+        app.reload();
+        let rendered = render_string(&mut app, 120, 24);
+        assert!(rendered.contains("sync: up to date"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preview_end_reveals_the_last_wrapped_line() {
+        let (root, mut app) = test_app("preview-end");
+        let body = (0..100)
+            .map(|index| format!("line {index} {}", "x".repeat(120)))
+            .chain(std::iter::once("LAST_LINE".to_string()))
+            .collect::<Vec<_>>()
+            .join("\n");
+        app.screen = Screen::Preview(PreviewState {
+            alias_name: "gs".into(),
+            shells: vec![ShellKind::Bash],
+            index: 0,
+            body,
+            error: None,
+            scroll: 0,
+            redacted: true,
+        });
+        let _ = render_string(&mut app, 80, 24);
+        // The old line-count bound ignored wrapping and stopped far too early.
+        assert!(app.preview_max_scroll > 83);
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(rendered.contains("LAST_LINE"), "{rendered}");
+        let scroll = match &app.screen {
+            Screen::Preview(state) => state.scroll,
+            _ => panic!("preview"),
+        };
+        assert_eq!(scroll, app.preview_max_scroll);
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Home,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let scroll = match &app.screen {
+            Screen::Preview(state) => state.scroll,
+            _ => panic!("preview"),
+        };
+        assert_eq!(scroll, app.preview_height as u16);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn doctor_end_reveals_the_last_short_finding_without_overshoot() {
+        let (root, mut app) = test_app("doctor-end");
+        let findings = (0..20)
+            .map(|index| DoctorFinding {
+                shell: Some(ShellKind::Bash),
+                severity: "warning",
+                code: "test",
+                message: format!("finding {index}"),
+                action: None,
+                detail: None,
+            })
+            .collect::<Vec<_>>();
+        app.screen = Screen::Doctor(DoctorState {
+            findings,
+            selected: 0,
+            scroll: 0,
+            busy: false,
+            error: None,
+        });
+        let _ = render_string(&mut app, 80, 24);
+        // 20 findings x (marker + blank) = 40 rows, pane height 18: max 22.
+        assert_eq!(app.doctor_max_scroll, 22);
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(rendered.contains("finding 19"), "{rendered}");
+        let scroll = match &app.screen {
+            Screen::Doctor(state) => state.scroll,
+            _ => panic!("doctor"),
+        };
+        assert_eq!(scroll, 22);
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Home,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::PageDown,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let scroll = match &app.screen {
+            Screen::Doctor(state) => state.scroll,
+            _ => panic!("doctor"),
+        };
+        assert_eq!(scroll, app.doctor_height as u16);
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

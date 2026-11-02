@@ -15,7 +15,7 @@ use aliasmgr_core::{
     sync::{self, ShellContentState, ShellContentStatus, SyncRun},
 };
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, Sender, TryRecvError},
     time::SystemTime,
@@ -29,8 +29,10 @@ pub struct Snapshot {
     pub shell_states: Vec<ShellState>,
     pub loaders: BTreeMap<ShellKind, LoaderInfo>,
     pub retired: BTreeMap<ShellKind, Vec<String>>,
-    /// Expected-vs-actual generated content per referenced shell, computed once
-    /// per refresh so the header and detail share one verdict.
+    /// Expected-vs-actual generated content per shell targeted by sync,
+    /// computed once per refresh so the header and detail share one verdict.
+    /// Orphan files and shell_state-only shells are deliberately excluded; they
+    /// cannot be cleared by sync and are Doctor's manual-cleanup concern.
     pub content: BTreeMap<ShellKind, ShellContentStatus>,
     pub revision: i64,
     pub fingerprint: DiskFingerprint,
@@ -65,7 +67,14 @@ pub fn load_snapshot(database: &Database, root: &Path) -> Result<Snapshot, Alias
         .ok()
         .and_then(|metadata| metadata.modified().ok());
 
-    let mut referenced = sync::referenced_shells(database, &aliases)?;
+    // Only shells that core sync actually targets (alias-bound plus
+    // tombstoned shells) determine the header verdict. Leftover generated files
+    // and shell_state-only shells cannot be cleared by `sync`; Doctor surfaces
+    // those as manual cleanup instead.
+    let sync_referenced: BTreeSet<ShellKind> = sync::referenced_shells(database, &aliases)?
+        .into_iter()
+        .collect();
+    let mut referenced = sync_referenced.iter().cloned().collect::<Vec<_>>();
     for state in &shell_states {
         if !referenced.contains(&state.shell) {
             referenced.push(state.shell.clone());
@@ -74,27 +83,16 @@ pub fn load_snapshot(database: &Database, root: &Path) -> Result<Snapshot, Alias
     let paths = AppPaths {
         root: root.to_path_buf(),
     };
-    // A leftover generated file with no alias/state still needs to be checked:
-    // deleting the last alias leaves cleanup work, and a stale file must not be
-    // reported as up to date.
-    for shell in [
-        ShellKind::Bash,
-        ShellKind::Zsh,
-        ShellKind::PowerShell5,
-        ShellKind::PowerShell7,
-    ] {
-        if !referenced.contains(&shell) && paths.generated_path(shell.as_str()).exists() {
-            referenced.push(shell);
-        }
-    }
     let mut retired = BTreeMap::new();
     let mut loaders = BTreeMap::new();
     let mut content = BTreeMap::new();
     for shell in referenced {
-        content.insert(
-            shell.clone(),
-            sync::shell_content_status(root, database, &aliases, &shell, revision)?,
-        );
+        if sync_referenced.contains(&shell) {
+            content.insert(
+                shell.clone(),
+                sync::shell_content_status(root, database, &aliases, &shell, revision)?,
+            );
+        }
         retired.insert(shell.clone(), database.managed_name_set(&shell)?.retired);
         let info = match integration::loader_status(&paths, shell.as_str()) {
             Ok(outcome) => LoaderInfo {
