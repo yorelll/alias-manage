@@ -61,7 +61,14 @@ fn bash_state(config: &str) -> aliasmgr_core::model::ShellState {
 
 #[test]
 fn update_returns_the_persisted_record_and_sync_records_it_for_doctor() {
-    let root = std::env::temp_dir().join(format!("aliasmgr-cli-revisions-{}", std::process::id()));
+    let root = std::env::temp_dir().join(format!(
+        "aliasmgr-cli-revisions-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default()
+    ));
     let config = root.to_string_lossy().to_string();
 
     let created = commands::add(Some(&config), &add_args("gs")).unwrap();

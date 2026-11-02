@@ -311,7 +311,7 @@ impl SyncCoordinator {
                 ShellKind::Bash => bash::render(alias, names)?,
                 ShellKind::Zsh => zsh::render(alias, names)?,
                 ShellKind::PowerShell5 | ShellKind::PowerShell7 => {
-                    powershell::render(alias, shell.clone(), names)?
+                    powershell::render_definition(alias, shell.clone(), names)?
                 }
                 _ => return Err(AliasError::ShellNotInstalled),
             });

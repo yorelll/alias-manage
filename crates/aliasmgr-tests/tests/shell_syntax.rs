@@ -265,6 +265,19 @@ fn run_with_shell(shell: &str, directory: &Path, script: &Path) -> std::process:
         .unwrap()
 }
 
+fn quote_sh(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn cygpath_available() -> bool {
+    Command::new("cygpath")
+        .args(["-m", "/"])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 #[test]
 fn restricted_wrapper_whitelist_root_and_missing_dirs() {
     if !command_available("bash") {
@@ -370,21 +383,27 @@ fn restricted_wrapper_resolves_symlinked_directory() {
 #[cfg(windows)]
 #[test]
 fn restricted_wrapper_matches_cygwin_mount_aliases() {
-    if !command_available("bash") {
+    if !command_available("bash") || !cygpath_available() {
+        eprintln!("skipping Cygwin mount-alias test: bash/cygpath unavailable");
         return;
     }
     let root = unique_root("cygwin-alias");
     let subdirectory = root.join("sub");
     fs::create_dir_all(&subdirectory).unwrap();
+    let sub_windows = subdirectory.to_string_lossy().into_owned();
+    let cd_into_msys_spelling = format!(
+        "cd -- \"$(cygpath -u {})\" || exit 9",
+        quote_sh(&sub_windows)
+    );
 
-    // Windows-form restriction path, invoked from a directory Git Bash may
-    // expose as /tmp/...; cygpath canonicalization must make them agree.
+    // Windows-form restriction path, invoked after changing into the POSIX
+    // spelling inside Git Bash; cygpath canonicalization must make them agree.
     let windows_path = restricted_alias(&root, false);
     let mut script = bash::render(&windows_path, &names()).unwrap();
-    script.push_str("\nrma\nexit $?\n");
+    script.push_str(&format!("\n{cd_into_msys_spelling}\nrma\nexit $?\n"));
     let script_path = root.join("windows.sh");
     fs::write(&script_path, script).unwrap();
-    let output = run_wrapper(&subdirectory, &script_path);
+    let output = run_wrapper(&root, &script_path);
     assert!(
         output.status.success() && String::from_utf8_lossy(&output.stdout).contains("ran"),
         "Windows-form restriction should allow a Git Bash mount alias: {}",
@@ -394,10 +413,10 @@ fn restricted_wrapper_matches_cygwin_mount_aliases() {
     // MSYS-form /tmp restriction path, invoked from the Windows temp subtree.
     let msys_path = restricted_alias_with_paths(vec!["/tmp".into()], false);
     let mut script = bash::render(&msys_path, &names()).unwrap();
-    script.push_str("\nrma\nexit $?\n");
+    script.push_str(&format!("\n{cd_into_msys_spelling}\nrma\nexit $?\n"));
     let script_path = root.join("msys.sh");
     fs::write(&script_path, script).unwrap();
-    let output = run_wrapper(&subdirectory, &script_path);
+    let output = run_wrapper(&root, &script_path);
     assert!(
         output.status.success() && String::from_utf8_lossy(&output.stdout).contains("ran"),
         "MSYS-form /tmp restriction should match the Windows temp dir: {}",
@@ -406,9 +425,86 @@ fn restricted_wrapper_matches_cygwin_mount_aliases() {
     let _ = fs::remove_dir_all(root);
 }
 
+#[cfg(windows)]
+#[test]
+fn restricted_wrapper_treats_msys_install_root_as_universal_root() {
+    if !command_available("bash") || !cygpath_available() {
+        eprintln!("skipping MSYS-root test: bash/cygpath unavailable");
+        return;
+    }
+    let output = Command::new("cygpath").args(["-m", "/"]).output().unwrap();
+    if !output.status.success() {
+        eprintln!("skipping MSYS-root test: cygpath -m / failed");
+        return;
+    }
+    let msys_root = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !msys_root.contains(':') {
+        eprintln!("skipping MSYS-root test: unexpected cygpath output {msys_root:?}");
+        return;
+    }
+    let root = unique_root("msys-root");
+    let unrelated = root.join("unrelated");
+    fs::create_dir_all(&unrelated).unwrap();
+
+    for (blacklist, expect_run) in [(true, false), (false, true)] {
+        let alias = restricted_alias_with_paths(vec![msys_root.clone()], blacklist);
+        let mut script = bash::render(&alias, &names()).unwrap();
+        script.push_str("\nrma\nexit $?\n");
+        let script_path = root.join(if blacklist { "black.sh" } else { "white.sh" });
+        fs::write(&script_path, script).unwrap();
+        let result = run_wrapper(&unrelated, &script_path);
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        if expect_run {
+            assert!(
+                result.status.success() && stdout.contains("ran"),
+                "whitelist MSYS root should allow: {stderr}"
+            );
+        } else {
+            assert!(
+                !result.status.success() && !stdout.contains("ran"),
+                "blacklist MSYS root should refuse: {stdout}"
+            );
+            assert!(
+                stderr.contains("current directory is in the blacklist"),
+                "{stderr}"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn restricted_wrapper_does_not_fail_open_when_tr_fails() {
+    if !command_available("bash") || !cygpath_available() {
+        eprintln!("skipping tr-failure test: bash/cygpath unavailable");
+        return;
+    }
+    let root = unique_root("tr-failure");
+    let allowed = root.join("allowed");
+    let outside = root.join("outside");
+    for directory in [&allowed, &outside] {
+        fs::create_dir_all(directory).unwrap();
+    }
+    let alias = restricted_alias(&allowed, false);
+    let mut script = String::from("tr() { return 1; }\n");
+    script.push_str(&bash::render(&alias, &names()).unwrap());
+    script.push_str("\nrma\nexit $?\n");
+    let script_path = root.join("run.sh");
+    fs::write(&script_path, script).unwrap();
+    let output = run_wrapper(&outside, &script_path);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr)
+        .contains("current directory is not in the whitelist"));
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("ran"));
+    let _ = fs::remove_dir_all(root);
+}
+
 #[test]
 fn zsh_restricted_wrapper_runs_and_denies() {
     if !command_available("zsh") {
+        eprintln!("skipping zsh runtime test: zsh unavailable");
         return;
     }
     let root = unique_root("zsh-runtime");

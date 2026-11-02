@@ -63,7 +63,7 @@ fn render_wrapper(alias: &AliasRecord, body: &str) -> String {
 fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
     let restriction = alias.restriction.as_ref()?;
     let mut lines = vec![
-        "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_hit __aliasmgr_cwd_cmp __aliasmgr_dir_cmp __aliasmgr_cygpath".to_string(),
+        "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_hit __aliasmgr_cwd_cmp __aliasmgr_dir_cmp __aliasmgr_cygpath __aliasmgr_dir_root".to_string(),
         "__aliasmgr_cygpath=".to_string(),
         "if command -v cygpath >/dev/null 2>&1; then __aliasmgr_cygpath=cygpath; fi".to_string(),
         "__aliasmgr_cwd=$(builtin pwd -P 2>/dev/null) || __aliasmgr_cwd=$PWD".to_string(),
@@ -73,14 +73,15 @@ fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
         "case \"$__aliasmgr_cwd\" in /|?:/) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac".to_string(),
         "__aliasmgr_cwd_cmp=$__aliasmgr_cwd".to_string(),
         "if [ -n \"$__aliasmgr_cygpath\" ]; then".to_string(),
-        "    __aliasmgr_cwd_cmp=$(printf '%s' \"$__aliasmgr_cwd\" | tr '[:upper:]' '[:lower:]')".to_string(),
+        "    __aliasmgr_cwd_cmp=$(printf '%s' \"$__aliasmgr_cwd\" | tr '[:upper:]' '[:lower:]') || __aliasmgr_cwd_cmp=$__aliasmgr_cwd".to_string(),
+        "    [ -n \"$__aliasmgr_cwd_cmp\" ] || __aliasmgr_cwd_cmp=$__aliasmgr_cwd".to_string(),
         "fi".to_string(),
         "__aliasmgr_hit=0".to_string(),
     ];
     for path in &restriction.paths {
         // `/` is the universal root. On Git Bash/Cygwin `cygpath -m /` maps to
         // the MSYS installation directory (for example `D:/Program Files/Git`),
-        // so special-case it before canonicalization.
+        // so special-case the literal and the post-`pwd -P` form before cygpath.
         if path == "/" {
             lines.push("__aliasmgr_hit=1".to_string());
             continue;
@@ -89,8 +90,13 @@ fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
             "__aliasmgr_dir=$(builtin cd -- {} 2>/dev/null && builtin pwd -P) || __aliasmgr_dir=",
             quote_posix(path)
         ));
+        lines.push("__aliasmgr_dir_root=0".to_string());
         lines.push(
-            "if [ -n \"$__aliasmgr_dir\" ] && [ -n \"$__aliasmgr_cygpath\" ]; then".to_string(),
+            "if [ -n \"$__aliasmgr_dir\" ] && [ \"$__aliasmgr_dir\" = / ]; then __aliasmgr_dir_root=1; fi"
+                .to_string(),
+        );
+        lines.push(
+            "if [ -n \"$__aliasmgr_dir\" ] && [ \"$__aliasmgr_dir_root\" -eq 0 ] && [ -n \"$__aliasmgr_cygpath\" ]; then".to_string(),
         );
         lines.push("    __aliasmgr_dir=$(\"$__aliasmgr_cygpath\" -m -- \"$__aliasmgr_dir\" 2>/dev/null) || __aliasmgr_dir=".to_string());
         lines.push("fi".to_string());
@@ -101,13 +107,21 @@ fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
         );
         lines.push("    __aliasmgr_dir_cmp=$__aliasmgr_dir".to_string());
         lines.push("    if [ -n \"$__aliasmgr_cygpath\" ]; then".to_string());
-        lines.push("        __aliasmgr_dir_cmp=$(printf '%s' \"$__aliasmgr_dir\" | tr '[:upper:]' '[:lower:]')".to_string());
+        lines.push("        __aliasmgr_dir_cmp=$(printf '%s' \"$__aliasmgr_dir\" | tr '[:upper:]' '[:lower:]') || __aliasmgr_dir_cmp=$__aliasmgr_dir".to_string());
+        lines.push(
+            "        [ -n \"$__aliasmgr_dir_cmp\" ] || __aliasmgr_dir_cmp=$__aliasmgr_dir"
+                .to_string(),
+        );
         lines.push("    fi".to_string());
-        lines.push("    case \"$__aliasmgr_dir\" in".to_string());
-        lines.push("        /) __aliasmgr_hit=1 ;;".to_string());
-        lines.push("        ?:/) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"*) __aliasmgr_hit=1 ;; esac ;;".to_string());
-        lines.push("        *) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"/*) __aliasmgr_hit=1 ;; esac ;;".to_string());
-        lines.push("    esac".to_string());
+        lines.push("    if [ \"$__aliasmgr_dir_root\" -eq 1 ]; then".to_string());
+        lines.push("        __aliasmgr_hit=1".to_string());
+        lines.push("    else".to_string());
+        lines.push("        case \"$__aliasmgr_dir\" in".to_string());
+        lines.push("            /) __aliasmgr_hit=1 ;;".to_string());
+        lines.push("            ?:/) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"*) __aliasmgr_hit=1 ;; esac ;;".to_string());
+        lines.push("            *) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"/*) __aliasmgr_hit=1 ;; esac ;;".to_string());
+        lines.push("        esac".to_string());
+        lines.push("    fi".to_string());
         lines.push("fi".to_string());
     }
     let (condition, message) = match restriction.mode {
@@ -415,7 +429,7 @@ mod tests {
         };
         let text = render(&alias, &names()).unwrap();
         assert!(text.contains(
-            "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_hit __aliasmgr_cwd_cmp __aliasmgr_dir_cmp __aliasmgr_cygpath"
+            "local __aliasmgr_cwd __aliasmgr_dir __aliasmgr_hit __aliasmgr_cwd_cmp __aliasmgr_dir_cmp __aliasmgr_cygpath __aliasmgr_dir_root"
         ));
         assert!(
             text.contains("__aliasmgr_cwd=$(builtin pwd -P 2>/dev/null) || __aliasmgr_cwd=$PWD")
@@ -427,12 +441,18 @@ mod tests {
             "__aliasmgr_cwd=$(\"$__aliasmgr_cygpath\" -m -- \"$__aliasmgr_cwd\" 2>/dev/null) || __aliasmgr_cwd=$PWD"
         ));
         assert!(text.contains(
+            "__aliasmgr_cwd_cmp=$(printf '%s' \"$__aliasmgr_cwd\" | tr '[:upper:]' '[:lower:]') || __aliasmgr_cwd_cmp=$__aliasmgr_cwd"
+        ));
+        assert!(
+            text.contains("[ -n \"$__aliasmgr_cwd_cmp\" ] || __aliasmgr_cwd_cmp=$__aliasmgr_cwd")
+        );
+        assert!(text.contains(
             "case \"$__aliasmgr_cwd\" in /|?:/) ;; *) __aliasmgr_cwd=${__aliasmgr_cwd%/} ;; esac"
         ));
         assert!(text.contains("builtin cd -- '/srv/project one'"));
         assert!(text.contains("builtin cd -- '/srv/it'\\''s'"));
         assert!(text.contains(
-            "case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"/*) __aliasmgr_hit=1 ;; esac"
+            "            *) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"/*) __aliasmgr_hit=1 ;; esac ;;"
         ));
         assert!(text.contains("if [ \"$__aliasmgr_hit\" -eq 0 ]; then"));
         assert!(text.contains(
@@ -481,8 +501,33 @@ mod tests {
         };
         let text = render(&alias, &names()).unwrap();
         assert!(text.contains(
-            "        ?:/) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"*) __aliasmgr_hit=1 ;; esac ;;"
+            "            ?:/) case \"$__aliasmgr_cwd_cmp\" in \"$__aliasmgr_dir_cmp\"|\"$__aliasmgr_dir_cmp\"*) __aliasmgr_hit=1 ;; esac ;;"
         ));
+    }
+
+    #[test]
+    fn msys_root_after_pwd_is_detected_before_cygpath() {
+        let alias = AliasRecord {
+            name: "rma".into(),
+            executable: "rm".into(),
+            pass_args: false,
+            restriction: Some(PathRestriction {
+                mode: RestrictionMode::Blacklist,
+                // Git Bash converts `--restrict-path /` to this Windows form
+                // before the native CLI sees it. `cd` + `pwd -P` yields `/`.
+                paths: vec!["D:/Program Files/Git/".into()],
+            }),
+            ..Default::default()
+        };
+        let text = render(&alias, &names()).unwrap();
+        assert!(text.contains(
+            "if [ -n \"$__aliasmgr_dir\" ] && [ \"$__aliasmgr_dir\" = / ]; then __aliasmgr_dir_root=1; fi"
+        ));
+        assert!(text.contains(
+            "if [ -n \"$__aliasmgr_dir\" ] && [ \"$__aliasmgr_dir_root\" -eq 0 ] && [ -n \"$__aliasmgr_cygpath\" ]; then"
+        ));
+        assert!(text.contains("if [ \"$__aliasmgr_dir_root\" -eq 1 ]; then"));
+        assert!(text.contains("builtin cd -- 'D:/Program Files/Git/'"));
     }
 
     #[test]

@@ -631,6 +631,43 @@ fn powershell_refusal_sets_question_and_last_exit_code() {
 
 #[cfg(windows)]
 #[test]
+fn powershell_error_action_stop_still_sets_last_exit_code() {
+    let executables = powershell_executables();
+    if executables.is_empty() {
+        eprintln!("skipping: no PowerShell executable available");
+        return;
+    }
+    let stop_body = "$ErrorActionPreference = 'Stop'\n$global:LASTEXITCODE = 0\ntry { <alias> } catch { Write-Output 'CAUGHT' }\nWrite-Output ('CODE=' + $LASTEXITCODE)\n";
+    let provider_body = "$ErrorActionPreference = 'Stop'\nSet-Location HKLM:\\\n$global:LASTEXITCODE = 0\ntry { <alias> } catch { Write-Output 'CAUGHT' }\nWrite-Output ('CODE=' + $LASTEXITCODE)\n";
+    for exe in executables {
+        let root = unique_parser_root(&format!("stop-{exe}"));
+        let real = root.join("real");
+        let outside = root.join("outside");
+        for directory in [&real, &outside] {
+            fs::create_dir_all(directory).unwrap();
+        }
+        let alias = restricted_alias(
+            aliasmgr_core::model::RestrictionMode::Whitelist,
+            vec![real.to_string_lossy().into_owned()],
+        );
+        let generated = write_generated(&root, &alias, exe);
+
+        let denied = run_probe(exe, &root, &generated, &outside, stop_body);
+        let denied_text = plain_text(&denied);
+        assert!(denied_text.contains("CAUGHT"), "{exe}: {denied_text}");
+        assert!(denied_text.contains("CODE=1"), "{exe}: {denied_text}");
+
+        let provider = run_probe(exe, &root, &generated, &real, provider_body);
+        let provider_text = plain_text(&provider);
+        assert!(provider_text.contains("CAUGHT"), "{exe}: {provider_text}");
+        assert!(provider_text.contains("CODE=1"), "{exe}: {provider_text}");
+
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+#[cfg(windows)]
+#[test]
 fn powershell_refuses_non_filesystem_provider() {
     let executables = powershell_executables();
     if executables.is_empty() {

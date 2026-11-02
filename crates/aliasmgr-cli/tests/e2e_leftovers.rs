@@ -32,6 +32,20 @@ fn stderr(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
+fn quote_sh(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn git_bash_available() -> bool {
+    Command::new("bash")
+        .arg("-c")
+        .arg("command -v cygpath >/dev/null 2>&1")
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 #[test]
 fn binary_accepts_target_type_and_path_mode_and_rejects_raw_shell_command() {
     let root = temp_root("target-options");
@@ -236,5 +250,87 @@ fn binary_rejects_relative_restriction_path_with_validation_exit_code() {
         stderr(&output)
     );
     assert!(!root.join("aliases.db").exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[cfg(windows)]
+#[test]
+fn git_bash_root_restriction_is_stored_converted_and_enforced() {
+    if !git_bash_available() {
+        eprintln!("skipping Git Bash root regression: bash/cygpath unavailable");
+        return;
+    }
+    let root = temp_root("msys-root-cli");
+    let unrelated = root.join("unrelated");
+    std::fs::create_dir_all(&unrelated).unwrap();
+
+    // Drive `add` from Git Bash so MSYS converts the `/` argument to its
+    // Windows install path before the native CLI sees it.
+    let binary = env!("CARGO_BIN_EXE_aliasmgr");
+    let script = format!(
+        "BIN=\"$(cygpath -u {bin})\"\n\"$BIN\" add broot --exec echo --arg ran --restrict blacklist --restrict-path / --shell bash\n\"$BIN\" add wroot --exec echo --arg ran --restrict whitelist --restrict-path / --shell bash\n",
+        bin = quote_sh(binary)
+    );
+    let add = Command::new("bash")
+        .env("ALIASMGR_CONFIG_DIR", &root)
+        .arg("-c")
+        .arg(script)
+        .output()
+        .unwrap();
+    assert!(add.status.success(), "bash add failed: {}", stderr(&add));
+
+    let stored = run(&root, &["get", "broot"]);
+    let record = stdout(&stored);
+    assert!(stored.status.success(), "get failed: {}", stderr(&stored));
+    let stored_path = record
+        .split("paths: [\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_default();
+    assert!(
+        !stored_path.is_empty() && stored_path != "/",
+        "MSYS must convert `/` before the native CLI stores it: {record}"
+    );
+    assert!(
+        stored_path.contains(':') || stored_path.starts_with("\\\\"),
+        "converted root should be a Windows path: {record}"
+    );
+
+    let sync = run(&root, &["sync"]);
+    assert!(sync.status.success(), "sync failed: {}", stderr(&sync));
+    let generated = quote_sh(&root.join("generated/bash.sh").to_string_lossy());
+
+    let black_wrapper = root.join("black.sh");
+    std::fs::write(&black_wrapper, format!(". {generated}\nbroot\nexit $?\n")).unwrap();
+    let black = Command::new("bash")
+        .arg(&black_wrapper)
+        .current_dir(&unrelated)
+        .output()
+        .unwrap();
+    assert!(
+        !black.status.success(),
+        "blacklist root must refuse from an unrelated directory: {}",
+        stdout(&black)
+    );
+    assert!(
+        stderr(&black).contains("current directory is in the blacklist"),
+        "stderr: {}",
+        stderr(&black)
+    );
+
+    let white_wrapper = root.join("white.sh");
+    std::fs::write(&white_wrapper, format!(". {generated}\nwroot\nexit $?\n")).unwrap();
+    let white = Command::new("bash")
+        .arg(&white_wrapper)
+        .current_dir(&unrelated)
+        .output()
+        .unwrap();
+    assert!(
+        white.status.success(),
+        "whitelist root must allow from an unrelated directory: {}",
+        stderr(&white)
+    );
+    assert!(stdout(&white).contains("ran"), "stdout: {}", stdout(&white));
+
     let _ = std::fs::remove_dir_all(root);
 }

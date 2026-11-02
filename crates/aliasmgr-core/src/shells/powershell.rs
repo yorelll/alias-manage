@@ -131,6 +131,14 @@ pub fn render_restriction_support() -> &'static str {
 /// Renders one alias for a standalone snippet (preview, diagnostics, tests).
 /// The shared restriction support is prepended for restricted aliases so the
 /// snippet is self-contained; generated sync files include it once instead.
+pub fn render(
+    alias: &AliasRecord,
+    shell: ShellKind,
+    names: &ManagedNameSet,
+) -> Result<String, AliasError> {
+    render_with_restriction_support(alias, shell, names)
+}
+
 pub fn render_with_restriction_support(
     alias: &AliasRecord,
     shell: ShellKind,
@@ -140,11 +148,16 @@ pub fn render_with_restriction_support(
     if alias.restriction.is_some() {
         output.push_str(RESTRICTION_SUPPORT);
     }
-    output.push_str(&render(alias, shell, names)?);
+    output.push_str(&render_definition(alias, shell, names)?);
     Ok(output)
 }
 
-pub fn render(
+/// Per-alias definition without the shared helper. [`SyncCoordinator`] emits
+/// the helper once per generated file and then uses this function for each
+/// alias, so the output never repeats the support block.
+///
+/// [`SyncCoordinator`]: crate::sync::SyncCoordinator
+pub(crate) fn render_definition(
     alias: &AliasRecord,
     shell: ShellKind,
     _names: &ManagedNameSet,
@@ -279,12 +292,12 @@ fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
     let mut lines = vec![
         "$__aliasmgr_location = Get-Location".to_string(),
         "if ($__aliasmgr_location.Provider.Name -ne 'FileSystem') {".to_string(),
+        "    $global:LASTEXITCODE = 1".to_string(),
         write_error_line(
             alias,
             "$($__aliasmgr_location.Path)",
             "current location is not a filesystem directory",
         ),
-        "    $global:LASTEXITCODE = 1".to_string(),
         "    return".to_string(),
         "}".to_string(),
         "$__aliasmgr_cwd = __aliasmgr_canonical_path -Path $__aliasmgr_location.ProviderPath"
@@ -317,8 +330,8 @@ fn render_restriction_guard(alias: &AliasRecord) -> Option<String> {
         ),
     };
     lines.push(format!("if ({condition}) {{"));
-    lines.push(write_error_line(alias, "$__aliasmgr_cwd", message));
     lines.push("    $global:LASTEXITCODE = 1".to_string());
+    lines.push(write_error_line(alias, "$__aliasmgr_cwd", message));
     lines.push("    return".to_string());
     lines.push("}".to_string());
     Some(lines.join("\n"))
@@ -734,6 +747,12 @@ mod tests {
         assert!(text.contains("if (-not $__aliasmgr_restriction_hit) {"));
         assert!(text.contains("$PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new([System.Exception]::new(\"aliasmgr: refusing to run 'rma' in '$__aliasmgr_cwd': current directory is not in the whitelist\")"));
         assert!(text.contains("$global:LASTEXITCODE = 1"));
+        let last_exit = text.find("$global:LASTEXITCODE = 1").unwrap();
+        let write_error = text.find("$PSCmdlet.WriteError").unwrap();
+        assert!(
+            last_exit < write_error,
+            "LASTEXITCODE must be set before WriteError (ErrorAction Stop)"
+        );
         assert!(!text.contains(forbidden_eval_device()));
         let guard = text.find("$__aliasmgr_cwd").unwrap();
         let command = text

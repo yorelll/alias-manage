@@ -2,7 +2,8 @@ use aliasmgr_core::{
     config::AppPaths,
     detection::{detect, find_definition_source, DetectionContext},
     model::{
-        AliasRecord, ManagedNameSet, PathMode, PathOrigin, PathRestriction, ShellKind, TargetType,
+        normalize_restriction, AliasRecord, ManagedNameSet, PathMode, PathOrigin, PathRestriction,
+        ShellKind, TargetType,
     },
     search::{SearchField, SearchQuery, SortField},
     service::AliasService,
@@ -266,7 +267,7 @@ pub fn tag_counts() -> Result<BTreeMap<String, usize>, String> {
 }
 
 fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
-    let alias = AliasRecord {
+    let mut alias = AliasRecord {
         id: uuid::Uuid::parse_str(&dto.id).map_err(|error| error.to_string())?,
         name: dto.name,
         description: dto.description,
@@ -295,6 +296,7 @@ fn dto_to_alias(dto: AliasDto) -> Result<AliasRecord, String> {
         },
         ..AliasRecord::default()
     };
+    normalize_restriction(&mut alias.restriction);
     validate_alias(&alias).map_err(|error| error.to_string())?;
     Ok(alias)
 }
@@ -1747,6 +1749,18 @@ mod tests {
         }
         assert_eq!(shell_kind_to_str(&ShellKind::PowerShell5), "powershell5");
         assert_eq!(shell_kind_to_str(&ShellKind::PowerShell7), "powershell7");
+    }
+
+    #[test]
+    fn dto_to_alias_normalizes_untrimmed_restriction_paths() {
+        let path = std::env::temp_dir().to_string_lossy().into_owned();
+        let mut dto = preview_dto();
+        dto.restriction = Some(PathRestriction {
+            mode: aliasmgr_core::model::RestrictionMode::Whitelist,
+            paths: vec![format!(" {path} "), path.clone()],
+        });
+        let alias = dto_to_alias(dto).unwrap();
+        assert_eq!(alias.restriction.unwrap().paths, vec![path]);
     }
 
     #[test]

@@ -7,13 +7,13 @@
 - `whitelist`（白名单）：当前目录必须等于某个配置目录，或位于其子目录中，否则拒绝执行。
 - `blacklist`（黑名单）：当前目录等于或位于任意配置目录之下时拒绝执行；其余目录放行。
 - 目录匹配按路径组件边界进行：`/home/user` 不会匹配 `/home/user2`，但会匹配 `/home/user/project`。
-- 目录在运行时规范化：当前目录和每个配置目录都会解析为物理路径。Bash/Zsh 使用 `pwd -P`；在 Git Bash/Cygwin 上还会用 `cygpath -m` 将两者统一为 Windows 形式并按 Windows 规则忽略大小写。PowerShell 7 使用 `DirectoryInfo.ResolveLinkTarget` 解析符号链接/联接点，Windows PowerShell 5.1 使用 Win32 `GetFinalPathNameByHandleW`；两者都失败时（例如 ConstrainedLanguage）回退到词法规范化路径。
+- 目录在运行时规范化：当前目录和每个配置目录都会解析为物理路径。Bash/Zsh 使用 `pwd -P`；在 Git Bash/Cygwin 上还会用 `cygpath -m` 将两者统一为 Windows 形式并按 Windows 规则忽略大小写。Git Bash 可能在原生 CLI 看到参数前把 `--restrict-path /` 改写为 MSYS 安装路径（例如 `D:/Program Files/Git/`）；守卫在 `cd` + `pwd -P` 后若得到 `/` 或盘符根，会把它当作通用根处理。PowerShell 7 使用 `DirectoryInfo.ResolveLinkTarget` 解析符号链接/联接点，Windows PowerShell 5.1 使用 Win32 `GetFinalPathNameByHandleW`；两者都失败时（例如 ConstrainedLanguage）回退到词法规范化路径。
 - 根目录 `/`（Windows 上为盘符根，如 `C:/`）匹配该根下的所有目录。
 - 配置目录在运行时不存在时会被跳过，不会匹配。一个只包含失效目录的白名单会拒绝所有执行；黑名单中的失效目录不会阻止任何执行。
 - 拒绝时输出拒绝消息并以非零状态返回：
   - 白名单：`aliasmgr: refusing to run '<name>' in '<cwd>': current directory is not in the whitelist`
   - 黑名单：`aliasmgr: refusing to run '<name>' in '<cwd>': current directory is in the blacklist`
-  - Bash/Zsh 向 stderr 输出一行并 `return 1`。PowerShell 使用 `$PSCmdlet.WriteError` 写入错误记录，使 `$?` 为 false（`&&` 和 `if ($?)` 会停止），设置 `$global:LASTEXITCODE = 1` 后返回；PowerShell 的错误记录格式可能包含类别信息。
+  - Bash/Zsh 向 stderr 输出一行并 `return 1`。PowerShell 先设置 `$global:LASTEXITCODE = 1`，再使用 `$PSCmdlet.WriteError` 写入错误记录，使 `$?` 为 false（`&&` 和 `if ($?)` 会停止）并返回；即使调用方设置了 `-ErrorAction Stop`，`LASTEXITCODE` 仍为 1。PowerShell 的错误记录格式可能包含类别信息。
 
 示例：
 
