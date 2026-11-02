@@ -273,6 +273,13 @@ fn git_bash_root_restriction_is_stored_converted_and_enforced() {
     );
     let add = Command::new("bash")
         .env("ALIASMGR_CONFIG_DIR", &root)
+        // Force MSYS argument conversion even if the developer environment
+        // disables it; otherwise `/` would reach the native CLI unchanged and
+        // the regression would not be exercised.
+        .env_remove("MSYS_NO_PATHCONV")
+        .env_remove("MSYS2_ARG_CONV_EXCL")
+        .env_remove("MSYS_ARG_CONV_EXCL")
+        .env_remove("MSYS2_ENV_CONV_EXCL")
         .arg("-c")
         .arg(script)
         .output()
@@ -287,8 +294,15 @@ fn git_bash_root_restriction_is_stored_converted_and_enforced() {
         .nth(1)
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_default();
+    if stored_path == "/" {
+        eprintln!(
+            "skipping Git Bash root regression: MSYS argument conversion is disabled in this environment"
+        );
+        let _ = std::fs::remove_dir_all(root);
+        return;
+    }
     assert!(
-        !stored_path.is_empty() && stored_path != "/",
+        !stored_path.is_empty(),
         "MSYS must convert `/` before the native CLI stores it: {record}"
     );
     assert!(

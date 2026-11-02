@@ -278,6 +278,27 @@ fn cygpath_available() -> bool {
         .unwrap_or(false)
 }
 
+/// Converts a Windows path to the explicit `/c/...` MSYS spelling. This is
+/// deliberately not `cygpath -u`: for paths under the `/tmp` mount, `-u`
+/// returns `/tmp/...`, which `pwd -P` also produces when entering through the
+/// Windows form. The `/c/...` spelling keeps `pwd -P` on the `/c` mount, so a
+/// pre-cygpath guard would compare `/c/...` against `/tmp/...`.
+#[cfg(windows)]
+fn cygwin_c_spelling(path: &Path) -> Option<String> {
+    let output = Command::new("cygpath").arg("-m").arg(path).output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let rest = text[3..].trim_start_matches('/');
+        return Some(format!("/{drive}/{rest}"));
+    }
+    text.starts_with('/').then_some(text)
+}
+
 #[test]
 fn restricted_wrapper_whitelist_root_and_missing_dirs() {
     if !command_available("bash") {
@@ -390,17 +411,22 @@ fn restricted_wrapper_matches_cygwin_mount_aliases() {
     let root = unique_root("cygwin-alias");
     let subdirectory = root.join("sub");
     fs::create_dir_all(&subdirectory).unwrap();
-    let sub_windows = subdirectory.to_string_lossy().into_owned();
-    let cd_into_msys_spelling = format!(
-        "cd -- \"$(cygpath -u {})\" || exit 9",
-        quote_sh(&sub_windows)
-    );
+    let Some(cwd_spelling) = cygwin_c_spelling(&subdirectory) else {
+        eprintln!("skipping Cygwin mount-alias test: cannot build /c/ spelling");
+        let _ = fs::remove_dir_all(root);
+        return;
+    };
+    // Enter via `/c/...` so `pwd -P` stays on the /c mount. The Windows-form
+    // restriction path enters through the Windows spelling and `pwd -P`
+    // reports `/tmp/...` for the test directory; a guard without cygpath
+    // canonicalization compares those two spellings and fails.
+    let cd_into_c_spelling = format!("cd -- {} || exit 9", quote_sh(&cwd_spelling));
 
-    // Windows-form restriction path, invoked after changing into the POSIX
+    // Windows-form restriction path, invoked after changing into the /c/
     // spelling inside Git Bash; cygpath canonicalization must make them agree.
     let windows_path = restricted_alias(&root, false);
     let mut script = bash::render(&windows_path, &names()).unwrap();
-    script.push_str(&format!("\n{cd_into_msys_spelling}\nrma\nexit $?\n"));
+    script.push_str(&format!("\n{cd_into_c_spelling}\nrma\nexit $?\n"));
     let script_path = root.join("windows.sh");
     fs::write(&script_path, script).unwrap();
     let output = run_wrapper(&root, &script_path);
@@ -410,10 +436,11 @@ fn restricted_wrapper_matches_cygwin_mount_aliases() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    // MSYS-form /tmp restriction path, invoked from the Windows temp subtree.
+    // MSYS-form /tmp restriction path, invoked from the /c/ spelling of the
+    // Windows temp subtree.
     let msys_path = restricted_alias_with_paths(vec!["/tmp".into()], false);
     let mut script = bash::render(&msys_path, &names()).unwrap();
-    script.push_str(&format!("\n{cd_into_msys_spelling}\nrma\nexit $?\n"));
+    script.push_str(&format!("\n{cd_into_c_spelling}\nrma\nexit $?\n"));
     let script_path = root.join("msys.sh");
     fs::write(&script_path, script).unwrap();
     let output = run_wrapper(&root, &script_path);
