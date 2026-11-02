@@ -454,24 +454,18 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
     }
     let database = database()?;
     let aliases = database.list_aliases().map_err(|error| error.to_string())?;
-    let max_alias_revision = aliases
-        .iter()
-        .map(|alias| alias.revision)
-        .max()
-        .unwrap_or(0);
-    let max_retired_revision = database
-        .max_retired_revision()
+    // Share target-shell selection and the revision floor with sync: the old
+    // local copy used `.unwrap_or(0)` and could expect revision 0 while sync
+    // writes revision 1, producing a permanent unfixable stale finding.
+    let referenced_kinds = aliasmgr_core::sync::referenced_shells(&database, &aliases)
         .map_err(|error| error.to_string())?;
-    let current_revision = max_alias_revision.max(max_retired_revision);
+    let current_revision = aliasmgr_core::sync::current_revision(&database, &aliases)
+        .map_err(|error| error.to_string())?;
+    let mut referenced_shells: BTreeSet<String> = referenced_kinds
+        .iter()
+        .map(|kind| shell_kind_to_str(kind).to_owned())
+        .collect();
 
-    // Only shells an alias asks for (or that still have tombstones) should get
-    // a generated file; an untouched install must not look broken.
-    let mut referenced_shells: BTreeSet<String> = BTreeSet::new();
-    for alias in &aliases {
-        for shell in &alias.shells {
-            referenced_shells.insert(shell_kind_to_str(shell).to_owned());
-        }
-    }
     let mut managed_names = BTreeMap::new();
     for name in KNOWN_SHELLS {
         let Ok(kind) = shell_from_str(name) else {
@@ -602,8 +596,10 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
         }
     }
 
+    let mut loader_check = referenced_shells.clone();
     for state in database.shell_states().map_err(|error| error.to_string())? {
         let shell = shell_kind_to_str(&state.shell).to_owned();
+        loader_check.insert(shell.clone());
         if let Some(error) = &state.last_error {
             findings.push(DoctorFindingDto {
                 shell: Some(shell.clone()),
@@ -614,16 +610,6 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
                 detail: Some(error.clone()),
             });
         }
-        if !state.loader_installed {
-            findings.push(DoctorFindingDto {
-                shell: Some(shell.clone()),
-                severity: "warning".into(),
-                code: "loader_missing".into(),
-                message: format!("加载器未安装: {shell}"),
-                action: Some("重新安装 Shell 集成".into()),
-                detail: None,
-            });
-        }
         if state.applied_revision < current_revision {
             stale_details.entry(shell).or_insert_with(|| {
                 format!(
@@ -631,6 +617,34 @@ pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
                     state.applied_revision
                 )
             });
+        }
+    }
+
+    // Probe the real profile instead of trusting the persisted flag: a loader
+    // may point at another config root, sit before user content, or be absent
+    // even though an older sync recorded `loader_installed = true`.
+    for name in loader_check {
+        match aliasmgr_core::integration::loader_status(&paths, &name) {
+            Ok(outcome) if !outcome.installed => findings.push(DoctorFindingDto {
+                shell: Some(name.clone()),
+                severity: "warning".into(),
+                code: "loader_missing".into(),
+                message: format!("加载器未安装: {name}"),
+                action: Some("重新安装 Shell 集成".into()),
+                detail: Some(format!("profile: {}", outcome.target.display())),
+            }),
+            Ok(_) => {}
+            // PowerShell 5.1 has no default profile outside Windows; there is
+            // nothing an install button could repair, so do not nag.
+            Err(aliasmgr_core::error::AliasError::ShellNotInstalled) => {}
+            Err(error) => findings.push(DoctorFindingDto {
+                shell: Some(name.clone()),
+                severity: "warning".into(),
+                code: "loader_unreadable".into(),
+                message: format!("无法读取 Shell 配置: {name}"),
+                action: Some("检查 Shell 配置文件权限与标记后重试".into()),
+                detail: Some(error.to_string()),
+            }),
         }
     }
     for (shell, detail) in stale_details {
@@ -694,12 +708,49 @@ pub fn reload_command(shell: String) -> Result<String, String> {
     Ok(aliasmgr_core::sync::reload_command(&paths.root, &kind))
 }
 
+/// Stable code for a sync orchestration failure. The UI translates the code;
+/// raw OS text is only kept in per-shell detail, never as the headline.
+fn sync_error_code(error: &aliasmgr_core::error::AliasError) -> String {
+    use aliasmgr_core::error::AliasError;
+    let code = match error {
+        AliasError::Io(io) => match io.kind() {
+            std::io::ErrorKind::NotFound => "sync_missing",
+            std::io::ErrorKind::PermissionDenied => "sync_permission",
+            _ => "sync_io",
+        },
+        AliasError::Config(_) => "sync_config",
+        AliasError::Database(_) => "sync_database",
+        AliasError::LockTimeout => "sync_locked",
+        AliasError::UnsafePath => "sync_unsafe",
+        _ => "sync_failed",
+    };
+    code.to_string()
+}
+
+/// Stable code for a loader install failure.
+fn loader_error_code(error: &aliasmgr_core::error::AliasError) -> String {
+    use aliasmgr_core::error::AliasError;
+    let code = match error {
+        AliasError::Io(io) => match io.kind() {
+            std::io::ErrorKind::NotFound => "loader_missing",
+            std::io::ErrorKind::PermissionDenied => "loader_permission",
+            _ => "loader_io",
+        },
+        AliasError::ShellNotInstalled => "loader_unsupported",
+        AliasError::UnsafePath => "loader_unsafe",
+        AliasError::Config(_) => "loader_config",
+        _ => "loader_failed",
+    };
+    code.to_string()
+}
+
 /// Serializable per-shell sync outcome for the Sync page.
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncShellResultDto {
     pub shell: String,
     pub status: String,
     pub error: Option<String>,
+    pub error_code: Option<String>,
     pub generated_path: String,
     pub reload_command: String,
     pub loader_installed: bool,
@@ -731,7 +782,8 @@ fn shell_status_str(status: &aliasmgr_core::model::ShellStatus) -> &'static str 
 #[tauri::command]
 pub fn sync_aliases() -> Result<SyncRunDto, String> {
     let paths = AppPaths::discover(None);
-    let run = aliasmgr_core::sync::sync_config_dir(&paths.root).map_err(|error| error.to_string())?;
+    let run = aliasmgr_core::sync::sync_config_dir_collect_io(&paths.root)
+        .map_err(|error| sync_error_code(&error))?;
     let failed = run.failed();
     Ok(SyncRunDto {
         revision: run.revision,
@@ -743,6 +795,7 @@ pub fn sync_aliases() -> Result<SyncRunDto, String> {
                 shell: shell_kind_to_str(&result.shell).to_owned(),
                 status: shell_status_str(&result.status).to_owned(),
                 error: result.error.clone(),
+                error_code: result.error_code.clone(),
                 generated_path: result.generated_path.to_string_lossy().into_owned(),
                 reload_command: aliasmgr_core::sync::reload_command(&paths.root, &result.shell),
                 loader_installed: result.loader_installed,
@@ -768,7 +821,7 @@ pub struct LoaderInstallDto {
 pub fn shell_install(shell: String) -> Result<LoaderInstallDto, String> {
     let paths = AppPaths::discover(None);
     let outcome = aliasmgr_core::integration::install_loader(&paths, &shell)
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| loader_error_code(&error))?;
     Ok(LoaderInstallDto {
         shell: outcome.shell,
         target: outcome.target.to_string_lossy().into_owned(),
@@ -958,17 +1011,14 @@ pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
 
     let paths = AppPaths::discover(None);
     let config = paths.load_config().unwrap_or_default();
-    let mut loaders: Vec<std::path::PathBuf> = [
-        config.shells.bash_rc_path,
-        config.shells.zsh_rc_path,
-        config.shells.powershell5_profile_path,
-        config.shells.powershell7_profile_path,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    loaders.push(paths.root.join(".bashrc"));
-    loaders.push(paths.root.join(".zshrc"));
+    // Shared resolution includes platform defaults for PowerShell and the
+    // config-root RC fallbacks for Bash/Zsh, so a loader installed from the
+    // Doctor page is actually removed even when no explicit path is configured.
+    let mut loaders: Vec<std::path::PathBuf> =
+        aliasmgr_core::integration::all_loader_targets(&config, &paths)
+            .into_iter()
+            .map(|(_, target)| target.path)
+            .collect();
     loaders.sort();
     loaders.dedup();
 
@@ -1577,6 +1627,11 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let config = TempConfig::new("doctor-healthy");
+        // A healthy install includes the loader blocks the aliases rely on.
+        configure_powershell_profiles(&config.root);
+        for shell in ["bash", "zsh", "powershell5", "powershell7"] {
+            shell_install(shell.into()).unwrap();
+        }
         let aliases = [
             AliasRecord {
                 name: "bash-only".into(),
@@ -1627,6 +1682,191 @@ mod tests {
             findings.is_empty(),
             "a healthy multi-shell install must report nothing: {findings:?}"
         );
+    }
+
+    #[test]
+    fn doctor_reports_loader_missing_after_sync_on_a_clean_config() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-loader-missing");
+        configure_powershell_profiles(&config.root);
+
+        let mut dto = preview_dto();
+        dto.name = "psonly".into();
+        dto.shells = vec!["powershell7".into()];
+        create_alias(dto).unwrap();
+        let run = sync_aliases().unwrap();
+        assert!(!run.failed);
+        assert!(
+            run.results.iter().all(|result| !result.loader_installed),
+            "the clean config has no loader yet"
+        );
+
+        let findings = doctor_status().unwrap();
+        let missing = findings
+            .iter()
+            .find(|finding| {
+                finding.code == "loader_missing" && finding.shell.as_deref() == Some("powershell7")
+            })
+            .unwrap_or_else(|| panic!("loader_missing must be reachable: {findings:?}"));
+        assert_eq!(missing.severity, "warning");
+        assert!(missing.detail.is_some());
+    }
+
+    #[test]
+    fn doctor_detects_a_loader_pointing_at_another_config_root() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-loader-mismatch");
+        configure_powershell_profiles(&config.root);
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "psonly".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::PowerShell7],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        sync_aliases().unwrap();
+
+        let profile = config.root.join("ps7-profile.ps1");
+        let mut app_config = aliasmgr_core::config::AppConfig::default();
+        app_config.shells.powershell7_profile_path = Some(profile.clone());
+        app_config
+            .save(&AppPaths {
+                root: config.root.clone(),
+            })
+            .unwrap();
+        std::fs::write(
+            &profile,
+            aliasmgr_core::shells::common::render_powershell_loader(std::path::Path::new(
+                r"C:\other-config\generated\powershell7.ps1",
+            )),
+        )
+        .unwrap();
+
+        let findings = doctor_status().unwrap();
+        assert!(
+            findings.iter().any(|finding| {
+                finding.code == "loader_missing" && finding.shell.as_deref() == Some("powershell7")
+            }),
+            "a loader for another config root must not count as installed: {findings:?}"
+        );
+    }
+
+    #[test]
+    fn doctor_reports_unreadable_loader_profiles() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-loader-unreadable");
+        let profile_directory = config.root.join("bashrc-is-a-directory");
+        std::fs::create_dir_all(&profile_directory).unwrap();
+        let mut app_config = aliasmgr_core::config::AppConfig::default();
+        app_config.shells.bash_rc_path = Some(profile_directory);
+        app_config
+            .save(&AppPaths {
+                root: config.root.clone(),
+            })
+            .unwrap();
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        sync_aliases().unwrap();
+
+        let findings = doctor_status().unwrap();
+        let finding = findings
+            .iter()
+            .find(|finding| {
+                finding.code == "loader_unreadable" && finding.shell.as_deref() == Some("bash")
+            })
+            .unwrap_or_else(|| panic!("unreadable profile must be reported: {findings:?}"));
+        assert_eq!(finding.severity, "warning");
+        assert!(finding.detail.is_some());
+    }
+
+    #[test]
+    fn doctor_does_not_report_stale_for_a_revision_zero_record() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("doctor-revision-zero");
+        configure_powershell_profiles(&config.root);
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "zero".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                revision: 0,
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        // Sync floors the revision at 1; Doctor must use the same rule.
+        let run = aliasmgr_core::sync::sync_config_dir(&config.root).unwrap();
+        assert_eq!(run.revision, 1);
+        let findings = doctor_status().unwrap();
+        assert!(
+            findings
+                .iter()
+                .all(|finding| finding.code != "stale" && finding.code != "generated_modified"),
+            "Doctor must not invent a stale finding sync cannot clear: {findings:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn uninstall_removes_a_loader_installed_at_the_default_powershell_profile() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let home = std::env::temp_dir().join(format!(
+            "aliasmgr-gui-uninstall-home-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&home).unwrap();
+        let previous = std::env::var_os("USERPROFILE");
+        std::env::set_var("USERPROFILE", &home);
+
+        let _config = TempConfig::new("uninstall-default-profile");
+        // No configured profile path: install and uninstall must agree on the
+        // platform default.
+        let outcome = shell_install("powershell7".into()).unwrap();
+        let profile = PathBuf::from(&outcome.target);
+        assert!(profile.exists());
+        assert!(std::fs::read_to_string(&profile)
+            .unwrap()
+            .contains(aliasmgr_core::shells::common::START_MARKER));
+
+        uninstall_confirm(false).unwrap();
+        let content = std::fs::read_to_string(&profile).unwrap_or_default();
+        assert!(
+            !content.contains(aliasmgr_core::shells::common::START_MARKER),
+            "GUI uninstall must remove the default-profile loader: {content}"
+        );
+
+        match previous {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        let _ = std::fs::remove_dir_all(home);
     }
 
     #[test]
@@ -2207,9 +2447,44 @@ mod tests {
             .find(|result| result.shell == "zsh")
             .unwrap();
         assert_eq!(bash.status, "ok");
+        assert_eq!(bash.error_code, None);
         assert_eq!(zsh.status, "failed");
+        assert_eq!(zsh.error_code.as_deref(), Some("sync_failed"));
         assert!(zsh.error.as_deref().unwrap_or_default().contains("advanced"));
         assert!(PathBuf::from(&bash.generated_path).exists());
+    }
+
+    #[test]
+    fn sync_aliases_collects_io_failures_and_keeps_every_shell_row() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("sync-collect-io");
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "multi".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        // A file where the generated directory must go makes every write fail
+        // with an I/O error, but the run still returns one row per shell.
+        std::fs::write(config.root.join("generated"), "not a directory").unwrap();
+
+        let run = sync_aliases().unwrap();
+        assert!(run.failed);
+        assert_eq!(run.results.len(), 2, "I/O failure must not abort the run");
+        for result in &run.results {
+            assert_eq!(result.status, "failed");
+            let code = result.error_code.as_deref().unwrap_or_default();
+            assert!(code.starts_with("sync_"), "unexpected code: {code}");
+            assert!(!code.contains("os error"), "the code must stay stable");
+            assert!(result.error.is_some(), "detail is kept for diagnostics");
+            assert!(!result.reload_command.is_empty());
+        }
     }
 
     #[test]
@@ -2219,7 +2494,46 @@ mod tests {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let config = TempConfig::new("sync-error");
         std::fs::write(config.root.join("aliases.db"), b"not a database").unwrap();
-        assert!(sync_aliases().is_err());
+        let code = sync_aliases().unwrap_err();
+        assert!(
+            code == "sync_database" || code == "sync_io",
+            "orchestration failures must return a stable code, got {code}"
+        );
+        assert!(!code.contains("os error"));
+    }
+
+    #[test]
+    fn sync_and_loader_error_codes_are_stable() {
+        use aliasmgr_core::error::AliasError;
+        use std::io::{Error, ErrorKind};
+
+        assert_eq!(
+            sync_error_code(&AliasError::Io(Error::from(ErrorKind::PermissionDenied))),
+            "sync_permission"
+        );
+        assert_eq!(
+            sync_error_code(&AliasError::Io(Error::from(ErrorKind::NotFound))),
+            "sync_missing"
+        );
+        assert_eq!(
+            sync_error_code(&AliasError::Io(Error::from(ErrorKind::Other))),
+            "sync_io"
+        );
+        assert_eq!(sync_error_code(&AliasError::UnsafePath), "sync_unsafe");
+        assert_eq!(
+            sync_error_code(&AliasError::LockTimeout),
+            "sync_locked"
+        );
+
+        assert_eq!(
+            loader_error_code(&AliasError::Io(Error::from(ErrorKind::PermissionDenied))),
+            "loader_permission"
+        );
+        assert_eq!(loader_error_code(&AliasError::UnsafePath), "loader_unsafe");
+        assert_eq!(
+            loader_error_code(&AliasError::ShellNotInstalled),
+            "loader_unsupported"
+        );
     }
 
     #[test]
@@ -2355,7 +2669,15 @@ mod tests {
         app_config.shells.bash_rc_path = Some(directory);
         app_config.save(&paths).unwrap();
 
-        assert!(shell_install("bash".into()).is_err());
-        assert!(shell_install("fish".into()).is_err());
+        let bash_error = shell_install("bash".into()).unwrap_err();
+        assert!(
+            bash_error.starts_with("loader_"),
+            "expected a stable loader code, got {bash_error}"
+        );
+        assert!(!bash_error.contains("os error"));
+        assert_eq!(
+            shell_install("fish".into()).unwrap_err(),
+            "loader_unsupported"
+        );
     }
 }

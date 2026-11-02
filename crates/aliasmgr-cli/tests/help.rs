@@ -35,6 +35,11 @@ fn top_level_help_is_english_and_has_long_about() {
     ] {
         assert!(long.contains(expected), "missing {expected} in:\n{long}");
     }
+    assert_eq!(
+        long.matches("[default: table]").count(),
+        1,
+        "clap must be the only source of the default marker:\n{long}"
+    );
 }
 
 #[test]

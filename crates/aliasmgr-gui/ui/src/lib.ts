@@ -218,24 +218,48 @@ function looksLikePath(executable: string): boolean {
  * arguments. This is advisory only: the draft is never rewritten, so existing
  * records that intentionally use spaces keep working.
  *
- * `native_executable` with a real path (contains a separator) is accepted; a
- * bare `python test.py` is flagged because the executor treats it as one
- * program name.
+ * A native path with spaces is accepted unless it also carries a flag-like
+ * argument tail (`C:\Program Files\Tool\tool.exe --flag` is one argv[0] to the
+ * core executor, not a path plus arguments). `change_directory` targets are
+ * paths, not command lines, so they never warn.
  */
 export function targetExecutableWarning(draft: AliasDto, language: Language = DEFAULT_LANGUAGE): string | null {
   const executable = draft.executable.trim();
   if (!/\s/.test(executable)) return null;
-  if (draft.target_type === "batch") return null;
+  if (draft.target_type === "batch" || draft.target_type === "change_directory") return null;
   if (draft.target_type === "native_executable") {
-    if (looksLikePath(executable)) return null;
-    const [program, ...rest] = executable.split(/\s+/);
-    if (rest.length === 0) return null;
+    const parts = executable.split(/\s+/);
+    const rest = parts.slice(1);
+    const hasFlagTail = rest.some((token) => token.startsWith("-"));
+    const restLooksLikePath = rest.some((token) => looksLikePath(token));
+    if (restLooksLikePath && !hasFlagTail) return null;
+    const program = parts[0];
     return t(language, "wizard.targetWhitespaceNative", {
       program,
       rest: rest.join(" "),
     });
   }
   return t(language, "wizard.targetWhitespaceScript");
+}
+
+/**
+ * Literal argv preview using the same expansion rules as the core executor:
+ * the executable is always one element, `{{args}}` expands user arguments in
+ * place, `{{{{args}}}}` is a literal `{{args}}`, and user arguments are
+ * appended when `pass_args` is true and no placeholder exists.
+ */
+export function aliasArgvPreview(
+  draft: AliasDto,
+  userArgsLabel = "<user args>",
+): string[] {
+  const argv = [draft.executable];
+  for (const argument of draft.fixed_args) {
+    if (argument === "{{args}}") argv.push(userArgsLabel);
+    else if (argument === "{{{{args}}}}") argv.push("{{args}}");
+    else argv.push(argument);
+  }
+  if (draft.pass_args && !draft.fixed_args.includes("{{args}}")) argv.push(userArgsLabel);
+  return argv;
 }
 
 export type DoctorAction = "sync" | "install_loader";
@@ -278,6 +302,7 @@ export interface SyncShellResult {
   shell: string;
   status: string;
   error: string | null;
+  error_code: string | null;
   generated_path: string;
   reload_command: string;
   loader_installed: boolean;
@@ -297,6 +322,7 @@ export function normalizeSyncRun(value: unknown): SyncRun {
         shell: normalizeShellValue(entry.shell),
         status: typeof entry.status === "string" ? entry.status : "unknown",
         error: textOrNull(entry.error),
+        error_code: textOrNull(entry.error_code),
         generated_path: typeof entry.generated_path === "string" ? entry.generated_path : "",
         reload_command: typeof entry.reload_command === "string" ? entry.reload_command : "",
         loader_installed: entry.loader_installed === true,
@@ -361,8 +387,48 @@ export function generatedPreviewErrorMessage(reason: unknown, language: Language
   }
 }
 
-/** Copy-paste command that points a new process at another config directory. */
-export function configDirExampleCommand(platform: PathPlatform = detectPathPlatform()): string {
+/** Localized headline for a per-shell sync failure code. */
+export function syncFailureMessage(code: string | null | undefined, language: Language = DEFAULT_LANGUAGE): string {
+  switch (code) {
+    case "sync_permission": return t(language, "sync.error.permission");
+    case "sync_missing": return t(language, "sync.error.missing");
+    case "sync_io": return t(language, "sync.error.io");
+    case "sync_failed": return t(language, "sync.error.render");
+    default: return t(language, "sync.error.failed");
+  }
+}
+
+/** Localized message for a sync command rejection (`sync_*` code). */
+export function syncErrorMessage(reason: unknown, language: Language = DEFAULT_LANGUAGE): string {
+  const code = typeof reason === "string" ? reason : String(reason);
+  switch (code) {
+    case "sync_permission": return t(language, "sync.error.permission");
+    case "sync_missing": return t(language, "sync.error.missing");
+    case "sync_io": return t(language, "sync.error.io");
+    case "sync_config": return t(language, "sync.error.config");
+    case "sync_database": return t(language, "sync.error.database");
+    case "sync_locked": return t(language, "sync.error.locked");
+    case "sync_unsafe": return t(language, "sync.error.unsafe");
+    case "sync_failed": return t(language, "sync.error.failed");
+    default: return t(language, "sync.error.failed");
+  }
+}
+
+/** Localized message for a loader install rejection (`loader_*` code). */
+export function loaderErrorMessage(reason: unknown, language: Language = DEFAULT_LANGUAGE): string {
+  const code = typeof reason === "string" ? reason : String(reason);
+  switch (code) {
+    case "loader_permission": return t(language, "loader.error.permission");
+    case "loader_missing": return t(language, "loader.error.missing");
+    case "loader_io": return t(language, "loader.error.io");
+    case "loader_unsafe": return t(language, "loader.error.unsafe");
+    case "loader_unsupported": return t(language, "loader.error.unsupported");
+    case "loader_config": return t(language, "loader.error.config");
+    default: return t(language, "loader.error.failed");
+  }
+}
+
+/** Copy-paste command that points a new process at another config directory. */export function configDirExampleCommand(platform: PathPlatform = detectPathPlatform()): string {
   return platform === "windows"
     ? 'setx ALIASMGR_CONFIG_DIR "D:\\alias-manager"'
     : 'export ALIASMGR_CONFIG_DIR="/home/user/.alias-manager"';

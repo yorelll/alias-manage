@@ -41,7 +41,7 @@ pub struct Cli {
         value_enum,
         default_value_t = OutputFormat::Table,
         value_name = "FORMAT",
-        help = "Output format for list/find [default: table]."
+        help = "Output format for list and find."
     )]
     pub format: OutputFormat,
     /// Disable colored output (reserved for forward compatibility).

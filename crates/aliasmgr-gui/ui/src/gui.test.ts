@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import {
   SHELLS,
   TARGET_TYPES,
+  aliasArgvPreview,
   aliasFiltersActive,
   clearAliasFilters,
   configDirExampleCommand,
@@ -26,6 +27,7 @@ import {
   isAbsolutePath,
   isImportableFilename,
   latestPreviewResponse,
+  loaderErrorMessage,
   manualOnlyBoundary,
   mergeEditedAlias,
   nextDataVersion,
@@ -59,6 +61,8 @@ import {
   shellLabel,
   statusShellText,
   syncAliasesArgs,
+  syncErrorMessage,
+  syncFailureMessage,
   targetExecutableWarning,
   targetTypeExplanation,
   targetTypeLabel,
@@ -756,6 +760,7 @@ test("doctor finding codes map to exactly one actionable button", () => {
   assert.equal(doctorActionFor(doctorFinding("loader_missing", null)), null, "install needs a shell");
   assert.equal(doctorActionFor(doctorFinding("database_missing", null)), null);
   assert.equal(doctorActionFor(doctorFinding("unreliable_filesystem", null)), null);
+  assert.equal(doctorActionFor(doctorFinding("loader_unreadable", "bash")), null);
   assert.equal(doctorActionFor(doctorFinding("unknown_code")), null);
 
   assert.equal(doctorActionLabel("sync", "en"), "Sync now");
@@ -780,6 +785,7 @@ test("sync responses are normalized defensively", () => {
         shell: "powershell7",
         status: "failed",
         error: "boom",
+        error_code: "sync_permission",
         generated_path: "C:\\cfg\\generated\\powershell7.ps1",
         reload_command: ". 'C:\\cfg\\generated\\powershell7.ps1'",
         loader_installed: false,
@@ -791,8 +797,10 @@ test("sync responses are normalized defensively", () => {
   assert.equal(run.failed, true, "a failed result implies a failed run");
   assert.equal(run.results.length, 2);
   assert.equal(run.results[0].error, "boom");
+  assert.equal(run.results[0].error_code, "sync_permission");
   assert.equal(run.results[0].loader_installed, false);
   assert.equal(run.results[1].generated_path, "");
+  assert.equal(run.results[1].error_code, null);
   assert.equal(run.results[1].loader_installed, false);
 });
 
@@ -826,6 +834,25 @@ test("generated preview errors become localized, actionable copy", () => {
     "some other failure",
     "unknown errors stay visible instead of disappearing",
   );
+});
+
+test("sync and loader failure codes become localized, non-raw messages", () => {
+  assert.match(syncErrorMessage("sync_permission", "en"), /access was denied/);
+  assert.match(syncErrorMessage("sync_missing", "en"), /required for sync is missing/);
+  assert.match(syncErrorMessage("sync_locked", "en"), /Another sync is already running/);
+  assert.match(syncErrorMessage("sync_database", "zh"), /数据库/);
+  assert.match(syncErrorMessage("totally-unknown", "en"), /Sync failed/);
+  assert.doesNotMatch(syncErrorMessage("sync_io", "en"), /os error/);
+
+  assert.match(syncFailureMessage("sync_permission", "en"), /access was denied/);
+  assert.match(syncFailureMessage("sync_failed", "en"), /syntax check/);
+  assert.match(syncFailureMessage(null, "zh"), /同步失败/);
+
+  assert.match(loaderErrorMessage("loader_permission", "en"), /access was denied/);
+  assert.match(loaderErrorMessage("loader_unsafe", "en"), /unpaired Alias Manager markers/);
+  assert.match(loaderErrorMessage("loader_unsupported", "en"), /no loadable profile/);
+  assert.match(loaderErrorMessage("loader_io", "zh"), /无法读取或写入/);
+  assert.doesNotMatch(loaderErrorMessage("loader_io", "en"), /os error/);
 });
 
 test("reload copy explains dot-sourcing, when to reload, and that the database is untouched", () => {
@@ -884,6 +911,28 @@ test("target type copy explains metadata semantics and warns without rewriting",
     null,
     "a real path with spaces is not a suspicious command line",
   );
+  // A path followed by flags is still a single argv[0] to the executor.
+  assert.notEqual(
+    targetExecutableWarning(
+      { ...nativeDraft, executable: "C:\\Program Files\\Tool\\tool.exe --flag" },
+      "en",
+    ),
+    null,
+    "path plus flag tail must warn",
+  );
+  assert.notEqual(
+    targetExecutableWarning({ ...nativeDraft, executable: "/usr/bin/python test.py" }, "en"),
+    null,
+    "interpreter path plus script must warn",
+  );
+  assert.equal(
+    targetExecutableWarning(
+      { ...nativeDraft, target_type: "change_directory", executable: "/tmp/my projects" },
+      "en",
+    ),
+    null,
+    "change_directory targets are paths, not command lines",
+  );
   assert.equal(
     targetExecutableWarning({ ...nativeDraft, target_type: "batch", executable: "tool.bat arg" }, "en"),
     null,
@@ -891,6 +940,31 @@ test("target type copy explains metadata semantics and warns without rewriting",
   assert.equal(
     targetExecutableWarning({ ...nativeDraft, executable: "git" }, "en"),
     null,
+  );
+
+  // Literal argv preview follows the core expansion rules.
+  const previewDraft = {
+    ...emptyAliasDraft(),
+    executable: "python",
+    fixed_args: ["test.py", "{{args}}"],
+    pass_args: true,
+  };
+  assert.deepEqual(aliasArgvPreview(previewDraft, "<args>"), ["python", "test.py", "<args>"]);
+  assert.deepEqual(
+    aliasArgvPreview({ ...previewDraft, fixed_args: ["{{{{args}}}}"], pass_args: true }, "<args>"),
+    ["python", "{{args}}", "<args>"],
+  );
+  assert.deepEqual(
+    aliasArgvPreview({ ...previewDraft, fixed_args: ["test.py"], pass_args: false }, "<args>"),
+    ["python", "test.py"],
+  );
+  assert.deepEqual(
+    aliasArgvPreview(
+      { ...previewDraft, executable: "C:\\Program Files\\Tool\\tool.exe --flag", fixed_args: [] },
+      "<args>",
+    ),
+    ["C:\\Program Files\\Tool\\tool.exe --flag", "<args>"],
+    "the whole executable string is one argv element",
   );
 });
 
@@ -926,6 +1000,9 @@ test("sync and doctor panels expose actionable, disabled-while-busy controls", a
     "generated.loaderMissing",
     "generated.generatedPath",
     "generatedPreviewErrorMessage",
+    "syncErrorMessage",
+    "syncFailureMessage",
+    "generated.errorDetails",
     "reloadCommandExplanation",
     "reloadCommandLabel",
     "reloadHover",
@@ -948,6 +1025,9 @@ test("sync and doctor panels expose actionable, disabled-while-busy controls", a
     "doctor.syncFailedResult",
     "doctor.installResult",
     "doctor.actionFailed",
+    "loaderErrorMessage",
+    "syncErrorMessage",
+    "syncFailureMessage",
     "disabled={actionBusy !== null || loading}",
     "setReloadToken((value) => value + 1)",
   ]) {
@@ -960,6 +1040,8 @@ test("wizard and settings panels surface the new explanations", async () => {
   for (const fragment of [
     "targetTypeExplanation",
     "targetExecutableWarning",
+    "aliasArgvPreview",
+    "argv-preview",
     "target-executable-warning",
   ]) {
     assert.ok(wizard.includes(fragment), `wizard is missing ${fragment}`);

@@ -530,17 +530,12 @@ pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError
     let paths = AppPaths::discover(config_dir.map(Path::new));
     // A broken config must not prevent purge and loader cleanup.
     let config = paths.load_config().unwrap_or_default();
-    let mut loaders = [
-        config.shells.bash_rc_path,
-        config.shells.zsh_rc_path,
-        config.shells.powershell5_profile_path,
-        config.shells.powershell7_profile_path,
-    ]
-    .into_iter()
-    .flatten()
-    .collect::<Vec<PathBuf>>();
-    loaders.push(paths.root.join(".bashrc"));
-    loaders.push(paths.root.join(".zshrc"));
+    // Shared resolution includes platform defaults for PowerShell and the
+    // config-root RC fallbacks for Bash/Zsh, matching the install path.
+    let mut loaders = aliasmgr_core::integration::all_loader_targets(&config, &paths)
+        .into_iter()
+        .map(|(_, target)| target.path)
+        .collect::<Vec<PathBuf>>();
     loaders.retain(|path| path.exists());
     loaders.sort();
     loaders.dedup();

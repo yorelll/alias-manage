@@ -4,8 +4,60 @@ use aliasmgr_core::config::{AppConfig, AppPaths};
 use aliasmgr_core::shells::common::{END_MARKER, START_MARKER};
 use aliasmgr_core::uninstall::{uninstall, UninstallMode};
 
+/// Serializes tests that temporarily override the platform home directory.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Isolates `%USERPROFILE%` / `$HOME` so default PowerShell profile resolution
+/// in tests can never visit (or clean) the developer's real profile.
+struct HomeGuard {
+    path: std::path::PathBuf,
+    userprofile: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+}
+
+impl HomeGuard {
+    fn new(label: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "aliasmgr-cli-test-home-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        let userprofile = std::env::var_os("USERPROFILE");
+        let home = std::env::var_os("HOME");
+        std::env::set_var("USERPROFILE", &path);
+        std::env::set_var("HOME", &path);
+        Self {
+            path,
+            userprofile,
+            home,
+        }
+    }
+}
+
+impl Drop for HomeGuard {
+    fn drop(&mut self) {
+        match self.userprofile.take() {
+            Some(value) => std::env::set_var("USERPROFILE", value),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match self.home.take() {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
+}
+
 #[test]
 fn uninstall_modes_preserve_referenced_targets() {
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home = HomeGuard::new("modes");
     let root = std::env::temp_dir().join(format!("aliasmgr-cli-uninstall-{}", std::process::id()));
     std::fs::create_dir_all(root.join("generated")).unwrap();
     let target = root.join("script.py");
@@ -19,6 +71,10 @@ fn uninstall_modes_preserve_referenced_targets() {
 
 #[test]
 fn cli_uninstall_removes_marked_loader_blocks_and_keeps_user_content_and_targets() {
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home = HomeGuard::new("loader");
     let root = std::env::temp_dir().join(format!(
         "aliasmgr-cli-uninstall-loader-{}",
         std::process::id()
@@ -83,7 +139,52 @@ fn cli_uninstall_removes_marked_loader_blocks_and_keeps_user_content_and_targets
 }
 
 #[test]
+fn cli_uninstall_removes_a_loader_installed_at_the_default_powershell_profile() {
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let home = HomeGuard::new("default-profile");
+    let root = std::env::temp_dir().join(format!(
+        "aliasmgr-cli-uninstall-default-profile-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&root).unwrap();
+    AppConfig::default()
+        .save(&AppPaths { root: root.clone() })
+        .unwrap();
+    let config_dir = root.to_string_lossy().to_string();
+
+    // No configured profile path: install and uninstall must agree on the
+    // platform default resolved from the isolated home.
+    commands::shell_install(Some(&config_dir), "powershell7").unwrap();
+    let profile = aliasmgr_core::integration::default_powershell_profile_path("powershell7")
+        .expect("PowerShell 7 has a default profile on this platform");
+    assert!(profile.exists());
+    assert!(std::fs::read_to_string(&profile)
+        .unwrap()
+        .contains(START_MARKER));
+
+    commands::uninstall(Some(&config_dir), false).unwrap();
+    let content = std::fs::read_to_string(&profile).unwrap_or_default();
+    assert!(
+        !content.contains(START_MARKER),
+        "CLI uninstall must remove the default-profile loader: {content}"
+    );
+    assert!(
+        !home.path.join(".bashrc").exists()
+            || !std::fs::read_to_string(home.path.join(".bashrc"))
+                .unwrap()
+                .contains(START_MARKER)
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn uninstall_purges_even_when_config_is_unparsable() {
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home = HomeGuard::new("badcfg");
     let root = std::env::temp_dir().join(format!(
         "aliasmgr-cli-uninstall-badcfg-{}",
         std::process::id()

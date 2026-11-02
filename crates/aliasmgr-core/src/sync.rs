@@ -146,6 +146,17 @@ impl SyncCoordinator {
         for shell in shells {
             let path = self.generated_path(shell);
             let temp = path.with_extension(format!("tmp.{}", std::process::id()));
+            // Persist the real profile state rather than assuming a loader
+            // exists. Doctor reads this column; a hardcoded `true` makes
+            // `loader_missing` unreachable.
+            let loader_installed = crate::integration::loader_status(
+                &AppPaths {
+                    root: self.config_dir.clone(),
+                },
+                shell.as_str(),
+            )
+            .map(|outcome| outcome.installed)
+            .unwrap_or(false);
             let rendered = self
                 .render_shell(aliases, shell, revision, names)
                 .map(|body| {
@@ -164,7 +175,7 @@ impl SyncCoordinator {
                         shell: shell.clone(),
                         applied_revision: revision,
                         file_checksum: checksum.clone(),
-                        loader_installed: true,
+                        loader_installed,
                         status: ShellStatus::Ok,
                         last_error: None,
                     };
@@ -182,7 +193,7 @@ impl SyncCoordinator {
                         shell: shell.clone(),
                         applied_revision: revision.saturating_sub(1),
                         file_checksum: String::new(),
-                        loader_installed: true,
+                        loader_installed,
                         status: ShellStatus::Failed,
                         last_error: Some(message.clone()),
                     };
@@ -362,15 +373,32 @@ pub fn current_revision(
         .max(1))
 }
 
-/// Per-shell result of a full sync, including the path that was written and
-/// whether the shell's loader block is actually installed.
+/// Per-shell result of a full sync, including the path that was written,
+/// whether the shell's loader block is actually installed, and a stable error
+/// code for front ends that translate messages.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellSyncOutcome {
     pub shell: ShellKind,
     pub status: ShellStatus,
+    /// Raw error detail (used by CLI output and diagnostics).
     pub error: Option<String>,
+    /// Stable code such as `sync_permission`, `sync_missing`, `sync_io`, or
+    /// `sync_failed`. `None` on success.
+    pub error_code: Option<String>,
     pub generated_path: PathBuf,
     pub loader_installed: bool,
+}
+
+/// Stable code for an I/O failure that can be attributed to one shell.
+fn io_failure_code(error: &AliasError) -> Option<&'static str> {
+    match error {
+        AliasError::Io(io) => Some(match io.kind() {
+            std::io::ErrorKind::NotFound => "sync_missing",
+            std::io::ErrorKind::PermissionDenied => "sync_permission",
+            _ => "sync_io",
+        }),
+        _ => None,
+    }
 }
 
 /// Result of syncing every referenced shell in one config root.
@@ -432,7 +460,16 @@ pub fn reload_command(config_dir: &Path, shell: &ShellKind) -> String {
 pub fn sync_config_dir(config_dir: &Path) -> Result<SyncRun, AliasError> {
     let database = crate::storage::Database::open(config_dir.join("aliases.db"))?;
     let aliases = database.list_aliases()?;
-    sync_with_database(config_dir, &database, &aliases)
+    sync_with_database_mode(config_dir, &database, &aliases, false)
+}
+
+/// Like [`sync_config_dir`], but collects per-shell I/O failures into the
+/// result so one unwritable shell does not discard successful shells. Used by
+/// the GUI; the CLI keeps the strict variant to preserve its error contract.
+pub fn sync_config_dir_collect_io(config_dir: &Path) -> Result<SyncRun, AliasError> {
+    let database = crate::storage::Database::open(config_dir.join("aliases.db"))?;
+    let aliases = database.list_aliases()?;
+    sync_with_database_mode(config_dir, &database, &aliases, true)
 }
 
 /// Same as [`sync_config_dir`] but reuses an already-open database and alias
@@ -441,6 +478,15 @@ pub fn sync_with_database(
     config_dir: &Path,
     database: &crate::storage::Database,
     aliases: &[AliasRecord],
+) -> Result<SyncRun, AliasError> {
+    sync_with_database_mode(config_dir, database, aliases, false)
+}
+
+fn sync_with_database_mode(
+    config_dir: &Path,
+    database: &crate::storage::Database,
+    aliases: &[AliasRecord],
+    collect_io: bool,
 ) -> Result<SyncRun, AliasError> {
     let shells = referenced_shells(database, aliases)?;
     let revision = current_revision(database, aliases)?;
@@ -456,21 +502,56 @@ pub fn sync_with_database(
             .filter(|alias| alias.shells.contains(&shell))
             .cloned()
             .collect::<Vec<_>>();
-        let receipt = coordinator.apply_with_managed_names(
+        let loader_installed = crate::integration::loader_status(&paths, shell.as_str())
+            .map(|outcome| outcome.installed)
+            .unwrap_or(false);
+        let generated_path = paths.generated_path(shell.as_str());
+        let receipt = match coordinator.apply_with_managed_names(
             &shell_aliases,
             std::slice::from_ref(&shell),
             revision,
             &names,
-        )?;
-        let loader_installed = crate::integration::loader_status(&paths, shell.as_str())
-            .map(|outcome| outcome.installed)
-            .unwrap_or(false);
+        ) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                // Only I/O failures are safe to attribute to one shell and
+                // continue past. Config, lock, and database errors affect the
+                // whole run and propagate unchanged (CLI exit codes stay put).
+                let Some(code) = io_failure_code(&error) else {
+                    return Err(error);
+                };
+                if !collect_io {
+                    return Err(error);
+                }
+                let message = error.to_string();
+                let _ = database.upsert_shell_state(&crate::model::ShellState {
+                    shell: shell.clone(),
+                    applied_revision: revision.saturating_sub(1),
+                    file_checksum: String::new(),
+                    loader_installed,
+                    status: ShellStatus::Failed,
+                    last_error: Some(message.clone()),
+                });
+                results.push(ShellSyncOutcome {
+                    shell,
+                    status: ShellStatus::Failed,
+                    error: Some(message),
+                    error_code: Some(code.to_string()),
+                    generated_path,
+                    loader_installed,
+                });
+                continue;
+            }
+        };
         for result in receipt.results {
             let generated_path = paths.generated_path(result.shell.as_str());
+            let error_code =
+                (result.status == ShellStatus::Failed).then(|| "sync_failed".to_string());
             results.push(ShellSyncOutcome {
                 shell: result.shell,
                 status: result.status,
                 error: result.error,
+                error_code,
                 generated_path,
                 loader_installed,
             });
@@ -1351,6 +1432,153 @@ mod tests {
             result.is_err(),
             "replacing a read-only generated file must surface an error"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sync_persists_the_real_loader_state_instead_of_hardcoding_true() {
+        let root = sync_root("loader-state");
+        let paths = AppPaths { root: root.clone() };
+        let profile = root.join("bashrc");
+        let mut config = AppConfig::default();
+        config.shells.bash_rc_path = Some(profile.clone());
+        config.save(&paths).unwrap();
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        sync_config_dir(&root).unwrap();
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        let state = database
+            .shell_states()
+            .unwrap()
+            .into_iter()
+            .find(|state| state.shell == ShellKind::Bash)
+            .unwrap();
+        assert!(
+            !state.loader_installed,
+            "a clean profile has no loader; the state must say so"
+        );
+        drop(database);
+
+        crate::integration::install_loader(&paths, "bash").unwrap();
+        sync_config_dir(&root).unwrap();
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        let state = database
+            .shell_states()
+            .unwrap()
+            .into_iter()
+            .find(|state| state.shell == ShellKind::Bash)
+            .unwrap();
+        assert!(state.loader_installed);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn collect_io_mode_returns_one_failed_row_per_shell_instead_of_aborting() {
+        let root = sync_root("collect-io");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "multi".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        // Force every generated write to fail.
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("generated"), "not a directory").unwrap();
+
+        assert!(
+            sync_config_dir(&root).is_err(),
+            "the strict CLI path keeps propagating the I/O error"
+        );
+        let run = sync_config_dir_collect_io(&root).unwrap();
+        assert_eq!(run.results.len(), 2);
+        assert!(run.failed());
+        for result in &run.results {
+            assert_eq!(result.status, ShellStatus::Failed);
+            assert_eq!(result.error_code.as_deref(), Some("sync_io"));
+            assert!(result.error.is_some());
+        }
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn collect_io_mode_keeps_a_successful_shell_when_another_shell_write_fails() {
+        let root = sync_root("collect-partial-io");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "multi".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        sync_config_dir(&root).unwrap();
+
+        let bash_file = root.join("generated/bash.sh");
+        let mut permissions = fs::metadata(&bash_file).unwrap().permissions();
+        permissions.set_readonly(true);
+        fs::set_permissions(&bash_file, permissions).unwrap();
+        let run = sync_config_dir_collect_io(&root);
+        let mut permissions = fs::metadata(&bash_file).unwrap().permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        fs::set_permissions(&bash_file, permissions).unwrap();
+
+        let run = run.unwrap();
+        assert_eq!(run.results.len(), 2, "both shell rows survive a failure");
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == ShellKind::Bash)
+            .unwrap();
+        let zsh = run
+            .results
+            .iter()
+            .find(|result| result.shell == ShellKind::Zsh)
+            .unwrap();
+        assert_eq!(bash.status, ShellStatus::Failed);
+        assert!(matches!(
+            bash.error_code.as_deref(),
+            Some("sync_permission") | Some("sync_io")
+        ));
+        assert_eq!(zsh.status, ShellStatus::Ok);
+        assert!(zsh.error_code.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn syntax_failures_carry_the_generic_sync_failed_code() {
+        let root = sync_root("failure-code");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "bad".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Zsh],
+                advanced_shell_mode: true,
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_config_dir(&root).unwrap();
+        assert_eq!(run.results[0].status, ShellStatus::Failed);
+        assert_eq!(run.results[0].error_code.as_deref(), Some("sync_failed"));
         let _ = fs::remove_dir_all(root);
     }
 }

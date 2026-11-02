@@ -6,6 +6,7 @@ import {
   doctorActionLabel,
   doctorFindingText,
   findingCodeLabel,
+  loaderErrorMessage,
   manualOnlyBoundary,
   normalizeDoctorFindings,
   normalizeOverriddenDefinitions,
@@ -18,6 +19,8 @@ import {
   shellInstallArgs,
   shellLabel,
   syncAliasesArgs,
+  syncErrorMessage,
+  syncFailureMessage,
   tauriInvoke,
 } from "../lib";
 import { useI18n } from "../language";
@@ -122,7 +125,7 @@ export function DoctorPanel() {
         if (run.failed) {
           const failures = run.results
             .filter((result) => result.status === "failed")
-            .map((result) => `${shellLabel(result.shell, language)}: ${result.error ?? ""}`)
+            .map((result) => `${shellLabel(result.shell, language)}: ${syncFailureMessage(result.error_code, language)}`)
             .join("; ");
           setActionError(t("doctor.syncFailedResult", { error: failures }));
         } else {
@@ -148,7 +151,11 @@ export function DoctorPanel() {
       // Re-scan so the finding reflects the new state without a manual click.
       setReloadToken((value) => value + 1);
     } catch (reason) {
-      setActionError(t("doctor.actionFailed", { error: String(reason) }));
+      setActionError(t("doctor.actionFailed", {
+        error: action === "sync"
+          ? syncErrorMessage(reason, language)
+          : loaderErrorMessage(reason, language),
+      }));
     } finally {
       setActionBusy(null);
     }

@@ -3,6 +3,7 @@ import type { AliasDto, EnvRow, PathRestriction, PreviewSnippet, RestrictionMode
 import {
   SHELLS,
   TARGET_TYPES,
+  aliasArgvPreview,
   emptyAliasDraft,
   environmentToRows,
   finalizeAliasDraft,
@@ -139,6 +140,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   const unknownShells = draft.shells.filter((shell) => !(SHELLS as readonly string[]).includes(shell));
   const targetTypeHint = targetTypeExplanation(language);
   const executableWarning = targetExecutableWarning(draft, language);
+  const argvPreview = aliasArgvPreview(draft, t("wizard.argvUserArgs"));
 
   return (
     <section className="alias-wizard" aria-labelledby="alias-wizard-title" data-testid="alias-wizard">
@@ -187,6 +189,9 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
               {executableWarning}
             </span>
           )}
+          <span className="hint" data-testid="argv-preview">
+            {t("wizard.argvPreview")}: <code>{JSON.stringify(argvPreview)}</code>
+          </span>
         </label>
 
         <label className="field field-full">

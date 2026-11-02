@@ -10,6 +10,8 @@ import {
   reloadHover,
   shellLabel,
   syncAliasesArgs,
+  syncErrorMessage,
+  syncFailureMessage,
   tauriInvoke,
 } from "../lib";
 import { useI18n } from "../language";
@@ -91,7 +93,7 @@ export function GeneratedFilePanel() {
       setError(null);
     } catch (reason) {
       setSyncRun(null);
-      setSyncError(t("generated.syncError", { error: String(reason) }));
+      setSyncError(t("generated.syncError", { error: syncErrorMessage(reason, language) }));
     } finally {
       setBusy((current) => (current === "sync_aliases" ? null : current));
     }
@@ -156,10 +158,16 @@ export function GeneratedFilePanel() {
                     {result.status === "ok" ? t("generated.statusOk") : t("generated.statusFailed")}
                   </span>
                 </div>
-                {result.error && (
+                {result.error_code && (
                   <p className="form-error" role="alert">
-                    {t("generated.errorDetail", { error: result.error })}
+                    {syncFailureMessage(result.error_code, language)}
                   </p>
+                )}
+                {result.error && (
+                  <details className="sync-error-detail">
+                    <summary>{t("generated.errorDetails")}</summary>
+                    <pre className="code-block">{result.error}</pre>
+                  </details>
                 )}
                 {result.generated_path && (
                   <p className="hint">{t("generated.generatedPath", { path: result.generated_path })}</p>

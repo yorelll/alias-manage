@@ -118,6 +118,7 @@ names survive. PowerShell doubles embedded single quotes; POSIX shells use
 
 - `doctor`: reports missing database, missing generated files, stale generated files (recorded `applied_revision` behind the current revision), recorded sync errors, missing loader blocks, and a filesystem-reliability finding when one is available. It also recomputes each generated file's embedded `# file_checksum:` and reports `生成文件校验和不匹配（可能被手工修改）` for a file edited by hand or missing its checksum line. It does not repair anything.
   - Doctor inspects database presence, generated files and checksums, staleness, sync errors, loader installation, and filesystem reliability. It is read-only.
+  - Loader checks probe the actual profile at the resolved path and compare the managed block against the expected loader for the current config root. A missing, relocated, or mismatched block is reported as missing; an unreadable profile is reported separately.
   - The GUI Doctor page adds an action button to actionable findings: **Sync now** for `generated_missing`, `stale`, `sync_failed`, `generated_unreadable`, `generated_modified`, and `render_failed`; **Install shell integration** for `loader_missing`. Actions run the same core operations as `sync` and `shell install`, then rescan automatically. The CLI has no action buttons: run `aliasmgr sync` or `aliasmgr shell install <SHELL>` yourself.
 - `shell detect`: reports the detected Shell.
 - `shell install <SHELL>` / `shell uninstall <SHELL>`: installs or removes the marked loader block for `bash`, `zsh`, `powershell5`, or `powershell7`. Other Shell names return `ShellNotInstalled` (exit 12).
@@ -127,6 +128,8 @@ names survive. PowerShell doubles embedded single quotes; POSIX shells use
   - Outside Windows, PowerShell 7 defaults to `~/.config/powershell/profile.ps1`; PowerShell 5.1 without a configured path returns `ShellNotInstalled`, because that Shell does not exist there.
   - Default paths are derived from `%USERPROFILE%` / `~`; OneDrive-redirected Documents folders are not detected through the Windows known-folder API, so set the corresponding `shells.powershell*_profile_path` explicitly in that case.
   - The PowerShell block dot-sources the generated `.ps1` only when it exists and then removes its temporary variable; a missing generated file cannot break profile startup. Profile writes create a backup and respect the configured RC retention limit.
+  - `shell install` is idempotent only when the existing block points at the *current* config root and sits at the end of the profile. A block pointing at another `ALIASMGR_CONFIG_DIR`, a relocated block, or a hand-edited block is replaced with the expected one.
+  - `uninstall` resolves all four loader targets through the same helper as install, including the platform-default PowerShell profiles, so a loader installed without an explicit `shells.*_profile_path` is still removed.
 
 ## Transfer
 
