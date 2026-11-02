@@ -12,7 +12,7 @@ use aliasmgr_core::{
     integration::{self, LoaderOutcome},
     model::{AliasRecord, ManagedNameSet, ShellKind, ShellState, ShellStatus},
     storage::Database,
-    sync::{self, SyncRun},
+    sync::{self, ShellContentState, ShellContentStatus, SyncRun},
 };
 use std::{
     collections::BTreeMap,
@@ -29,6 +29,9 @@ pub struct Snapshot {
     pub shell_states: Vec<ShellState>,
     pub loaders: BTreeMap<ShellKind, LoaderInfo>,
     pub retired: BTreeMap<ShellKind, Vec<String>>,
+    /// Expected-vs-actual generated content per referenced shell, computed once
+    /// per refresh so the header and detail share one verdict.
+    pub content: BTreeMap<ShellKind, ShellContentStatus>,
     pub revision: i64,
     pub fingerprint: DiskFingerprint,
     pub db_modified: Option<SystemTime>,
@@ -68,12 +71,30 @@ pub fn load_snapshot(database: &Database, root: &Path) -> Result<Snapshot, Alias
             referenced.push(state.shell.clone());
         }
     }
-    let mut retired = BTreeMap::new();
-    let mut loaders = BTreeMap::new();
     let paths = AppPaths {
         root: root.to_path_buf(),
     };
+    // A leftover generated file with no alias/state still needs to be checked:
+    // deleting the last alias leaves cleanup work, and a stale file must not be
+    // reported as up to date.
+    for shell in [
+        ShellKind::Bash,
+        ShellKind::Zsh,
+        ShellKind::PowerShell5,
+        ShellKind::PowerShell7,
+    ] {
+        if !referenced.contains(&shell) && paths.generated_path(shell.as_str()).exists() {
+            referenced.push(shell);
+        }
+    }
+    let mut retired = BTreeMap::new();
+    let mut loaders = BTreeMap::new();
+    let mut content = BTreeMap::new();
     for shell in referenced {
+        content.insert(
+            shell.clone(),
+            sync::shell_content_status(root, database, &aliases, &shell, revision)?,
+        );
         retired.insert(shell.clone(), database.managed_name_set(&shell)?.retired);
         let info = match integration::loader_status(&paths, shell.as_str()) {
             Ok(outcome) => LoaderInfo {
@@ -99,6 +120,7 @@ pub fn load_snapshot(database: &Database, root: &Path) -> Result<Snapshot, Alias
         shell_states,
         loaders,
         retired,
+        content,
         revision,
         fingerprint,
         db_modified,
@@ -138,66 +160,42 @@ pub fn disk_fingerprint(database: &Database) -> Result<DiskFingerprint, AliasErr
 }
 
 /// Layer 2: whether the generated file reflects the stored record.
-pub fn generated_layer(
-    root: &Path,
-    snapshot: &Snapshot,
-    alias: &AliasRecord,
-    shell: &ShellKind,
-) -> String {
-    if !alias.enabled {
-        let stale = snapshot
-            .shell_states
-            .iter()
-            .find(|state| state.shell == *shell)
-            .map(|state| state.applied_revision < snapshot.revision)
-            .unwrap_or(false);
-        return if stale {
-            "not generated (alias disabled); sync needed to remove the old definition".to_string()
-        } else {
-            "not generated (alias disabled)".to_string()
-        };
-    }
-    let path = AppPaths {
-        root: root.to_path_buf(),
-    }
-    .generated_path(shell.as_str());
-    let Some(state) = snapshot
+pub fn generated_layer(snapshot: &Snapshot, alias: &AliasRecord, shell: &ShellKind) -> String {
+    let shell_state = snapshot
         .shell_states
         .iter()
-        .find(|state| state.shell == *shell)
-    else {
+        .find(|state| state.shell == *shell);
+    if !alias.enabled {
+        return match snapshot.content.get(shell) {
+            Some(status)
+                if status.is_up_to_date() || status.state == ShellContentState::Missing =>
+            {
+                "not generated (alias disabled)".to_string()
+            }
+            Some(_) => "not generated (alias disabled); generated file needs sync".to_string(),
+            None => "not generated (alias disabled)".to_string(),
+        };
+    }
+    if let Some(state) = shell_state {
+        if state.status == ShellStatus::Failed {
+            return format!(
+                "failed: {}",
+                state.last_error.as_deref().unwrap_or("unknown error")
+            );
+        }
+    }
+    let Some(status) = snapshot.content.get(shell) else {
         return "not synced yet".to_string();
     };
-    if state.status == ShellStatus::Failed {
-        return format!(
-            "failed: {}",
-            state.last_error.as_deref().unwrap_or("unknown error")
-        );
-    }
-    if state.applied_revision < snapshot.revision {
-        return format!(
-            "stale (applied revision {}, current {})",
-            state.applied_revision, snapshot.revision
-        );
-    }
-    if !path.exists() {
-        return "file missing (needs sync)".to_string();
-    }
-    let content = match std::fs::read_to_string(&path) {
-        Ok(content) => content,
-        Err(_) => return "file unreadable (run Doctor)".to_string(),
-    };
-    let embedded = content
-        .lines()
-        .find_map(|line| line.strip_prefix("# file_checksum: "));
-    let expected = state.file_checksum.as_str();
-    // The stored revision only proves when sync last ran. Compare both the
-    // embedded marker and the body against the checksum sync recorded, so a
-    // hand-edited file is not reported as up to date.
-    if embedded == Some(expected) && sync::verify_file_checksum(&content, expected) {
-        "up to date".to_string()
-    } else {
-        "checksum mismatch (file modified? run Doctor)".to_string()
+    match status.state {
+        ShellContentState::UpToDate => "up to date".to_string(),
+        ShellContentState::Missing if shell_state.is_none() => "not synced yet".to_string(),
+        ShellContentState::Missing => "file missing (needs sync)".to_string(),
+        ShellContentState::Unreadable => "file unreadable (run Doctor)".to_string(),
+        ShellContentState::RenderFailed => "render failed (run Doctor)".to_string(),
+        ShellContentState::Modified => {
+            "stale content or checksum mismatch (needs sync / run Doctor)".to_string()
+        }
     }
 }
 
@@ -225,14 +223,14 @@ pub fn loader_layer(snapshot: &Snapshot, shell: &ShellKind) -> String {
 
 /// Builds the four status layers for one alias. Layer 4 is always unknown:
 /// there is no reliable way to inspect the shell that launched the TUI.
-pub fn four_layer_lines(root: &Path, snapshot: &Snapshot, alias: &AliasRecord) -> Vec<String> {
+pub fn four_layer_lines(snapshot: &Snapshot, alias: &AliasRecord) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("1 DB: saved (revision {})", alias.revision));
     for shell in &alias.shells {
         lines.push(format!(
             "2 generated [{}]: {}",
             shell.as_str(),
-            generated_layer(root, snapshot, alias, shell)
+            generated_layer(snapshot, alias, shell)
         ));
         lines.push(format!(
             "3 loader [{}]: {}",
@@ -505,11 +503,11 @@ mod tests {
         let snapshot = load_snapshot(&database, &root).unwrap();
         assert_eq!(snapshot.revision, alias.revision);
         assert_eq!(
-            generated_layer(&root, &snapshot, &alias, &ShellKind::Bash),
+            generated_layer(&snapshot, &alias, &ShellKind::Bash),
             "not synced yet"
         );
         assert!(loader_layer(&snapshot, &ShellKind::Bash).starts_with("not installed"));
-        let layers = four_layer_lines(&root, &snapshot, &alias);
+        let layers = four_layer_lines(&snapshot, &alias);
         assert!(layers[0].contains("1 DB"));
         assert!(layers
             .iter()
@@ -540,7 +538,7 @@ mod tests {
         let database = Database::open(root.join("aliases.db")).unwrap();
         let snapshot = load_snapshot(&database, &root).unwrap();
         assert_eq!(
-            generated_layer(&root, &snapshot, &alias, &ShellKind::Bash),
+            generated_layer(&snapshot, &alias, &ShellKind::Bash),
             "up to date"
         );
         let path = root.join("generated/bash.sh");
@@ -548,8 +546,49 @@ mod tests {
         content.push_str("\n# hand edit\n");
         std::fs::write(&path, content).unwrap();
         let snapshot = load_snapshot(&database, &root).unwrap();
-        assert!(generated_layer(&root, &snapshot, &alias, &ShellKind::Bash)
-            .contains("checksum mismatch"));
+        assert!(generated_layer(&snapshot, &alias, &ShellKind::Bash).contains("checksum mismatch"));
+        drop(database);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_reports_stale_content_when_a_delete_does_not_advance_the_revision() {
+        use aliasmgr_core::service::AliasService;
+        let root = temp_root("revision-skew");
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let service = AliasService::new(&database);
+        service
+            .create(AliasRecord {
+                name: "a".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        let mut b = service
+            .create(AliasRecord {
+                name: "b".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        for index in 0..4 {
+            b.description = format!("edit {index}");
+            b = service.update(b).unwrap();
+        }
+        sync::sync_config_dir(&root).unwrap();
+        let snapshot = load_snapshot(&database, &root).unwrap();
+        assert!(snapshot.content[&ShellKind::Bash].is_up_to_date());
+
+        service.delete("a").unwrap();
+        let snapshot = load_snapshot(&database, &root).unwrap();
+        assert_eq!(snapshot.revision, 5, "tombstone must not advance max(rev)");
+        assert_eq!(
+            snapshot.content[&ShellKind::Bash].state,
+            ShellContentState::Modified
+        );
+        assert!(generated_layer(&snapshot, &b, &ShellKind::Bash).contains("needs sync"));
         drop(database);
         let _ = std::fs::remove_dir_all(root);
     }

@@ -119,6 +119,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 app.list_offset = offset;
             }
         }
+        Screen::Preview(_) => {
+            app.preview_height = body.height.saturating_sub(2).max(1) as usize;
+        }
+        Screen::Doctor(_) => {
+            app.doctor_height = body.height.saturating_sub(2).max(1) as usize;
+        }
         Screen::Editor(editor) => {
             let (fields, _) = editor_panes(body);
             let inner_width = fields.width.saturating_sub(2).max(1);
@@ -236,30 +242,19 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
 
 /// `(text, needs_sync)` for the header.
 fn sync_status(app: &App) -> (String, bool) {
-    // Disabled aliases still need a sync to remove their old definitions, and
-    // a delete leaves a stale shell_state/tombstone even when no alias remains.
-    let mut needed = app.snapshot.shell_states.iter().any(|state| {
-        state.status == ShellStatus::Failed || state.applied_revision < app.snapshot.revision
-    });
-    for alias in &app.snapshot.aliases {
-        for shell in &alias.shells {
-            let state = app
-                .snapshot
-                .shell_states
-                .iter()
-                .find(|state| state.shell == *shell);
-            match state {
-                None => needed = true,
-                Some(state)
-                    if state.status == ShellStatus::Failed
-                        || state.applied_revision < app.snapshot.revision =>
-                {
-                    needed = true
-                }
-                _ => {}
-            }
-        }
-    }
+    // Content, not revision counters, decides staleness. A checked edit or a
+    // delete can change the expected body without advancing the global derived
+    // revision, and a hand-edited file can diverge at the same revision.
+    let needed = app
+        .snapshot
+        .shell_states
+        .iter()
+        .any(|state| state.status == ShellStatus::Failed)
+        || app
+            .snapshot
+            .content
+            .values()
+            .any(|status| !status.is_up_to_date());
     if needed {
         ("sync: needed".to_string(), true)
     } else {
@@ -597,8 +592,11 @@ fn detail_lines(app: &App, alias: &AliasRecord) -> Vec<Line<'static>> {
         ]));
     }
     lines.push(line(vec![span("Status layers", theme.title())]));
-    for status in data::four_layer_lines(&app.root, &app.snapshot, alias) {
-        lines.push(line(vec![span(format!("  {status}"), theme.muted())]));
+    for status in data::four_layer_lines(&app.snapshot, alias) {
+        lines.push(line(vec![span(
+            format!("  {}", text::one_line(&status)),
+            theme.muted(),
+        )]));
     }
     for shell in &alias.shells {
         lines.push(line(vec![
@@ -1349,7 +1347,8 @@ fn footer_keys(app: &App) -> String {
             "Tab field  Ctrl+S save  Esc cancel  Up/Down select  a add  d delete  J/K reorder  Enter edit  Space toggle  F3 advanced".to_string()
         }
         Screen::Preview(_) => {
-            "j/k scroll  PgUp/PgDn  Tab/[ ] switch shell  Esc back  q quit".to_string()
+            "j/k scroll  PgUp/PgDn  Home/End  Tab/[ ] switch shell  Esc back  q quit"
+                .to_string()
         }
         Screen::Doctor(_) => {
             "j/k move  PgUp/PgDn  Home/End  s sync  r rescan  Esc back  q quit".to_string()
@@ -1526,7 +1525,7 @@ mod tests {
     use crate::theme::Theme;
     use aliasmgr_core::{
         doctor::DoctorFinding,
-        model::{AliasRecord, PathMode, ShellState},
+        model::{AliasRecord, PathMode},
         service::AliasService,
         sync::SyncRun,
     };
@@ -1922,24 +1921,15 @@ mod tests {
     }
 
     #[test]
-    fn header_tracks_sync_needed_and_up_to_date_including_disabled_aliases() {
+    fn header_tracks_content_after_edit_disable_and_sync() {
         let (root, mut app) = test_app("sync-header");
         let alias = seed(&app, "gs", "git");
-        app.database
-            .upsert_shell_state(&ShellState {
-                shell: ShellKind::Bash,
-                applied_revision: alias.revision,
-                file_checksum: String::new(),
-                loader_installed: false,
-                status: ShellStatus::Ok,
-                last_error: None,
-            })
-            .unwrap();
+        aliasmgr_core::sync::sync_config_dir(&root).unwrap();
         app.reload();
         let rendered = render_string(&mut app, 120, 24);
         assert!(rendered.contains("sync: up to date"), "{rendered}");
 
-        // Saving advances the revision; the header must say sync is needed.
+        // Saving changes the expected content; the header must notice it.
         let mut edit = alias.clone();
         edit.description = "changed".into();
         AliasService::new(&app.database).update(edit).unwrap();
@@ -1956,21 +1946,74 @@ mod tests {
         let rendered = render_string(&mut app, 120, 24);
         assert!(rendered.contains("sync: needed"), "{rendered}");
 
-        // A matching shell_state clears it again.
-        let current = app.selected_alias_cloned().unwrap();
-        app.database
-            .upsert_shell_state(&ShellState {
-                shell: ShellKind::Bash,
-                applied_revision: current.revision + 10,
-                file_checksum: String::new(),
-                loader_installed: true,
-                status: ShellStatus::Ok,
-                last_error: None,
-            })
-            .unwrap();
+        aliasmgr_core::sync::sync_config_dir(&root).unwrap();
         app.reload();
         let rendered = render_string(&mut app, 120, 24);
         assert!(rendered.contains("sync: up to date"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn header_and_detail_agree_after_a_hand_edited_generated_file() {
+        let (root, mut app) = test_app("hand-edit-header");
+        seed(&app, "gs", "git");
+        aliasmgr_core::sync::sync_config_dir(&root).unwrap();
+        app.reload();
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("sync: up to date"), "{rendered}");
+
+        let path = root.join("generated/bash.sh");
+        let mut content = std::fs::read_to_string(&path).unwrap();
+        content.push_str("\n# hand edit\n");
+        std::fs::write(&path, content).unwrap();
+        app.reload();
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("sync: needed"), "{rendered}");
+        assert!(rendered.contains("checksum mismatch"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn header_and_detail_agree_when_a_delete_does_not_advance_the_revision() {
+        let (root, mut app) = test_app("revision-skew-header");
+        {
+            let service = AliasService::new(&app.database);
+            service
+                .create(AliasRecord {
+                    name: "a".into(),
+                    executable: "git".into(),
+                    shells: vec![ShellKind::Bash],
+                    ..Default::default()
+                })
+                .unwrap();
+            let mut b = service
+                .create(AliasRecord {
+                    name: "b".into(),
+                    executable: "git".into(),
+                    shells: vec![ShellKind::Bash],
+                    ..Default::default()
+                })
+                .unwrap();
+            for index in 0..4 {
+                b.description = format!("edit {index}");
+                b = service.update(b).unwrap();
+            }
+        }
+        aliasmgr_core::sync::sync_config_dir(&root).unwrap();
+        app.reload();
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("sync: up to date"), "{rendered}");
+
+        // The tombstone revision (2) is below b's revision (5), so the global
+        // derived revision stays 5 while the generated file still defines a.
+        AliasService::new(&app.database).delete("a").unwrap();
+        app.reload();
+        assert_eq!(app.snapshot.revision, 5);
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("sync: needed"), "{rendered}");
+        assert!(rendered.contains("needs sync"), "{rendered}");
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

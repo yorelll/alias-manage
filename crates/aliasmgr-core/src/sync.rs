@@ -403,6 +403,106 @@ pub fn current_revision(
         .max(1))
 }
 
+/// Whether a generated file currently matches what the database would render.
+///
+/// Revision counters alone are not sufficient: a checked update or a delete
+/// can leave the global derived revision unchanged while the expected content
+/// changes. This status is computed from the actual file, like Doctor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellContentState {
+    UpToDate,
+    Missing,
+    Unreadable,
+    RenderFailed,
+    Modified,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellContentStatus {
+    pub shell: ShellKind,
+    pub state: ShellContentState,
+    pub detail: Option<String>,
+}
+
+impl ShellContentStatus {
+    pub fn is_up_to_date(&self) -> bool {
+        self.state == ShellContentState::UpToDate
+    }
+}
+
+/// Renders the expected body for one shell and compares it with the on-disk
+/// file. The comparison covers both the embedded checksum marker and the body,
+/// so a hand edit is detected even when the revision metadata is unchanged.
+pub fn shell_content_status(
+    config_dir: &Path,
+    database: &crate::storage::Database,
+    aliases: &[AliasRecord],
+    shell: &ShellKind,
+    revision: i64,
+) -> Result<ShellContentStatus, AliasError> {
+    let path = AppPaths {
+        root: config_dir.to_path_buf(),
+    }
+    .generated_path(shell.as_str());
+    let status = |state, detail: Option<String>| ShellContentStatus {
+        shell: shell.clone(),
+        state,
+        detail,
+    };
+    if !path.exists() {
+        return Ok(status(
+            ShellContentState::Missing,
+            Some(path.display().to_string()),
+        ));
+    }
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) => {
+            return Ok(status(
+                ShellContentState::Unreadable,
+                Some(error.to_string()),
+            ))
+        }
+    };
+    let names = database.managed_name_set(shell)?;
+    let shell_aliases = aliases
+        .iter()
+        .filter(|alias| alias.shells.contains(shell))
+        .cloned()
+        .collect::<Vec<_>>();
+    let body = match SyncCoordinator::new(config_dir).render_shell(
+        &shell_aliases,
+        shell,
+        revision,
+        &names,
+    ) {
+        Ok(body) => body,
+        Err(error) => {
+            return Ok(status(
+                ShellContentState::RenderFailed,
+                Some(error.to_string()),
+            ))
+        }
+    };
+    let expected = content_checksum(&body);
+    let embedded = content
+        .lines()
+        .find_map(|line| line.strip_prefix("# file_checksum: "));
+    let marker_ok = embedded == Some(expected.as_str());
+    let body_ok = verify_file_checksum(&content, &expected);
+    if marker_ok && body_ok {
+        Ok(status(ShellContentState::UpToDate, None))
+    } else {
+        Ok(status(
+            ShellContentState::Modified,
+            Some(format!(
+                "expected checksum {expected}; marker {}",
+                embedded.unwrap_or("<missing>")
+            )),
+        ))
+    }
+}
+
 /// Per-shell result of a full sync, including the path that was written,
 /// whether the shell's loader block is actually installed, and a stable error
 /// code for front ends that translate messages.
@@ -1745,6 +1845,68 @@ mod tests {
         fs::remove_file(&path).unwrap();
         fs::create_dir(&path).unwrap();
         assert!(journal_needs_recovery(&path).is_err());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shell_content_status_detects_a_delete_that_does_not_advance_the_global_revision() {
+        use crate::service::AliasService;
+        let root = sync_root("revision-skew");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        let service = AliasService::new(&database);
+        service
+            .create(AliasRecord {
+                name: "a".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        let mut b = service
+            .create(AliasRecord {
+                name: "b".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        // Make b revision 5 so the tombstone for a (revision 2) cannot advance
+        // the global derived revision after the delete.
+        for index in 0..4 {
+            b.description = format!("edit {index}");
+            b = service.update(b).unwrap();
+        }
+        assert_eq!(b.revision, 5);
+        sync_config_dir(&root).unwrap();
+
+        let aliases = database.list_aliases().unwrap();
+        let revision = current_revision(&database, &aliases).unwrap();
+        assert_eq!(revision, 5);
+        let before =
+            shell_content_status(&root, &database, &aliases, &ShellKind::Bash, revision).unwrap();
+        assert!(before.is_up_to_date(), "fresh sync must match");
+
+        service.delete("a").unwrap();
+        let aliases = database.list_aliases().unwrap();
+        let revision = current_revision(&database, &aliases).unwrap();
+        assert_eq!(
+            revision, 5,
+            "the delete tombstone must not advance max(rev)"
+        );
+        let after =
+            shell_content_status(&root, &database, &aliases, &ShellKind::Bash, revision).unwrap();
+        assert_eq!(after.state, ShellContentState::Modified);
+        assert!(!after.is_up_to_date());
+        assert!(after
+            .detail
+            .as_deref()
+            .unwrap_or_default()
+            .contains("expected checksum"));
+        let generated = fs::read_to_string(root.join("generated/bash.sh")).unwrap();
+        assert!(
+            generated.contains("a() {"),
+            "old definition is still present"
+        );
         let _ = fs::remove_dir_all(root);
     }
 }

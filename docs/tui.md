@@ -144,8 +144,13 @@ core `validate_alias`; the TUI does not keep a second rule set.
 The detail pane separates four independent facts:
 
 1. **DB** – the record was saved and its revision.
-2. **Generated** – the shell's generated file reflects that revision, is
-   stale, failed, or has not been synced.
+2. **Generated** – the shell's file is compared with a freshly rendered
+   expected body and its embedded checksum, not just with revision counters.
+   It reports up to date, stale content/checksum mismatch, missing, unreadable,
+   render failure, last-sync failure, or not synced yet. The header uses the
+   same per-shell verdict, so it always agrees with the detail pane; a checked
+   edit or delete that does not advance the global derived revision is still
+   detected.
 3. **Loader** – the marked loader block is installed in the Shell profile
    (including shared-profile and unsupported-platform cases).
 4. **Current shell** – always "unknown". The TUI cannot inspect or reload the
