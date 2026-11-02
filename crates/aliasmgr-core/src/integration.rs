@@ -108,24 +108,58 @@ pub fn loader_target(
 }
 
 /// Every loader target that can be resolved on this platform, in stable shell
-/// order, deduplicated by profile path. Unsupported shells (PowerShell 5.1
-/// outside Windows) are skipped. Used by both uninstall paths so a loader
-/// installed at a platform default is still found.
+/// order. For each shell this includes the configured path *and* the built-in
+/// fallback (config-root RC for Bash/Zsh, platform default for PowerShell), so
+/// uninstall removes a loader written before an override was configured.
+/// Duplicate profile paths are visited once.
 pub fn all_loader_targets(config: &AppConfig, paths: &AppPaths) -> Vec<(String, LoaderTarget)> {
     let mut targets: Vec<(String, LoaderTarget)> = Vec::new();
     for shell in ["bash", "zsh", "powershell5", "powershell7"] {
-        let Ok(target) = loader_target(config, paths, shell) else {
-            continue;
-        };
-        if targets
-            .iter()
-            .any(|(_, existing)| existing.path == target.path)
-        {
-            continue;
+        for target in loader_candidates(config, paths, shell) {
+            if targets
+                .iter()
+                .any(|(_, existing)| existing.path == target.path)
+            {
+                continue;
+            }
+            targets.push((shell.to_string(), target));
         }
-        targets.push((shell.to_string(), target));
     }
     targets
+}
+
+/// All profile paths a shell may have written to: the configured override when
+/// present plus the built-in fallback. Unsupported shells yield an empty list.
+pub fn loader_candidates(config: &AppConfig, paths: &AppPaths, shell: &str) -> Vec<LoaderTarget> {
+    let name = shell.to_ascii_lowercase();
+    let mut candidates: Vec<LoaderTarget> = Vec::new();
+    let mut push = |path: Option<PathBuf>, powershell: bool| {
+        if let Some(path) = path {
+            if !candidates.iter().any(|target| target.path == path) {
+                candidates.push(LoaderTarget { path, powershell });
+            }
+        }
+    };
+    match name.as_str() {
+        "bash" => {
+            push(config.shells.bash_rc_path.clone(), false);
+            push(Some(paths.root.join(".bashrc")), false);
+        }
+        "zsh" => {
+            push(config.shells.zsh_rc_path.clone(), false);
+            push(Some(paths.root.join(".zshrc")), false);
+        }
+        "powershell5" => {
+            push(config.shells.powershell5_profile_path.clone(), true);
+            push(default_powershell_profile_path("powershell5"), true);
+        }
+        "powershell7" => {
+            push(config.shells.powershell7_profile_path.clone(), true);
+            push(default_powershell_profile_path("powershell7"), true);
+        }
+        _ => {}
+    }
+    candidates
 }
 
 fn render_loader(generated: &Path, powershell: bool) -> String {
@@ -136,11 +170,24 @@ fn render_loader(generated: &Path, powershell: bool) -> String {
     }
 }
 
+/// Expected managed block for `shell` at its primary target. Used by Doctor to
+/// validate the block without guessing at path syntax.
+pub fn expected_loader(
+    paths: &AppPaths,
+    shell: &str,
+) -> Result<(LoaderTarget, String), AliasError> {
+    let config = paths.load_config()?;
+    let name = shell.to_ascii_lowercase();
+    let target = loader_target(&config, paths, &name)?;
+    let loader = render_loader(&paths.generated_path(&name), target.powershell);
+    Ok((target, loader))
+}
+
 /// Reads a profile, treating a missing file as an empty profile. Other read
 /// errors (permissions, a directory at the path, invalid UTF-8) propagate so
 /// callers can report a distinct `loader_unreadable` condition instead of
 /// silently claiming "not installed".
-fn profile_content(path: &Path) -> Result<String, AliasError> {
+pub(crate) fn profile_content(path: &Path) -> Result<String, AliasError> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(content),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
@@ -149,11 +196,14 @@ fn profile_content(path: &Path) -> Result<String, AliasError> {
 }
 
 /// Extracts the managed block, including both markers. `loader_position`
-/// validates that the markers are paired before this is called.
+/// validates that the markers are paired and ordered before this is called.
 fn managed_block(content: &str) -> Option<&str> {
     let start = content.find(common::START_MARKER)?;
-    let end = content.find(common::END_MARKER)? + common::END_MARKER.len();
-    Some(&content[start..end])
+    let end = content.find(common::END_MARKER)?;
+    if end <= start || content.matches(common::START_MARKER).count() != 1 {
+        return None;
+    }
+    Some(&content[start..end + common::END_MARKER.len()])
 }
 
 fn normalized_block(value: &str) -> String {
@@ -163,7 +213,7 @@ fn normalized_block(value: &str) -> String {
 /// True when the profile contains exactly the expected managed block. This is
 /// stricter than "a marker exists": a loader pointing at a different config
 /// root must be reported as missing and repaired by `install_loader`.
-fn block_matches(content: &str, loader: &str) -> bool {
+pub(crate) fn block_matches(content: &str, loader: &str) -> bool {
     managed_block(content)
         .map(|block| normalized_block(block) == normalized_block(loader))
         .unwrap_or(false)
@@ -214,8 +264,10 @@ pub fn install_loader(paths: &AppPaths, shell: &str) -> Result<LoaderOutcome, Al
         });
     }
 
-    // Remove any stale/mismatched/relocated block first, then append the
-    // expected one at the end. Unpaired markers fail here as UnsafePath.
+    // Re-read immediately before writing so an edit made after the first read
+    // is not overwritten with a stale snapshot. A small window remains between
+    // this read and the write; see docs/limitations.md.
+    let before = profile_content(&target.path)?;
     let cleaned = common::remove_loader(&before)?;
     let after = common::install_loader(&cleaned, &loader)?;
     let changed = after != before;
@@ -224,6 +276,11 @@ pub fn install_loader(paths: &AppPaths, shell: &str) -> Result<LoaderOutcome, Al
     }
     let installed = common::loader_position(&after)? == common::LoaderPosition::AtEnd
         && block_matches(&after, &loader);
+    if !installed {
+        // Never report success for a profile we could not bring to the
+        // expected state (for example after a marker-order ambiguity).
+        return Err(AliasError::UnsafePath);
+    }
     Ok(LoaderOutcome {
         shell: name,
         target: target.path,
@@ -512,6 +569,75 @@ mod tests {
         assert!(content.starts_with("user before\nuser after\n"));
         assert!(content.trim_end().ends_with(common::END_MARKER));
         assert_eq!(content.matches(common::START_MARKER).count(), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn inverted_marker_pairs_abort_without_rewriting_user_content() {
+        let (root, profile) = configured_paths("inverted", "bash");
+        let paths = AppPaths { root: root.clone() };
+        let malformed = format!(
+            "before\n{}\nuser middle\n{}\nafter\n",
+            common::END_MARKER,
+            common::START_MARKER
+        );
+        fs::write(&profile, &malformed).unwrap();
+
+        assert!(matches!(
+            install_loader(&paths, "bash"),
+            Err(AliasError::UnsafePath)
+        ));
+        assert!(matches!(
+            uninstall_loader(&paths, "bash"),
+            Err(AliasError::UnsafePath)
+        ));
+        assert_eq!(
+            fs::read_to_string(&profile).unwrap(),
+            malformed,
+            "a malformed profile must never be rewritten"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn two_loader_blocks_abort_instead_of_removing_only_one() {
+        let (root, profile) = configured_paths("two-blocks", "bash");
+        let paths = AppPaths { root: root.clone() };
+        let loader = common::render_loader(&paths.generated_path("bash"));
+        let malformed = format!("user\n{loader}{loader}");
+        fs::write(&profile, &malformed).unwrap();
+
+        assert!(matches!(
+            install_loader(&paths, "bash"),
+            Err(AliasError::UnsafePath)
+        ));
+        assert!(matches!(
+            uninstall_loader(&paths, "bash"),
+            Err(AliasError::UnsafePath)
+        ));
+        assert_eq!(fs::read_to_string(&profile).unwrap(), malformed);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn all_loader_targets_includes_configured_and_fallback_paths() {
+        let root = temp_root("override-fallback");
+        let paths = AppPaths { root: root.clone() };
+        let configured = root.join("custom.bashrc");
+        let mut config = AppConfig::default();
+        config.shells.bash_rc_path = Some(configured.clone());
+        config.save(&paths).unwrap();
+
+        let targets = all_loader_targets(&config, &paths);
+        let paths_only: Vec<_> = targets
+            .iter()
+            .map(|(_, target)| target.path.clone())
+            .collect();
+        assert!(paths_only.contains(&configured));
+        assert!(
+            paths_only.contains(&root.join(".bashrc")),
+            "the config-root fallback must still be cleaned: {paths_only:?}"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

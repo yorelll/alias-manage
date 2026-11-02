@@ -144,7 +144,7 @@ names survive. PowerShell doubles embedded single quotes; POSIX shells use
 
 `uninstall [--purge-aliases] [--yes]`
 
-1. Loader cleanup runs first. The command removes marked loader blocks from the configured Bash/Zsh RC and PowerShell profile paths, plus `<config-root>/.bashrc` and `<config-root>/.zshrc` when those files exist. A profile is rewritten only when a block was removed, with a backup and the configured RC retention limit. A malformed or unpaired marker aborts before any destructive step.
+1. Loader cleanup runs first. For every shell it visits every candidate profile: the configured path (when set) and the built-in fallback (`<config-root>/.bashrc` / `.zshrc` for Bash/Zsh, the platform-default PowerShell profile). This also removes a fallback block written before an override was configured. A profile is rewritten only when a block was removed, with a backup and the configured RC retention limit. A malformed, unpaired, duplicated, or out-of-order marker aborts before any destructive step.
 2. Retain mode (default) keeps `generated/` and `aliases.db`. Generated files are self-contained and do not require the `aliasmgr` program at Shell startup.
 3. Purge mode (`--purge-aliases`) removes the managed generated files (`generated/bash.sh`, `generated/zsh.sh`, `generated/powershell5.ps1`, `generated/powershell7.ps1`), `aliases.db`, and `operation.journal`. It never deletes a target file referenced by an alias. Directories and backups are left in place.
 4. Purge without `--yes` in a non-interactive process fails with `ConfirmationRequired` (exit 14). Retain mode does not require confirmation.

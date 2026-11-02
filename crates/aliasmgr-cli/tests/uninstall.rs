@@ -180,6 +180,50 @@ fn cli_uninstall_removes_a_loader_installed_at_the_default_powershell_profile() 
 }
 
 #[test]
+fn cli_uninstall_removes_configured_and_root_fallback_bash_loaders() {
+    let _env = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _home = HomeGuard::new("override-fallback");
+    let root = std::env::temp_dir().join(format!(
+        "aliasmgr-cli-uninstall-override-{}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(root.join("generated")).unwrap();
+    let configured = root.join("custom.bashrc");
+    std::fs::write(&configured, "configured user\n").unwrap();
+    let fallback = root.join(".bashrc");
+    std::fs::write(&fallback, "fallback user\n").unwrap();
+    let loader = aliasmgr_core::shells::common::render_loader(&root.join("generated/bash.sh"));
+    for path in [&configured, &fallback] {
+        let content = aliasmgr_core::shells::common::install_loader(
+            &std::fs::read_to_string(path).unwrap(),
+            &loader,
+        )
+        .unwrap();
+        std::fs::write(path, content).unwrap();
+    }
+    let mut config = AppConfig::default();
+    config.shells.bash_rc_path = Some(configured.clone());
+    config.save(&AppPaths { root: root.clone() }).unwrap();
+
+    commands::uninstall(Some(&root.to_string_lossy()), false).unwrap();
+    for (path, expected) in [
+        (&configured, "configured user\n"),
+        (&fallback, "fallback user\n"),
+    ] {
+        let content = std::fs::read_to_string(path).unwrap();
+        assert!(
+            !content.contains(START_MARKER) && !content.contains(END_MARKER),
+            "loader survived in {}: {content}",
+            path.display()
+        );
+        assert!(content.contains(expected.trim()));
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn uninstall_purges_even_when_config_is_unparsable() {
     let _env = ENV_LOCK
         .lock()

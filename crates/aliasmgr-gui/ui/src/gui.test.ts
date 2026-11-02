@@ -925,6 +925,41 @@ test("target type copy explains metadata semantics and warns without rewriting",
     null,
     "interpreter path plus script must warn",
   );
+  assert.notEqual(
+    targetExecutableWarning({ ...nativeDraft, executable: "python /srv/app/run.py" }, "en"),
+    null,
+    "a bare program plus a path argument must warn",
+  );
+  assert.notEqual(
+    targetExecutableWarning({ ...nativeDraft, executable: "tool.exe C:\\input.txt" }, "en"),
+    null,
+    "a bare program plus a file argument must warn",
+  );
+  assert.notEqual(
+    targetExecutableWarning(
+      { ...nativeDraft, target_type: "python_script", executable: "bash /path/deploy.sh" },
+      "en",
+    ),
+    null,
+    "a bare interpreter plus a script path must warn for script types too",
+  );
+  assert.equal(
+    targetExecutableWarning(
+      {
+        ...nativeDraft,
+        target_type: "python_script",
+        executable: "C:\\Program Files\\Python311\\python.exe",
+      },
+      "en",
+    ),
+    null,
+    "a script-type path with spaces is not a command line",
+  );
+  assert.notEqual(
+    targetExecutableWarning({ ...nativeDraft, executable: "  python test.py  " }, "en"),
+    null,
+    "surrounding whitespace must not hide a command line",
+  );
   assert.equal(
     targetExecutableWarning(
       { ...nativeDraft, target_type: "change_directory", executable: "/tmp/my projects" },
@@ -965,6 +1000,30 @@ test("target type copy explains metadata semantics and warns without rewriting",
     ),
     ["C:\\Program Files\\Tool\\tool.exe --flag", "<args>"],
     "the whole executable string is one argv element",
+  );
+  // Blank fixed-argument rows are dropped by finalizeAliasDraft.
+  assert.deepEqual(
+    aliasArgvPreview({ ...previewDraft, fixed_args: ["test.py", "   ", ""] }, "<args>"),
+    ["python", "test.py", "<args>"],
+  );
+  // An empty target does not pretend to be a program plus arguments.
+  assert.deepEqual(
+    aliasArgvPreview({ ...emptyAliasDraft(), executable: "", fixed_args: [] }, "<args>"),
+    [],
+  );
+  // change_directory changes directory instead of executing the target.
+  assert.deepEqual(
+    aliasArgvPreview(
+      {
+        ...emptyAliasDraft(),
+        target_type: "change_directory",
+        executable: "/srv/project",
+        working_directory: "/srv/other",
+        fixed_args: ["ignored"],
+      },
+      "<args>",
+    ),
+    ["cd", "/srv/other"],
   );
 });
 
@@ -1024,6 +1083,9 @@ test("sync and doctor panels expose actionable, disabled-while-busy controls", a
     "doctor.syncResult",
     "doctor.syncFailedResult",
     "doctor.installResult",
+    "doctor.installAlreadyPresent",
+    "doctor.installIncomplete",
+    "outcome?.installed !== true",
     "doctor.actionFailed",
     "loaderErrorMessage",
     "syncErrorMessage",

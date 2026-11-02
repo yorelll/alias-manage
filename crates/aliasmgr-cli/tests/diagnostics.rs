@@ -169,6 +169,65 @@ fn shell_install_through_a_symlinked_rc_updates_the_target_and_preserves_the_lin
 }
 
 #[test]
+fn doctor_probes_installed_and_uninstalled_loaders_and_only_referenced_shells() {
+    use aliasmgr_core::model::{AliasRecord, ShellKind};
+
+    let root = temp_root("doctor-loader-freshness");
+    let rc = root.join("bashrc");
+    std::fs::create_dir_all(&root).unwrap();
+    let mut config = aliasmgr_core::config::AppConfig::default();
+    config.shells.bash_rc_path = Some(rc.clone());
+    config
+        .save(&aliasmgr_core::config::AppPaths { root: root.clone() })
+        .unwrap();
+    let database = aliasmgr_core::storage::Database::open(root.join("aliases.db")).unwrap();
+    database
+        .insert_alias(&AliasRecord {
+            name: "gs".into(),
+            executable: "git".into(),
+            shells: vec![ShellKind::Bash],
+            ..Default::default()
+        })
+        .unwrap();
+    drop(database);
+    let config_dir = root.to_string_lossy().to_string();
+    commands::sync(Some(&config_dir), false).unwrap();
+
+    let findings = commands::doctor(Some(&config_dir)).unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("加载块未安装")),
+        "a synced shell without a loader must be reported: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.contains("Zsh") && !finding.contains("PowerShell")),
+        "only referenced shells may be reported: {findings:?}"
+    );
+
+    commands::shell_install(Some(&config_dir), "bash").unwrap();
+    let findings = commands::doctor(Some(&config_dir)).unwrap();
+    assert!(
+        findings
+            .iter()
+            .all(|finding| !finding.contains("加载块未安装")),
+        "an installed loader must clear the finding: {findings:?}"
+    );
+
+    commands::shell_uninstall(Some(&config_dir), "bash").unwrap();
+    let findings = commands::doctor(Some(&config_dir)).unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.contains("加载块未安装")),
+        "an uninstalled loader must be reported again: {findings:?}"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn doctor_reports_manual_generated_file_edits() {
     use aliasmgr_core::model::{AliasRecord, ShellKind};
 

@@ -561,65 +561,34 @@ pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError
     Ok(())
 }
 
-/// Detects manual edits to a generated file by recomputing its embedded
-/// `# file_checksum:` value. A missing checksum line is also treated as tampering.
-fn generated_checksum_finding(shell: &ShellKind, path: &Path) -> Option<String> {
-    // Lossy decoding keeps invalid UTF-8 edits detectable instead of skipping them.
-    let content = String::from_utf8_lossy(&std::fs::read(path).ok()?).into_owned();
-    let expected = content.lines().find_map(|line| {
-        line.trim_start_matches('\u{feff}')
-            .strip_prefix("# file_checksum: ")
-            .map(str::trim)
-    });
-    match expected {
-        Some(expected) if aliasmgr_core::sync::verify_file_checksum(&content, expected) => None,
-        _ => Some(format!("生成文件校验和不匹配（可能被手工修改）: {shell:?}")),
-    }
-}
-
 pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
     let database_path_exists = paths.root.join("aliases.db").exists();
-    let mut findings = Vec::new();
-    if !database_path_exists {
-        findings.push("数据库文件缺失".into());
-    }
     let database = database(config_dir)?;
-    for shell in [
-        ShellKind::Bash,
-        ShellKind::Zsh,
-        ShellKind::PowerShell5,
-        ShellKind::PowerShell7,
-    ] {
-        let generated = paths.generated_path(shell_cli_name(&shell));
-        if !generated.exists() {
-            findings.push(format!("生成文件缺失: {shell:?}"));
-        } else if let Some(finding) = generated_checksum_finding(&shell, &generated) {
-            findings.push(finding);
-        }
-    }
-    let revision = database
-        .list_aliases()?
-        .iter()
-        .map(|alias| alias.revision)
-        .max()
-        .unwrap_or(0)
-        .max(database.max_retired_revision()?);
-    for state in database.shell_states()? {
-        if state.applied_revision < revision {
-            findings.push(format!("Shell {:?} 生成文件过期", state.shell));
-        }
-        if let Some(error) = state.last_error {
-            findings.push(format!("Shell {:?} 同步失败: {error}", state.shell));
-        }
-        if !state.loader_installed {
-            findings.push(format!("Shell {:?} 加载块未安装", state.shell));
-        }
-    }
-    if let Some(error) = database.reliability_error() {
-        findings.push(error.to_string());
-    }
-    Ok(findings)
+    let aliases = database.list_aliases()?;
+    // Shared with the GUI: probes real loader blocks, uses the same target
+    // shells and revision floor as sync, and distinguishes profile errors.
+    let findings =
+        aliasmgr_core::doctor::diagnose(&paths.root, database_path_exists, &database, &aliases)?;
+    Ok(findings
+        .into_iter()
+        .map(|finding| match finding.detail {
+            Some(detail)
+                if matches!(
+                    finding.code,
+                    "sync_failed"
+                        | "config_invalid"
+                        | "loader_unsafe"
+                        | "loader_permission"
+                        | "loader_io"
+                        | "loader_unreadable"
+                ) =>
+            {
+                format!("{}: {detail}", finding.message)
+            }
+            _ => finding.message,
+        })
+        .collect())
 }
 
 #[cfg(test)]

@@ -9,12 +9,11 @@ use aliasmgr_core::{
     service::AliasService,
     shells::{bash, powershell, zsh},
     storage::Database,
-    sync::{content_checksum, verify_file_checksum, SyncCoordinator},
     transfer::{self, ConflictStrategy, ImportReport},
     validation::validate_alias,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 /// Serializable status returned to the frontend on startup.
@@ -435,239 +434,34 @@ pub struct SettingsDto {
     pub language: String,
 }
 
+
+/// Tauri command: return read-only diagnostics from the shared core helper.
+///
+/// Target shells, the revision floor, generated-file checks, and loader probes
+/// all live in `aliasmgr_core::doctor`, so the CLI and GUI cannot disagree.
 #[tauri::command]
 pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
-    const KNOWN_SHELLS: [&str; 4] = ["bash", "zsh", "powershell5", "powershell7"];
-
     let paths = AppPaths::discover(None);
-    let mut findings = Vec::new();
-    // Check existence before opening: `Database::open` would create the file.
-    if !paths.root.join("aliases.db").exists() {
-        findings.push(DoctorFindingDto {
-            shell: None,
-            severity: "error".into(),
-            code: "database_missing".into(),
-            message: "数据库文件缺失".into(),
-            action: Some("创建或选择配置目录".into()),
-            detail: None,
-        });
-    }
+    // Capture existence before opening: `Database::open` creates the file.
+    let database_path_exists = paths.root.join("aliases.db").exists();
     let database = database()?;
     let aliases = database.list_aliases().map_err(|error| error.to_string())?;
-    // Share target-shell selection and the revision floor with sync: the old
-    // local copy used `.unwrap_or(0)` and could expect revision 0 while sync
-    // writes revision 1, producing a permanent unfixable stale finding.
-    let referenced_kinds = aliasmgr_core::sync::referenced_shells(&database, &aliases)
-        .map_err(|error| error.to_string())?;
-    let current_revision = aliasmgr_core::sync::current_revision(&database, &aliases)
-        .map_err(|error| error.to_string())?;
-    let mut referenced_shells: BTreeSet<String> = referenced_kinds
-        .iter()
-        .map(|kind| shell_kind_to_str(kind).to_owned())
-        .collect();
-
-    let mut managed_names = BTreeMap::new();
-    for name in KNOWN_SHELLS {
-        let Ok(kind) = shell_from_str(name) else {
-            continue;
-        };
-        let names = database
-            .managed_name_set(&kind)
+    let findings =
+        aliasmgr_core::doctor::diagnose(&paths.root, database_path_exists, &database, &aliases)
             .map_err(|error| error.to_string())?;
-        if !names.retired.is_empty() {
-            referenced_shells.insert(name.to_owned());
-        }
-        managed_names.insert(name.to_owned(), names);
-    }
-
-    let coordinator = SyncCoordinator::new(&paths.root);
-    let mut stale_details: BTreeMap<String, String> = BTreeMap::new();
-    for name in KNOWN_SHELLS {
-        if !referenced_shells.contains(name) {
-            continue;
-        }
-        let path = paths.generated_path(name);
-        if !path.exists() {
-            findings.push(DoctorFindingDto {
-                shell: Some(name.into()),
-                severity: "warning".into(),
-                code: "generated_missing".into(),
-                message: format!("生成文件缺失: {name}"),
-                action: Some("执行同步".into()),
-                detail: None,
-            });
-            continue;
-        }
-        let content = match std::fs::read(&path) {
-            Ok(bytes) => match String::from_utf8(bytes) {
-                Ok(content) => content,
-                Err(error) => {
-                    findings.push(DoctorFindingDto {
-                        shell: Some(name.into()),
-                        severity: "warning".into(),
-                        code: "generated_unreadable".into(),
-                        message: format!("生成文件编码无效: {name}"),
-                        action: Some("重新同步以修复生成文件".into()),
-                        detail: Some(error.to_string()),
-                    });
-                    continue;
-                }
-            },
-            Err(error) => {
-                findings.push(DoctorFindingDto {
-                    shell: Some(name.into()),
-                    severity: "warning".into(),
-                    code: "generated_unreadable".into(),
-                    message: format!("生成文件无法读取: {name}"),
-                    action: Some("重新同步以修复生成文件".into()),
-                    detail: Some(error.to_string()),
-                });
-                continue;
-            }
-        };
-        // Generated files carry the checksum of their own body; a mismatch
-        // means the file was edited outside Alias Manager.
-        let expected = content
-            .lines()
-            .find_map(|line| line.strip_prefix("# file_checksum: "));
-        let actual = content_checksum(&content);
-        let mut modified = false;
-        match expected {
-            Some(expected) if verify_file_checksum(&content, expected) => {}
-            Some(expected) => {
-                modified = true;
-                findings.push(DoctorFindingDto {
-                    shell: Some(name.into()),
-                    severity: "warning".into(),
-                    code: "generated_modified".into(),
-                    message: format!("生成文件已被手动修改: {name}"),
-                    action: Some("重新同步以覆盖手动修改".into()),
-                    detail: Some(format!("expected {expected}, actual {actual}")),
-                });
-            }
-            None => {
-                modified = true;
-                findings.push(DoctorFindingDto {
-                    shell: Some(name.into()),
-                    severity: "warning".into(),
-                    code: "generated_modified".into(),
-                    message: format!("生成文件缺少校验和标记: {name}"),
-                    action: Some("重新同步以修复生成文件".into()),
-                    detail: Some(format!("expected <missing>, actual {actual}")),
-                });
-            }
-        }
-        if modified {
-            continue;
-        }
-        // A checksum line can be self-consistent while the body is stale. The
-        // fresh render (no writes) tells us what the current DB should produce.
-        let Ok(kind) = shell_from_str(name) else {
-            continue;
-        };
-        let Some(names) = managed_names.get(name) else {
-            continue;
-        };
-        // Sync renders one shell at a time: aliases that do not target this
-        // shell must be excluded, or a healthy multi-shell install looks stale.
-        let shell_aliases: Vec<AliasRecord> = aliases
-            .iter()
-            .filter(|alias| alias.shells.contains(&kind))
-            .cloned()
-            .collect();
-        match coordinator.render_shell(&shell_aliases, &kind, current_revision, names) {
-            Ok(body) => {
-                let expected_checksum = content_checksum(&body);
-                if expected_checksum != actual {
-                    stale_details.insert(
-                        name.to_owned(),
-                        format!("expected checksum {expected_checksum}, actual {actual}"),
-                    );
-                }
-            }
-            Err(error) => findings.push(DoctorFindingDto {
-                shell: Some(name.into()),
-                severity: "warning".into(),
-                code: "render_failed".into(),
-                message: format!("无法渲染预期内容: {name}"),
-                action: Some("检查别名目标后重新同步".into()),
-                detail: Some(error.to_string()),
-            }),
-        }
-    }
-
-    let mut loader_check = referenced_shells.clone();
-    for state in database.shell_states().map_err(|error| error.to_string())? {
-        let shell = shell_kind_to_str(&state.shell).to_owned();
-        loader_check.insert(shell.clone());
-        if let Some(error) = &state.last_error {
-            findings.push(DoctorFindingDto {
-                shell: Some(shell.clone()),
-                severity: "error".into(),
-                code: "sync_failed".into(),
-                message: format!("同步失败: {shell}"),
-                action: Some("查看错误详情后重新同步".into()),
-                detail: Some(error.clone()),
-            });
-        }
-        if state.applied_revision < current_revision {
-            stale_details.entry(shell).or_insert_with(|| {
-                format!(
-                    "applied revision {}, expected {current_revision}",
-                    state.applied_revision
-                )
-            });
-        }
-    }
-
-    // Probe the real profile instead of trusting the persisted flag: a loader
-    // may point at another config root, sit before user content, or be absent
-    // even though an older sync recorded `loader_installed = true`.
-    for name in loader_check {
-        match aliasmgr_core::integration::loader_status(&paths, &name) {
-            Ok(outcome) if !outcome.installed => findings.push(DoctorFindingDto {
-                shell: Some(name.clone()),
-                severity: "warning".into(),
-                code: "loader_missing".into(),
-                message: format!("加载器未安装: {name}"),
-                action: Some("重新安装 Shell 集成".into()),
-                detail: Some(format!("profile: {}", outcome.target.display())),
-            }),
-            Ok(_) => {}
-            // PowerShell 5.1 has no default profile outside Windows; there is
-            // nothing an install button could repair, so do not nag.
-            Err(aliasmgr_core::error::AliasError::ShellNotInstalled) => {}
-            Err(error) => findings.push(DoctorFindingDto {
-                shell: Some(name.clone()),
-                severity: "warning".into(),
-                code: "loader_unreadable".into(),
-                message: format!("无法读取 Shell 配置: {name}"),
-                action: Some("检查 Shell 配置文件权限与标记后重试".into()),
-                detail: Some(error.to_string()),
-            }),
-        }
-    }
-    for (shell, detail) in stale_details {
-        findings.push(DoctorFindingDto {
-            shell: Some(shell.clone()),
-            severity: "warning".into(),
-            code: "stale".into(),
-            message: format!("生成文件落后于数据库: {shell}"),
-            action: Some("执行同步".into()),
-            detail: Some(detail),
-        });
-    }
-    if let Some(error) = database.reliability_error() {
-        findings.push(DoctorFindingDto {
-            shell: None,
-            severity: "warning".into(),
-            code: "unreliable_filesystem".into(),
-            message: error.to_string(),
-            action: Some("改用本地配置目录".into()),
-            detail: None,
-        });
-    }
-    Ok(findings)
+    Ok(findings
+        .into_iter()
+        .map(|finding| DoctorFindingDto {
+            shell: finding
+                .shell
+                .map(|shell| shell_kind_to_str(&shell).to_owned()),
+            severity: finding.severity.to_owned(),
+            code: finding.code.to_owned(),
+            message: finding.message,
+            action: finding.action,
+            detail: finding.detail,
+        })
+        .collect())
 }
 
 /// Stable error code for a generated-file read failure. The UI maps these to
@@ -1137,6 +931,7 @@ pub fn scan_overrides() -> Result<Vec<serde_json::Value>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aliasmgr_core::sync::content_checksum;
 
     /// Serializes tests that mutate the process-wide `ALIASMGR_CONFIG_DIR`.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -1660,22 +1455,14 @@ mod tests {
                 ..Default::default()
             },
         ];
-        let coordinator = SyncCoordinator::new(&config.root);
-        for shell in [
-            ShellKind::Bash,
-            ShellKind::Zsh,
-            ShellKind::PowerShell5,
-            ShellKind::PowerShell7,
-        ] {
-            let shell_aliases: Vec<AliasRecord> = aliases
-                .iter()
-                .filter(|alias| alias.shells.contains(&shell))
-                .cloned()
-                .collect();
-            coordinator
-                .apply(&shell_aliases, std::slice::from_ref(&shell), 2)
-                .unwrap();
+        // Persist the aliases, then sync through the shared core path so target
+        // shells, ordering, and the revision match what Doctor renders.
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        for alias in &aliases {
+            database.insert_alias(alias).unwrap();
         }
+        drop(database);
+        aliasmgr_core::sync::sync_config_dir(&config.root).unwrap();
 
         let findings = doctor_status().unwrap();
         assert!(
@@ -1789,7 +1576,10 @@ mod tests {
         let finding = findings
             .iter()
             .find(|finding| {
-                finding.code == "loader_unreadable" && finding.shell.as_deref() == Some("bash")
+                matches!(
+                    finding.code.as_str(),
+                    "loader_unreadable" | "loader_io" | "loader_permission"
+                ) && finding.shell.as_deref() == Some("bash")
             })
             .unwrap_or_else(|| panic!("unreadable profile must be reported: {findings:?}"));
         assert_eq!(finding.severity, "warning");

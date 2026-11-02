@@ -209,33 +209,39 @@ export function targetTypeExplanation(language: Language = DEFAULT_LANGUAGE): st
   return t(language, "wizard.targetTypeHint");
 }
 
+/** True when the value contains a Windows or POSIX path separator. */
 function looksLikePath(executable: string): boolean {
   return /[\\/]/.test(executable);
 }
 
 /**
  * Warn when a target contains whitespace that probably belongs in fixed
- * arguments. This is advisory only: the draft is never rewritten, so existing
- * records that intentionally use spaces keep working.
+ * arguments. This is advisory only: the draft is never rewritten.
  *
- * A native path with spaces is accepted unless it also carries a flag-like
- * argument tail (`C:\Program Files\Tool\tool.exe --flag` is one argv[0] to the
- * core executor, not a path plus arguments). `change_directory` targets are
- * paths, not command lines, so they never warn.
+ * A bare first token (no path separator) with any trailing tokens is a command
+ * line: `python /srv/run.py`, `bash deploy.sh`, and `tool.exe C:\in.txt` all
+ * warn even when the later tokens look like paths. A real path with spaces
+ * (`C:\Program Files\Tool\tool.exe`) is accepted unless it also carries a
+ * flag-like tail. Script-type paths with spaces are accepted; a single path is
+ * not a command line. `change_directory` targets are paths, not command lines.
  */
 export function targetExecutableWarning(draft: AliasDto, language: Language = DEFAULT_LANGUAGE): string | null {
   const executable = draft.executable.trim();
   if (!/\s/.test(executable)) return null;
   if (draft.target_type === "batch" || draft.target_type === "change_directory") return null;
+  const parts = executable.split(/\s+/);
+  const rest = parts.slice(1);
+  const hasFlagTail = rest.some((token) => token.startsWith("-"));
+  const restLooksLikePath = rest.some((token) => looksLikePath(token));
+  const bareProgram = !looksLikePath(parts[0]);
+  // A path first token with non-path trailing text is still a program plus
+  // arguments (`/usr/bin/python test.py`); trailing path text is more likely a
+  // directory name containing spaces.
+  const suspicious = bareProgram || hasFlagTail || !restLooksLikePath;
+  if (!suspicious) return null;
   if (draft.target_type === "native_executable") {
-    const parts = executable.split(/\s+/);
-    const rest = parts.slice(1);
-    const hasFlagTail = rest.some((token) => token.startsWith("-"));
-    const restLooksLikePath = rest.some((token) => looksLikePath(token));
-    if (restLooksLikePath && !hasFlagTail) return null;
-    const program = parts[0];
     return t(language, "wizard.targetWhitespaceNative", {
-      program,
+      program: parts[0],
       rest: rest.join(" "),
     });
   }
@@ -243,22 +249,35 @@ export function targetExecutableWarning(draft: AliasDto, language: Language = DE
 }
 
 /**
- * Literal argv preview using the same expansion rules as the core executor:
- * the executable is always one element, `{{args}}` expands user arguments in
- * place, `{{{{args}}}}` is a literal `{{args}}`, and user arguments are
- * appended when `pass_args` is true and no placeholder exists.
+ * Literal preview using the same normalized draft and expansion rules as the
+ * core executor: the executable is always one element, `{{args}}` expands user
+ * arguments in place, `{{{{args}}}}` is a literal `{{args}}`, and user
+ * arguments are appended when `pass_args` is true and no placeholder exists.
+ *
+ * `change_directory` never runs the executable; it changes directory, so the
+ * preview is `cd` plus the effective directory. An empty target has no argv.
  */
 export function aliasArgvPreview(
   draft: AliasDto,
   userArgsLabel = "<user args>",
 ): string[] {
-  const argv = [draft.executable];
-  for (const argument of draft.fixed_args) {
+  const normalized = finalizeAliasDraft(draft);
+  if (!normalized.executable.trim()) return [];
+  if (normalized.target_type === "change_directory") {
+    return [
+      "cd",
+      (normalized.working_directory ?? normalized.executable).trim(),
+    ];
+  }
+  const argv = [normalized.executable];
+  for (const argument of normalized.fixed_args) {
     if (argument === "{{args}}") argv.push(userArgsLabel);
     else if (argument === "{{{{args}}}}") argv.push("{{args}}");
     else argv.push(argument);
   }
-  if (draft.pass_args && !draft.fixed_args.includes("{{args}}")) argv.push(userArgsLabel);
+  if (normalized.pass_args && !normalized.fixed_args.includes("{{args}}")) {
+    argv.push(userArgsLabel);
+  }
   return argv;
 }
 

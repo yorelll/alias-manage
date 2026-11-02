@@ -30,7 +30,13 @@ pub fn loader_position(content: &str) -> Result<LoaderPosition, AliasError> {
     } else if start == 0 {
         return Ok(LoaderPosition::Missing);
     }
-    let end_index = content.rfind(END_MARKER).unwrap() + END_MARKER.len();
+    let start_index = content.find(START_MARKER).ok_or(AliasError::UnsafePath)?;
+    let end_index = content.find(END_MARKER).ok_or(AliasError::UnsafePath)?;
+    if end_index <= start_index {
+        // An inverted pair (END before START) is malformed, not an empty block.
+        return Err(AliasError::UnsafePath);
+    }
+    let end_index = end_index + END_MARKER.len();
     Ok(if content[end_index..].trim().is_empty() {
         LoaderPosition::AtEnd
     } else {
@@ -186,6 +192,35 @@ mod tests {
         assert!(remove_loader(&content).unwrap().contains("before"));
         assert!(remove_loader("# >>> Alias Manager >>>\n").is_err());
     }
+
+    #[test]
+    fn inverted_marker_pairs_are_rejected_without_duplicating_content() {
+        let content = format!("before\n{END_MARKER}\nuser middle\n{START_MARKER}\nafter\n");
+        assert!(matches!(
+            loader_position(&content),
+            Err(AliasError::UnsafePath)
+        ));
+        assert!(matches!(
+            remove_loader(&content),
+            Err(AliasError::UnsafePath)
+        ));
+        // The caller must not receive a "successful" rewrite at all.
+        assert!(content.contains("user middle"));
+    }
+
+    #[test]
+    fn multiple_marker_pairs_are_rejected_instead_of_removing_only_one() {
+        let loader = render_loader(Path::new("/tmp/generated.sh"));
+        let content = format!("{loader}{loader}");
+        assert!(matches!(
+            loader_position(&content),
+            Err(AliasError::UnsafePath)
+        ));
+        assert!(matches!(
+            remove_loader(&content),
+            Err(AliasError::UnsafePath)
+        ));
+    }
     #[test]
     fn loader_install_preserves_crlf_line_endings() {
         let loader = render_loader(Path::new("C:\\generated.sh"));
@@ -251,27 +286,28 @@ pub fn install_loader(content: &str, loader: &str) -> Result<String, AliasError>
     Ok(format!("{content}{separator}{loader}"))
 }
 pub fn remove_loader(content: &str) -> Result<String, AliasError> {
-    let start = content.find(START_MARKER);
-    let end = content
-        .find(END_MARKER)
-        .map(|index| index + END_MARKER.len());
-    match (start, end) {
-        (None, None) => Ok(content.to_string()),
-        (Some(start), Some(end)) => {
-            let end = if content[end..].starts_with("\r\n") {
-                end + 2
-            } else if content[end..].starts_with('\n') {
-                end + 1
-            } else {
-                end
-            };
-            let mut result = String::with_capacity(content.len());
-            result.push_str(&content[..start]);
-            result.push_str(&content[end..]);
-            Ok(result)
-        }
-        _ => Err(AliasError::UnsafePath),
+    // Validate marker count and order first; slicing with an inverted pair
+    // would duplicate the content between END and START.
+    if loader_position(content)? == LoaderPosition::Missing {
+        return Ok(content.to_string());
     }
+    let start = content.find(START_MARKER).ok_or(AliasError::UnsafePath)?;
+    let end = content.find(END_MARKER).ok_or(AliasError::UnsafePath)?;
+    if end <= start {
+        return Err(AliasError::UnsafePath);
+    }
+    let end = end + END_MARKER.len();
+    let end = if content[end..].starts_with("\r\n") {
+        end + 2
+    } else if content[end..].starts_with('\n') {
+        end + 1
+    } else {
+        end
+    };
+    let mut result = String::with_capacity(content.len());
+    result.push_str(&content[..start]);
+    result.push_str(&content[end..]);
+    Ok(result)
 }
 pub fn managed_names(names: &ManagedNameSet) -> Vec<String> {
     names

@@ -140,13 +140,28 @@ export function DoctorPanel() {
         const shell = finding.shell ?? "";
         const outcome = await tauriInvoke("shell_install", shellInstallArgs(shell)) as {
           target?: unknown;
+          changed?: unknown;
+          installed?: unknown;
         };
-        setActionNotice(
-          `${t("doctor.installResult", {
+        const path = typeof outcome?.target === "string" ? outcome.target : "";
+        if (outcome?.installed !== true) {
+          setActionError(t("doctor.installIncomplete", {
             shell: shellLabel(shell, language),
-            path: typeof outcome?.target === "string" ? outcome.target : "",
-          })} ${t("doctor.reloadAfterInstall")}`,
-        );
+            path,
+          }));
+        } else if (outcome?.changed === false) {
+          setActionNotice(t("doctor.installAlreadyPresent", {
+            shell: shellLabel(shell, language),
+            path,
+          }));
+        } else {
+          setActionNotice(
+            `${t("doctor.installResult", {
+              shell: shellLabel(shell, language),
+              path,
+            })} ${t("doctor.reloadAfterInstall")}`,
+          );
+        }
       }
       // Re-scan so the finding reflects the new state without a manual click.
       setReloadToken((value) => value + 1);

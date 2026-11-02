@@ -104,6 +104,12 @@ test("explanations for reload, target types, doctor, and the config directory ex
       "doctor.code.loader_unreadable.title",
       "doctor.code.loader_unreadable.message",
       "doctor.code.loader_unreadable.action",
+      "doctor.code.loader_permission.title",
+      "doctor.code.loader_io.title",
+      "doctor.code.loader_unsafe.title",
+      "doctor.code.config_invalid.title",
+      "doctor.installAlreadyPresent",
+      "doctor.installIncomplete",
     ] as const) {
       assert.ok(t(language, key).trim().length > 0, `${language}:${key} is empty`);
     }

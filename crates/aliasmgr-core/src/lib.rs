@@ -1,5 +1,6 @@
 pub mod config;
 pub mod detection;
+pub mod doctor;
 pub mod error;
 pub mod executor;
 pub mod integration;
