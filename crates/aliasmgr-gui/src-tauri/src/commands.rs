@@ -2385,6 +2385,49 @@ mod tests {
     }
 
     #[test]
+    fn invalid_utf8_profile_is_loader_unreadable_and_never_rewritten() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let config = TempConfig::new("loader-invalid-utf8");
+        configure_powershell_profiles(&config.root);
+        let profile = config.root.join("bashrc");
+        let bytes = [0xFFu8, 0xFE, 0x00, 0x80];
+        std::fs::write(&profile, bytes).unwrap();
+        let database = Database::open(config.root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+
+        let run = sync_aliases().unwrap();
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == "bash")
+            .unwrap();
+        assert_eq!(
+            bash.loader_error_code.as_deref(),
+            Some("loader_unreadable"),
+            "invalid UTF-8 must map to the exact unreadable code"
+        );
+        assert!(!bash.loader_installed);
+        assert_eq!(std::fs::read(&profile).unwrap(), bytes);
+
+        assert_eq!(uninstall_confirm(false).unwrap_err(), "loader_unreadable");
+        assert_eq!(
+            std::fs::read(&profile).unwrap(),
+            bytes,
+            "uninstall must not rewrite an unreadable profile"
+        );
+    }
+
+    #[test]
     fn sync_reports_unreadable_loader_profiles_with_a_code() {
         let _guard = ENV_LOCK
             .lock()

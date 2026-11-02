@@ -857,11 +857,20 @@ test("sync and loader failure codes become localized, non-raw messages", () => {
 
   assert.match(loaderErrorMessage("loader_permission", "en"), /access was denied/);
   assert.match(loaderErrorMessage("loader_unsafe", "en"), /unpaired Alias Manager markers/);
+  assert.doesNotMatch(loaderErrorMessage("loader_unsafe", "en"), /before installing/);
+  assert.match(loaderErrorMessage("loader_unreadable", "en"), /not valid UTF-8/);
+  assert.match(loaderErrorMessage("loader_unreadable", "zh"), /UTF-8/);
   assert.match(loaderErrorMessage("loader_unsupported", "en"), /no loadable profile/);
+  assert.match(loaderErrorMessage("loader_shared_path", "en"), /share this profile path/);
   assert.match(loaderErrorMessage("loader_io", "zh"), /无法读取或写入/);
   assert.doesNotMatch(loaderErrorMessage("loader_io", "en"), /os error/);
+  assert.match(loaderErrorMessage("loader_failed", "en"), /Unable to update shell integration/);
+  assert.match(uninstallErrorMessage("loader_unreadable", "en"), /not valid UTF-8/);
+  assert.match(uninstallErrorMessage("loader_unreadable", "zh"), /UTF-8/);
   assert.match(uninstallErrorMessage("loader_unsafe", "en"), /unpaired Alias Manager markers/);
+  assert.doesNotMatch(uninstallErrorMessage("loader_unsafe", "en"), /before installing/);
   assert.match(uninstallErrorMessage("loader_unsafe", "zh"), /标记不成对/);
+  assert.match(uninstallErrorMessage("loader_shared_path", "en"), /share this profile path/);
   assert.equal(
     uninstallErrorMessage("database is locked", "en"),
     "database is locked",
@@ -973,6 +982,16 @@ test("target type copy explains metadata semantics and warns without rewriting",
     targetExecutableWarning({ ...nativeDraft, executable: "C:\\Tools\\My Tool.exe" }, "en"),
     null,
     "a real path with a space in the directory name is not a command line",
+  );
+  assert.equal(
+    targetExecutableWarning({ ...nativeDraft, executable: "C:\\Foo.exe Folder\\tool.exe" }, "en"),
+    null,
+    "an extension-like directory segment must not be mistaken for an argument tail",
+  );
+  assert.equal(
+    targetExecutableWarning({ ...nativeDraft, executable: "C:\\Tools\\python venv\\python.exe" }, "en"),
+    null,
+    "an interpreter-like directory segment must not trigger the interpreter rule",
   );
   assert.notEqual(
     targetExecutableWarning(

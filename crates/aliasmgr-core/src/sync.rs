@@ -7,6 +7,7 @@ use crate::{
 };
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
     time::Duration,
@@ -498,6 +499,18 @@ fn sync_with_database_mode(
     let paths = AppPaths {
         root: config_dir.to_path_buf(),
     };
+    // A profile shared by multiple shells can source only one generated file.
+    // Mark the other shells so the Sync page explains the shared path instead
+    // of pointing at an install button Doctor will not offer.
+    let config = paths.load_config().ok();
+    let mut shared_paths: BTreeMap<PathBuf, usize> = BTreeMap::new();
+    if let Some(config) = &config {
+        for shell in &shells {
+            if let Ok(target) = crate::integration::loader_target(config, &paths, shell.as_str()) {
+                *shared_paths.entry(target.path).or_default() += 1;
+            }
+        }
+    }
     let mut results = Vec::new();
     for shell in shells {
         let names = database.managed_name_set(&shell)?;
@@ -506,7 +519,7 @@ fn sync_with_database_mode(
             .filter(|alias| alias.shells.contains(&shell))
             .cloned()
             .collect::<Vec<_>>();
-        let (loader_installed, loader_error_code) =
+        let (loader_installed, mut loader_error_code) =
             match crate::integration::loader_status(&paths, shell.as_str()) {
                 Ok(outcome) => (outcome.installed, None),
                 Err(error) => (
@@ -514,6 +527,17 @@ fn sync_with_database_mode(
                     Some(crate::integration::loader_error_code(&error).to_string()),
                 ),
             };
+        if !loader_installed && loader_error_code.is_none() {
+            if let Some(config) = &config {
+                if let Ok(target) =
+                    crate::integration::loader_target(config, &paths, shell.as_str())
+                {
+                    if shared_paths.get(&target.path).copied().unwrap_or(0) > 1 {
+                        loader_error_code = Some("loader_shared_path".to_string());
+                    }
+                }
+            }
+        }
         let generated_path = paths.generated_path(shell.as_str());
         let receipt = match coordinator.apply_with_managed_names(
             &shell_aliases,
@@ -1569,6 +1593,49 @@ mod tests {
         ));
         assert_eq!(zsh.status, ShellStatus::Ok);
         assert!(zsh.error_code.is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shared_profile_marks_the_shell_whose_block_is_absent() {
+        let root = sync_root("shared-loader");
+        let paths = AppPaths { root: root.clone() };
+        let shared = root.join("shared.rc");
+        let mut config = AppConfig::default();
+        config.shells.bash_rc_path = Some(shared.clone());
+        config.shells.zsh_rc_path = Some(shared.clone());
+        config.save(&paths).unwrap();
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "both".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        crate::integration::install_loader(&paths, "bash").unwrap();
+
+        let run = sync_config_dir_collect_io(&root).unwrap();
+        let bash = run
+            .results
+            .iter()
+            .find(|result| result.shell == ShellKind::Bash)
+            .unwrap();
+        let zsh = run
+            .results
+            .iter()
+            .find(|result| result.shell == ShellKind::Zsh)
+            .unwrap();
+        assert!(bash.loader_installed);
+        assert!(bash.loader_error_code.is_none());
+        assert!(!zsh.loader_installed);
+        assert_eq!(
+            zsh.loader_error_code.as_deref(),
+            Some("loader_shared_path"),
+            "a shared profile must not produce a generic install hint"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

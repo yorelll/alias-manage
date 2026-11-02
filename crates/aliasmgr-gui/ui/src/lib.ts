@@ -251,9 +251,17 @@ export function targetExecutableWarning(draft: AliasDto, language: Language = DE
   const restLooksLikePath = rest.some((token) => looksLikePath(token));
   const bareProgram = !looksLikePath(parts[0]);
   const firstBase = parts[0].split(/[\\/]/).pop()?.toLowerCase().replace(/\.exe$/, "") ?? "";
-  const interpreterTail = rest.length > 0 && KNOWN_INTERPRETERS.has(firstBase);
-  const executableIndex = parts.findIndex((token) => EXECUTABLE_SUFFIX.test(token));
-  const executableWithFollowing = executableIndex >= 0 && executableIndex < parts.length - 1;
+  const interpreterTail =
+    rest.length > 0 && !restLooksLikePath && KNOWN_INTERPRETERS.has(firstBase);
+  // The LAST extension-bearing token is the executable candidate. Earlier
+  // extension-like directory segments (`Foo.exe Folder`, `python venv`) must
+  // not be mistaken for an argument tail.
+  let lastExecutableIndex = -1;
+  for (let index = 0; index < parts.length; index += 1) {
+    if (EXECUTABLE_SUFFIX.test(parts[index])) lastExecutableIndex = index;
+  }
+  const executableWithFollowing =
+    lastExecutableIndex >= 0 && lastExecutableIndex < parts.length - 1;
   // A path whose only internal spaces are directory names and whose final
   // token is the executable is one path, not a command line.
   const singlePathWithSpaces =
@@ -465,9 +473,11 @@ export function loaderErrorMessage(reason: unknown, language: Language = DEFAULT
     case "loader_permission": return t(language, "loader.error.permission");
     case "loader_missing": return t(language, "loader.error.missing");
     case "loader_io": return t(language, "loader.error.io");
+    case "loader_unreadable": return t(language, "loader.error.unreadable");
     case "loader_unsafe": return t(language, "loader.error.unsafe");
     case "loader_unsupported": return t(language, "loader.error.unsupported");
     case "loader_config": return t(language, "loader.error.config");
+    case "loader_shared_path": return t(language, "loader.error.sharedPath");
     default: return t(language, "loader.error.failed");
   }
 }
@@ -481,7 +491,8 @@ export function uninstallErrorMessage(reason: unknown, language: Language = DEFA
   return text.startsWith("loader_") ? loaderErrorMessage(text, language) : text;
 }
 
-/** Copy-paste command that points a new process at another config directory. */export function configDirExampleCommand(platform: PathPlatform = detectPathPlatform()): string {
+/** Copy-paste command that points a new process at another config directory. */
+export function configDirExampleCommand(platform: PathPlatform = detectPathPlatform()): string {
   return platform === "windows"
     ? 'setx ALIASMGR_CONFIG_DIR "D:\\alias-manager"'
     : 'export ALIASMGR_CONFIG_DIR="/home/user/.alias-manager"';
