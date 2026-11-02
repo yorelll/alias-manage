@@ -189,7 +189,16 @@ impl App {
         // the shared core helper under the same lock sync uses; never write a
         // second recovery implementation here.
         let journal = root.join("operation.journal");
-        let recovery = if journal.exists() {
+        // A successful sync leaves a `state=completed` journal behind; only
+        // prepared/committed entries represent work that needs recovery.
+        let journal_pending = std::fs::read_to_string(&journal)
+            .map(|content| {
+                content
+                    .lines()
+                    .any(|line| line == "state=prepared" || line == "state=committed")
+            })
+            .unwrap_or(false);
+        let recovery = if journal_pending {
             match FileLock::acquire(root.join("sync.lock"), Duration::from_secs(2)) {
                 Ok(_lock) => Some(
                     SyncCoordinator::new(root.clone())
@@ -1486,6 +1495,22 @@ mod tests {
         let app = App::new(root.clone()).unwrap();
         assert!(!root.join("operation.journal").exists());
         assert!(app.status.text.contains("recovered an interrupted sync"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_completed_sync_journal_is_left_alone_and_does_not_warn() {
+        let root = temp_root("completed-journal");
+        let path = root.join("operation.journal");
+        std::fs::write(
+            &path,
+            "revision_from=1\nrevision_to=1\nstate=completed\nbackups_json=[]\n",
+        )
+        .unwrap();
+        let app = App::new(root.clone()).unwrap();
+        assert!(path.exists());
+        assert!(!app.status.text.contains("recovered"));
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }
