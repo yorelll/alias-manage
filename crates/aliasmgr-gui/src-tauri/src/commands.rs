@@ -56,7 +56,7 @@ fn shell_kind_to_str(kind: &ShellKind) -> &'static str {
 /// - version via `aliasmgr_core::version()`
 /// - shell detection via `aliasmgr_core::detection::detect()`
 /// - config directory via `aliasmgr_core::config::AppPaths::discover()`
-#[tauri::command]
+#[tauri::command(async)]
 pub fn startup_status() -> StartupStatus {
     let version = aliasmgr_core::version().to_owned();
 
@@ -1016,7 +1016,12 @@ pub fn shell_setup_plan(
         profile.as_deref(),
     )
     .map_err(setup_error)?;
-    let default_profile = shell_setup::default_profile_path(&config, &paths, &kind)
+    // Resolve the hint from the effective plan (unsaved overrides/clear
+    // sentinels included), not from the persisted config, so "use default"
+    // previews the platform default immediately.
+    let default_profile = plan
+        .loader_target
+        .as_ref()
         .map(|path| path.to_string_lossy().into_owned());
     let (loader_error, loader_error_code) = match &plan.loader_status {
         LoaderStatus::Error { code, detail } => (Some(detail.clone()), Some(code.clone())),
@@ -4164,6 +4169,21 @@ mod tests {
             .insert("bash".into(), executable.clone());
         save_shell_config(&paths, &config);
 
+        // The default-profile hint is computed from the effective config, so
+        // clearing the override previews the home RC immediately.
+        let default_rc = aliasmgr_core::config::home_dir().unwrap().join(".bashrc");
+        let preview = shell_setup_plan(
+            "bash".into(),
+            Some(executable.to_string_lossy().into_owned()),
+            Some(aliasmgr_core::shell_setup::CLEAR_OVERRIDE.into()),
+        )
+        .unwrap();
+        assert_eq!(
+            preview.default_profile.as_deref(),
+            Some(default_rc.to_string_lossy().as_ref())
+        );
+        assert_eq!(preview.preview_target, preview.default_profile);
+
         let outcome = shell_setup_apply(
             "bash".into(),
             Some(executable.to_string_lossy().into_owned()),
@@ -4176,7 +4196,6 @@ mod tests {
         assert_eq!(saved.shells.executables.get("bash"), Some(&executable));
         // The loader was written to the isolated home's default RC, not the
         // previously configured override path.
-        let default_rc = aliasmgr_core::config::home_dir().unwrap().join(".bashrc");
         assert!(default_rc.exists(), "{}", default_rc.display());
         assert!(std::fs::read_to_string(&default_rc)
             .unwrap()

@@ -97,12 +97,21 @@ export function ShellStartupBanner({
 
   const enableDetected = () => run("detected", async () => {
     const next: ShellSetupOutcome[] = [];
+    let firstError: unknown = null;
     for (const shell of detected) {
-      next.push(normalizeShellSetupOutcome(
-        await tauriInvoke("shell_setup_apply", shellSetupArgs(shell)),
-      ));
+      try {
+        next.push(normalizeShellSetupOutcome(
+          await tauriInvoke("shell_setup_apply", shellSetupArgs(shell)),
+        ));
+      } catch (reason) {
+        // Continue with the remaining shells so completed setup outcomes are
+        // not lost; report the first rejection after recording them.
+        if (firstError === null) firstError = reason;
+      }
     }
-    return recordOutcomes(next);
+    recordOutcomes(next);
+    if (firstError !== null) throw firstError;
+    return false;
   });
 
   const ignoreDetected = () => run("detected-ignore", async () => {

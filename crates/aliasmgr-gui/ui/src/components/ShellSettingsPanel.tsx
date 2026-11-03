@@ -6,7 +6,6 @@ import type {
   ShellStatus,
 } from "../lib";
 import {
-  CLEAR_OVERRIDE,
   normalizeShellSetupOutcome,
   normalizeShellSetupPlan,
   normalizeShellStatuses,
@@ -52,14 +51,12 @@ export function ShellSettingsPanel({
   const [plan, setPlan] = useState<ShellSetupPlan | null>(null);
   const [outcome, setOutcome] = useState<ShellSetupOutcome | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
-  const appStatusesUsed = useRef(statuses.length > 0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       setStatuses(normalizeShellStatuses(await tauriInvoke("shell_status")));
-      appStatusesUsed.current = true;
     } catch (reason) {
       setError(t("shellSetup.rescanFailed", { error: String(reason) }));
     } finally {
@@ -67,15 +64,15 @@ export function ShellSettingsPanel({
     }
   }, [t]);
 
-  // Share App's startup status rows instead of probing again on mount. Only
-  // the visible Settings page triggers a fetch when no rows are available.
+  // Adopt every fresh App startup/banner refresh (new array reference), not
+  // just the first one, so wizard/banner actions are reflected without a
+  // manual Rescan. Postpone while the user is editing or an action is running.
   useEffect(() => {
-    if (!appStatusesUsed.current && initialStatuses.length > 0) {
-      appStatusesUsed.current = true;
-      setStatuses(normalizeShellStatuses(initialStatuses));
-      setLoading(false);
-    }
-  }, [initialStatuses]);
+    if (initialStatuses.length === 0) return;
+    if (editing !== null || busy !== null) return;
+    setStatuses(normalizeShellStatuses(initialStatuses));
+    setLoading(false);
+  }, [initialStatuses, editing, busy]);
 
   useEffect(() => {
     if (active && statuses.length === 0) {
@@ -147,7 +144,11 @@ export function ShellSettingsPanel({
 
   /** Explicitly remove a stored override and preview the platform default. */
   const clearOverride = (shell: string, field: "executable" | "profile") => {
-    const next: ShellPathOverride = { ...overrides[shell], [field]: CLEAR_OVERRIDE };
+    // Flags (not the sentinel string) drive the UI, so the visible field stays
+    // blank and the default/profile hint reflects the effective config.
+    const next: ShellPathOverride = field === "executable"
+      ? { ...overrides[shell], executable: "", clearExecutable: true }
+      : { ...overrides[shell], profile: "", clearProfile: true };
     setOverrides((current) => ({ ...current, [shell]: next }));
     setPlan(null);
     void preview(shell, next);
@@ -250,7 +251,11 @@ export function ShellSettingsPanel({
                         placeholder={status.executable ?? ""}
                         onChange={(event) => setOverrides((current) => ({
                           ...current,
-                          [status.shell]: { ...current[status.shell], executable: event.target.value },
+                          [status.shell]: {
+                            ...current[status.shell],
+                            executable: event.target.value,
+                            clearExecutable: false,
+                          },
                         }))}
                         onBlur={() => setPlan(null)}
                         autoComplete="off"
@@ -264,7 +269,11 @@ export function ShellSettingsPanel({
                         placeholder={status.loader_target ?? plan?.defaultProfile ?? ""}
                         onChange={(event) => setOverrides((current) => ({
                           ...current,
-                          [status.shell]: { ...current[status.shell], profile: event.target.value },
+                          [status.shell]: {
+                            ...current[status.shell],
+                            profile: event.target.value,
+                            clearProfile: false,
+                          },
                         }))}
                         onBlur={() => setPlan(null)}
                         autoComplete="off"
@@ -291,8 +300,11 @@ export function ShellSettingsPanel({
                         {t("shellSetup.clearProfile")}
                       </button>
                     </div>
-                    {(override.executable === CLEAR_OVERRIDE || override.profile === CLEAR_OVERRIDE) && (
-                      <p className="hint field-full" role="status">{t("shellSetup.overrideCleared")}</p>
+                    {(override.clearExecutable || override.clearProfile) && (
+                      <p className="hint field-full" role="status">
+                        {t("shellSetup.overrideCleared")}
+                        {plan?.defaultProfile ? ` ${t("shellSetup.defaultProfile", { path: plan.defaultProfile })}` : ""}
+                      </p>
                     )}
                   </div>
 

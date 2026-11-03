@@ -177,6 +177,15 @@ test("shell setup argument envelopes trim optional paths and omit blanks", () =>
     { shell: "bash", executable: CLEAR_OVERRIDE, profile: CLEAR_OVERRIDE },
     "clear sentinels must reach the backend",
   );
+  assert.deepEqual(
+    shellSetupArgs("bash", { clearExecutable: true, clearProfile: true }),
+    { shell: "bash", executable: CLEAR_OVERRIDE, profile: CLEAR_OVERRIDE },
+    "clear flags map to the backend sentinel without showing it in the field",
+  );
+  assert.deepEqual(
+    shellSetupArgs("bash", { executable: " /bin/bash ", clearExecutable: false, profile: "" }),
+    { shell: "bash", executable: "/bin/bash" },
+  );
 });
 
 test("setup errors map stable prefixes to localized copy in both languages", () => {
@@ -436,6 +445,8 @@ test("startup banner keeps setup outcomes visible and uses per-shell toggles", a
     "shellSetupOutcomeLines",
     "setupOutcomeFailed",
     "acknowledge",
+    "firstError",
+    "recordOutcomes(next)",
     "loaderError",
     "syncError",
     "shellSetup.reenable",
@@ -461,11 +472,14 @@ test("settings shell panel reuses status, per-shell toggles and clear-override s
     "shell_setup_apply",
     "initialStatuses",
     "active",
-    "CLEAR_OVERRIDE",
     "clearOverride",
+    "clearExecutable",
+    "clearProfile",
     "shellSetup.clearExecutable",
     "shellSetup.clearProfile",
     "shellSetup.overrideCleared",
+    "initialStatuses,",
+    "editing !== null || busy !== null",
     "shellSetup.rescan",
     "shellSetup.executable",
     "shellSetup.profile",
@@ -477,6 +491,9 @@ test("settings shell panel reuses status, per-shell toggles and clear-override s
   ]) {
     assert.ok(panel.includes(fragment), `settings panel is missing ${fragment}`);
   }
+  assert.equal(panel.includes("appStatusesUsed"), false, "status adoption must not be one-shot");
+  assert.equal(panel.includes("[field]: CLEAR_OVERRIDE"), false, "the sentinel must not drive the visible field");
+  assert.match(panel, /value=\{override\.executable \?\? ""\}/);
   assert.equal(/eval\(|new Function|child_process/.test(panel), false);
 });
 
@@ -540,8 +557,12 @@ test("Tauri registers the shell setup, startup and preflight commands", async ()
 });
 
 test("heavy Tauri commands run off the UI thread with command(async)", async () => {
-  const commands = await readFile(new URL("../../src-tauri/src/commands.rs", import.meta.url), "utf8");
+  // Normalize CRLF so the assertion works on Windows checkouts with
+  // core.autocrlf=true as well as LF checkouts.
+  const commands = (await readFile(new URL("../../src-tauri/src/commands.rs", import.meta.url), "utf8"))
+    .replace(/\r\n/g, "\n");
   for (const command of [
+    "startup_status",
     "create_alias",
     "update_alias",
     "delete_alias",
@@ -560,7 +581,7 @@ test("heavy Tauri commands run off the UI thread with command(async)", async () 
   ]) {
     assert.match(
       commands,
-      new RegExp(`#\\[tauri::command\\(async\\)\\]\\npub fn ${command}\\b`),
+      new RegExp(`#\\[tauri::command\\(async\\)\\]\\r?\\npub fn ${command}\\b`),
       `${command} must use #[tauri::command(async)]`,
     );
   }

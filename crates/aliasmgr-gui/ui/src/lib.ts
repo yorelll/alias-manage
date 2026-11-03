@@ -481,6 +481,10 @@ export function shellOptionState(status: ShellStatus): ShellOptionState {
 export interface ShellPathOverride {
   executable?: string;
   profile?: string;
+  /** Explicitly remove the stored executable override (use detection). */
+  clearExecutable?: boolean;
+  /** Explicitly remove the stored profile override (use platform default). */
+  clearProfile?: boolean;
 }
 
 /**
@@ -615,8 +619,10 @@ export function shellSetupArgs(
   override: ShellPathOverride = {},
 ): { shell: string; executable?: string; profile?: string } {
   const args: { shell: string; executable?: string; profile?: string } = { shell };
-  const executable = override.executable?.trim();
-  const profile = override.profile?.trim();
+  // Clear actions are carried only over the IPC boundary; the visible field
+  // never shows the sentinel.
+  const executable = override.clearExecutable ? CLEAR_OVERRIDE : override.executable?.trim();
+  const profile = override.clearProfile ? CLEAR_OVERRIDE : override.profile?.trim();
   if (executable) args.executable = executable;
   if (profile) args.profile = profile;
   return args;
