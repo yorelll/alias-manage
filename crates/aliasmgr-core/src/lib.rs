@@ -24,6 +24,12 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
+/// Serializes core tests that mutate process-wide environment variables.
+/// Module-local locks are not enough because config and integration tests both
+/// change HOME/USERPROFILE and run in the same test binary.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(test)]
 mod tests {
     #[test]

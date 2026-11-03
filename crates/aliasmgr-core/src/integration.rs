@@ -74,9 +74,33 @@ pub fn default_zsh_rc_path() -> Option<PathBuf> {
     crate::config::home_dir().map(|home| home.join(".zshrc"))
 }
 
+fn configured_profile_path(
+    configured: Option<PathBuf>,
+    fallback: impl FnOnce() -> Option<PathBuf>,
+    label: &str,
+) -> Result<PathBuf, AliasError> {
+    if let Some(path) = configured {
+        if path.as_os_str().is_empty() {
+            return Err(AliasError::Config(format!(
+                "configured {label} must not be empty"
+            )));
+        }
+        if !path.is_absolute() {
+            return Err(AliasError::Config(format!(
+                "configured {label} must be absolute (got {})",
+                path.display()
+            )));
+        }
+        return Ok(path);
+    }
+    fallback().ok_or(AliasError::ShellNotInstalled)
+}
+
 /// Resolves the profile/RC file for a Shell and whether the loader block must
 /// use PowerShell syntax. A configured path always wins over the platform
 /// default, which keeps tests and custom setups away from real profiles.
+/// Configured paths must be absolute: resolving a relative profile against the
+/// process working directory could create or edit an unintended file.
 pub fn loader_target(
     config: &AppConfig,
     _paths: &AppPaths,
@@ -85,37 +109,37 @@ pub fn loader_target(
     let name = shell.to_ascii_lowercase();
     let (path, powershell) = match name.as_str() {
         "bash" => (
-            config
-                .shells
-                .bash_rc_path
-                .clone()
-                .or_else(default_bash_rc_path)
-                .ok_or(AliasError::ShellNotInstalled)?,
+            configured_profile_path(
+                config.shells.bash_rc_path.clone(),
+                default_bash_rc_path,
+                "shells.bash_rc_path",
+            )?,
             false,
         ),
         "zsh" => (
-            config
-                .shells
-                .zsh_rc_path
-                .clone()
-                .or_else(default_zsh_rc_path)
-                .ok_or(AliasError::ShellNotInstalled)?,
+            configured_profile_path(
+                config.shells.zsh_rc_path.clone(),
+                default_zsh_rc_path,
+                "shells.zsh_rc_path",
+            )?,
             false,
         ),
-        "powershell5" => config
-            .shells
-            .powershell5_profile_path
-            .clone()
-            .or_else(|| default_powershell_profile_path("powershell5"))
-            .map(|path| (path, true))
-            .ok_or(AliasError::ShellNotInstalled)?,
-        "powershell7" => config
-            .shells
-            .powershell7_profile_path
-            .clone()
-            .or_else(|| default_powershell_profile_path("powershell7"))
-            .map(|path| (path, true))
-            .ok_or(AliasError::ShellNotInstalled)?,
+        "powershell5" => (
+            configured_profile_path(
+                config.shells.powershell5_profile_path.clone(),
+                || default_powershell_profile_path("powershell5"),
+                "shells.powershell5_profile_path",
+            )?,
+            true,
+        ),
+        "powershell7" => (
+            configured_profile_path(
+                config.shells.powershell7_profile_path.clone(),
+                || default_powershell_profile_path("powershell7"),
+                "shells.powershell7_profile_path",
+            )?,
+            true,
+        ),
         _ => return Err(AliasError::ShellNotInstalled),
     };
     Ok(LoaderTarget { path, powershell })
@@ -385,9 +409,7 @@ pub fn uninstall_loader(paths: &AppPaths, shell: &str) -> Result<LoaderOutcome, 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Serializes tests that mutate process-wide profile environment vars.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    use crate::ENV_LOCK;
 
     fn temp_root(label: &str) -> PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -500,6 +522,37 @@ mod tests {
                 .into_owned()
         ));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn loader_target_rejects_relative_configured_profile_paths() {
+        let paths = AppPaths {
+            root: std::env::temp_dir().join("aliasmgr-relative-target"),
+        };
+        for shell in ["bash", "zsh", "powershell5", "powershell7"] {
+            let mut config = AppConfig::default();
+            let relative = Some(PathBuf::from("relative/profile"));
+            match shell {
+                "bash" => config.shells.bash_rc_path = relative,
+                "zsh" => config.shells.zsh_rc_path = relative,
+                "powershell5" => config.shells.powershell5_profile_path = relative,
+                "powershell7" => config.shells.powershell7_profile_path = relative,
+                _ => unreachable!(),
+            }
+            let error = loader_target(&config, &paths, shell).unwrap_err();
+            assert!(
+                matches!(&error, AliasError::Config(message)
+                    if message.contains("must be absolute") && message.contains("relative/profile")),
+                "{shell}: {error}"
+            );
+        }
+
+        let mut empty = AppConfig::default();
+        empty.shells.bash_rc_path = Some(PathBuf::new());
+        assert!(matches!(
+            loader_target(&empty, &paths, "bash"),
+            Err(AliasError::Config(message)) if message.contains("must not be empty")
+        ));
     }
 
     #[test]

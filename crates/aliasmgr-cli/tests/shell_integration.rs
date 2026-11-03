@@ -500,6 +500,51 @@ fn parse_shell_selection_is_strict_about_supported_spellings() {
 }
 
 #[test]
+fn relative_configured_profile_paths_are_rejected_by_loader_commands_and_doctor() {
+    let root = temp_root("relative-profile");
+    let paths = AppPaths { root: root.clone() };
+    let mut config = AppConfig::default();
+    config.shells.bash_rc_path = Some(PathBuf::from("relative/rc"));
+    config.save(&paths).unwrap();
+    let config_dir = root.to_string_lossy().to_string();
+    let working_copy = std::env::current_dir().unwrap().join("relative/rc");
+
+    for error in [
+        commands::shell_install(Some(&config_dir), "bash").unwrap_err(),
+        commands::shell_uninstall(Some(&config_dir), "bash").unwrap_err(),
+    ] {
+        assert!(
+            matches!(&error, AliasError::Config(message)
+                if message.contains("must be absolute") && message.contains("relative/rc")),
+            "{error}"
+        );
+        assert_eq!(exit_code::exit_code(&error), 1);
+    }
+    assert!(!root.join("relative/rc").exists());
+    assert!(
+        !working_copy.exists(),
+        "a relative configured profile must never be created under the cwd"
+    );
+
+    // Non-interactive doctor must report the configuration problem rather than
+    // probing or writing a cwd-relative path.
+    let mut add = add_args("gs", "bash");
+    add.allow_missing_loader = true;
+    add.no_sync = true;
+    commands::add(Some(&config_dir), &add).unwrap();
+    let findings = commands::doctor(Some(&config_dir)).unwrap();
+    assert!(
+        findings.iter().any(|finding| {
+            finding.contains("must be absolute") || finding.contains("配置文件无效")
+        }),
+        "{findings:?}"
+    );
+    assert!(!working_copy.exists());
+    assert!(!root.join("relative/rc").exists());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn update_auto_syncs_the_union_of_old_and_new_shells() {
     let root = temp_root("update-union");
     let paths = AppPaths { root: root.clone() };
