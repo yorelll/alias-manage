@@ -102,6 +102,24 @@ fn main() {
             command: cli::ShellCommand::Detect,
         } => Ok(format!("{:?}", commands::shell_detect())),
         cli::Command::Shell {
+            command: cli::ShellCommand::Enable { shell },
+        } => commands::shell_enable(cli.config_dir.as_deref(), shell).map(|changed| {
+            if changed {
+                format!("已启用 {shell} 集成")
+            } else {
+                format!("{shell} 集成已启用")
+            }
+        }),
+        cli::Command::Shell {
+            command: cli::ShellCommand::Disable { shell },
+        } => commands::shell_disable(cli.config_dir.as_deref(), shell).map(|changed| {
+            if changed {
+                format!("已禁用 {shell} 集成")
+            } else {
+                format!("{shell} 集成已禁用")
+            }
+        }),
+        cli::Command::Shell {
             command: cli::ShellCommand::Install { shell },
         } => commands::shell_install(cli.config_dir.as_deref(), shell).map(|changed| {
             if changed {

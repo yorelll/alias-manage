@@ -233,6 +233,8 @@ fn parses_lifecycle_and_diagnostic_commands() {
         vec!["aliasmgr", "sync", "--dry-run"],
         vec!["aliasmgr", "reload", "--print"],
         vec!["aliasmgr", "doctor"],
+        vec!["aliasmgr", "shell", "enable", "bash"],
+        vec!["aliasmgr", "shell", "disable", "zsh"],
         vec!["aliasmgr", "import", "file.json"],
         vec!["aliasmgr", "export", "file.json"],
         vec!["aliasmgr", "uninstall", "--purge-aliases"],

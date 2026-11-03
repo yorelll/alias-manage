@@ -57,7 +57,7 @@ aliasmgr reload --print --shell bash
 aliasmgr tui
 ```
 
-首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。TUI 与 GUI 首次启动也提供同样的 Shell 集成面板（可跳过，不阻塞进入主界面）；没有单独的 `setup` 命令。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；TUI 与 GUI 同样严格拦截并保留草稿，不提供 `--allow-missing-loader`。`--allow-missing-loader` 仅属于 CLI，可显式保存并警告（该 Shell 暂不生效）。
+首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。TUI 与 GUI 首次启动也提供同样的 Shell 集成面板（可跳过，不阻塞进入主界面）；没有单独的 `setup` 命令。非交互环境可用 `aliasmgr shell install <shell>` 一次性启用并安装（`shell enable/disable` 只写启用意图，`shell uninstall` 移除 loader 并禁用）。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；TUI 与 GUI 同样严格拦截并保留草稿，不提供 `--allow-missing-loader`。`--allow-missing-loader` 仅属于 CLI，可显式保存并警告（该 Shell 暂不生效）。
 
 配置根优先级：
 
@@ -148,7 +148,7 @@ Windows 需要 WebView2 Runtime；Linux 需要 WebKitGTK 4.1 等原生依赖。G
 
 ## 命令
 
-`add`、`remove`、`update`、`rename`、`get`、`find`、`list`、`enable`、`disable`、`sync`、`reload`、`doctor`、`tui`、`shell detect`、`shell install`、`shell uninstall`、`import`、`export`、`uninstall`。
+`add`、`remove`、`update`、`rename`、`get`、`find`、`list`、`enable`、`disable`、`sync`、`reload`、`doctor`、`tui`、`shell detect`、`shell enable`、`shell disable`、`shell install`、`shell uninstall`、`import`、`export`、`uninstall`。
 
 完整参数与退出码见 [docs/cli-commands.md](docs/cli-commands.md) 和 [docs/exit-codes.md](docs/exit-codes.md)。
 

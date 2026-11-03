@@ -61,7 +61,7 @@ function Record-Result {
     Write-Log ("[{0}] {1} {2}" -f $Result,$Id,$Title)
 }
 
-$CliEnv = @{ ALIASMGR_CONFIG_DIR=$TempConfig; LOCALAPPDATA=$TempLocalApp; APPDATA=$TempAppData }
+$CliEnv = @{ ALIASMGR_CONFIG_DIR=$TempConfig; LOCALAPPDATA=$TempLocalApp; APPDATA=$TempAppData; USERPROFILE=$TempProfile; HOME=$TempProfile }
 function Invoke-Cli {
     param([string[]]$Arguments)
     $saved = @{}
@@ -90,11 +90,16 @@ Record-Result "PS7-006" "ExecutionPolicy scope report (Group Policy aware)" $Pol
 Record-Result "PS7-007" "native argv limitation report" "EXPECTED-LIMITATION" "native argv limitation documented" "PowerShell native argv edge cases require live verification; no policy bypass used" "ps7-native-argv-limitation"
 Record-Result "PS7-004" "BOM/CRLF encoding summary" "EXPECTED-LIMITATION" "BOM/CRLF encoding documented for Windows PS7" "PowerShell 7 encoding and line-ending behavior requires live generated-file check" "ps7-encoding-summary"
 
+# R2.0 preflight requires the target shell to be enabled with a loader. Install
+# into the isolated temp USERPROFILE (never the real PowerShell profile).
+$SetupOut = Invoke-Cli @("shell", "install", "powershell7")
+Write-Log ("[setup] shell install powershell7: " + $SetupOut)
+
 try { $VersionOut=Invoke-Cli @("--version"); Record-Result "PS7-001" "version and startup" "PASS" "CLI reports version string" "version command completed" "stdout" } catch { Record-Result "PS7-001" "version and startup" "FAIL" "CLI reports version string" "version command failed" "stdout" }
 try {
-    [void](Invoke-Cli @("add","ps7-gs","--exec","git","--arg","status"))
+    [void](Invoke-Cli @("add","ps7-gs","--exec","git","--arg","status","--shell","powershell7"))
     $ListOut=Invoke-Cli @("list"); $addOk=($ListOut -match "ps7-gs")
-    [void](Invoke-Cli @("add","ps7-tagged","--exec","echo","--arg","hi","--tag","ps7-test"))
+    [void](Invoke-Cli @("add","ps7-tagged","--exec","echo","--arg","hi","--tag","ps7-test","--shell","powershell7"))
     $TagOk=((Invoke-Cli @("list","--tag","ps7-test")) -match "ps7-tagged")
     [void](Invoke-Cli @("remove","--yes","ps7-tagged")); [void](Invoke-Cli @("reload","--print")); [void](Invoke-Cli @("remove","--yes","ps7-gs"))
     $removeOk=-not ((Invoke-Cli @("list")) -match "\bps7-gs\b")
@@ -104,7 +109,7 @@ Record-Result "PS7-003" "Profile/OneDrive path resolution" "EXPECTED-LIMITATION"
 Record-Result "PS7-005" "built-in alias preemption (ls/cp/gc)" "EXPECTED-LIMITATION" "built-in aliases remain documented" "MANUAL-ONLY: live interactive verification" "ps7-builtin-alias-precedence"
 
 try {
-    $BadNameOut=[string](Invoke-Cli @("add","1badname","--exec","echo","--arg","hi"))
+    $BadNameOut=[string](Invoke-Cli @("add","1badname","--exec","echo","--arg","hi","--shell","powershell7"))
     if ($BadNameOut -match "error|invalid|not allowed|must start|illegal") { Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "PASS" "invalid name rejected" "CLI rejected invalid name 1badname" "stdout" }
     else { [void](Invoke-Cli @("remove","--yes","1badname")); Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "EXPECTED-LIMITATION" "invalid name rejected" "manual verification required" "stdout" }
 } catch { Record-Result "PS7-008" "ACL/target protection — invalid name rejected" "PASS" "invalid name rejected" "CLI rejected invalid name 1badname" "stdout" }

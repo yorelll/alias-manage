@@ -130,6 +130,8 @@ $CliEnv = @{
     ALIASMGR_CONFIG_DIR = $TempConfig
     LOCALAPPDATA        = $TempLocalApp
     APPDATA             = $TempAppData
+    USERPROFILE         = $TempProfile
+    HOME                = $TempProfile
 }
 
 function Invoke-Cli {
@@ -218,11 +220,16 @@ try {
         "CLI reports version string" ("exception: " + $_.Exception.Message) "stdout"
 }
 
+# R2.0 preflight requires the target shell to be enabled with a loader.
+# Install into the isolated temp USERPROFILE (never the real PowerShell profile).
+$SetupOut = Invoke-Cli @("shell", "install", "powershell5")
+Write-Log ("[setup] shell install powershell5: " + $SetupOut)
+
 # PS51-002: full lifecycle CRUD/search/tag/sync/reload
 # CLI interface: add NAME --exec PROG --arg ARG; list; list --tag TAG; remove --yes NAME
 try {
     # add
-    $AddOut = Invoke-Cli @("add", "ps51-gs", "--exec", "git", "--arg", "status")
+    $AddOut = Invoke-Cli @("add", "ps51-gs", "--exec", "git", "--arg", "status", "--shell", "powershell5")
     # list
     $ListOut = Invoke-Cli @("list")
     $addOk = $ListOut -match "ps51-gs"
@@ -231,7 +238,7 @@ try {
     # tag: add with tag and filter
     $TagOk = $false
     try {
-        $TagAddOut = Invoke-Cli @("add", "ps51-tagged", "--exec", "echo", "--arg", "hi", "--tag", "ps51-test")
+        $TagAddOut = Invoke-Cli @("add", "ps51-tagged", "--exec", "echo", "--arg", "hi", "--tag", "ps51-test", "--shell", "powershell5")
         $TagListOut = Invoke-Cli @("list", "--tag", "ps51-test")
         $TagOk = $TagListOut -match "ps51-tagged"
         try { Invoke-Cli @("remove", "--yes", "ps51-tagged") | Out-Null } catch { }

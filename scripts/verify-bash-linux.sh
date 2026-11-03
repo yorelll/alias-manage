@@ -63,6 +63,13 @@ fi
 TEMP_ROOT="$(mktemp -d "aliasmgr-bash-XXXXXX" -p /tmp)"
 TEMP_CONFIG="$TEMP_ROOT/config"
 TEMP_PROFILE="$TEMP_ROOT/profile"
+# Git Bash on Windows does not convert environment variables. The Rust home
+# lookup reads USERPROFILE on Windows, so give it a native Windows path; on
+# Linux cygpath is absent and the same path is used.
+TEMP_PROFILE_WIN="$TEMP_PROFILE"
+if command -v cygpath >/dev/null 2>&1; then
+  TEMP_PROFILE_WIN="$(cygpath -w "$TEMP_PROFILE")"
+fi
 TEMP_GENERATED="$TEMP_ROOT/generated"
 TEMP_TARGETS="$TEMP_ROOT/targets"
 TEMP_BASHRC="$TEMP_PROFILE/.bashrc"
@@ -129,7 +136,7 @@ JSON
 CLI="$ARTIFACT_PATH"
 
 run_cli() {
-  ALIASMGR_CONFIG_DIR="$TEMP_CONFIG" HOME="$TEMP_PROFILE" "$CLI" "$@" 2>&1
+  ALIASMGR_CONFIG_DIR="$TEMP_CONFIG" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" "$@" 2>&1
 }
 
 # ─── Bash detection ───────────────────────────────────────────────
@@ -149,16 +156,15 @@ fi
 # ─── B-001: loader install to isolated .bashrc ──────────────────
 #
 # Use --config-dir to give shell install a dedicated isolated root.
-# Without a config.toml, the CLI falls back to $config_dir/.bashrc
-# as the RC path. We pre-create that file to satisfy write_profile_content.
+# Bash now defaults to the isolated temp HOME's .bashrc, never the config root
+# or the real user profile. We pre-create that file to satisfy the writer.
 INSTALL_CONFIG="$TEMP_ROOT/install-config"
 mkdir -p "$INSTALL_CONFIG"
-# The CLI will install to $INSTALL_CONFIG/.bashrc by default
-touch "$INSTALL_CONFIG/.bashrc"
+touch "$TEMP_PROFILE/.bashrc"
 
 INSTALL_OUT=""
 INSTALL_RC=0
-INSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
+INSTALL_OUT="$(HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
 if [[ $INSTALL_RC -eq 0 ]]; then
   record_result "B-001" "bash loader install to isolated RC" "PASS" \
     "loader installed to isolated .bashrc without error" "$INSTALL_OUT" "stdout"
@@ -174,12 +180,12 @@ fi
 # ─── B-002: loader idempotence (run install twice) ──────────────
 IDEM_OUT=""
 IDEM_RC=0
-IDEM_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
+IDEM_OUT="$(HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" --config-dir "$INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
 if [[ $IDEM_RC -eq 0 ]]; then
   # Count occurrences of the unique START_MARKER to verify no duplication.
   # "# >>> Alias Manager >>>" appears exactly once per install block.
   LOADER_COUNT=0
-  INSTALL_BASHRC="$INSTALL_CONFIG/.bashrc"
+  INSTALL_BASHRC="$TEMP_PROFILE/.bashrc"
   if [[ -f "$INSTALL_BASHRC" ]]; then
     LOADER_COUNT="$(grep -cF '# >>> Alias Manager >>>' "$INSTALL_BASHRC" 2>/dev/null)" || true
   fi
@@ -202,7 +208,7 @@ fi
 # ─── B-003: reload --print gives correct bash source line ────────
 RELOAD_OUT=""
 RELOAD_RC=0
-RELOAD_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" reload --print 2>&1)" || RELOAD_RC=$?
+RELOAD_OUT="$(HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" --config-dir "$INSTALL_CONFIG" reload --print 2>&1)" || RELOAD_RC=$?
 if [[ $RELOAD_RC -eq 0 ]]; then
   if echo "$RELOAD_OUT" | grep -q "generated\|bash.sh"; then
     record_result "B-003" "bash reload --print guidance" "PASS" \
@@ -217,6 +223,10 @@ else
 fi
 
 # ─── B-004: argv boundary in bash: add + CRUD with complex args ──
+# R2.0 preflight requires enabled intent + an installed loader. Install in the
+# isolated TEMP_CONFIG/HOME before the add-based argv cases.
+run_cli shell install bash >/dev/null 2>&1 || true
+
 ARGV_CASES=()
 ARGV_PASS=0
 ARGV_FAIL=0
@@ -293,10 +303,10 @@ run_cli remove --yes b_tagged_b 2>/dev/null || true
 # ─── B-006: tombstone / shell uninstall ──────────────────────────
 UNINSTALL_OUT=""
 UNINSTALL_RC=0
-UNINSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$INSTALL_CONFIG" shell uninstall bash 2>&1)" || UNINSTALL_RC=$?
+UNINSTALL_OUT="$(HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" --config-dir "$INSTALL_CONFIG" shell uninstall bash 2>&1)" || UNINSTALL_RC=$?
 if [[ $UNINSTALL_RC -eq 0 ]]; then
   # Verify loader line is no longer present
-  INSTALL_BASHRC="$INSTALL_CONFIG/.bashrc"
+  INSTALL_BASHRC="$TEMP_PROFILE/.bashrc"
   if [[ -f "$INSTALL_BASHRC" ]]; then
     # Use grep -cF on the unique START_MARKER; grep -c outputs a number even on no match.
     # Do not add || echo 0 here — grep -c always emits the count, exit 1 just means 0 matches.
@@ -321,6 +331,10 @@ else
   record_result "B-006" "bash shell uninstall removes loader" "FAIL" \
     "shell uninstall clears loader from RC" "exit $UNINSTALL_RC: $UNINSTALL_OUT" "stdout"
 fi
+
+# Restore integration for TEMP_CONFIG after B-006 removed the shared temp-home
+# loader, so later add/sync checks still exercise the real runtime path.
+run_cli shell install bash >/dev/null 2>&1 || true
 
 # ─── B-007: generated bash.sh syntax check ──────────────────────
 # Add an alias and sync to produce a generated file, then check its syntax

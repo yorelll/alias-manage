@@ -61,6 +61,13 @@ fi
 TEMP_ROOT="$(mktemp -d "aliasmgr-smoke-XXXXXX" -p /tmp)"
 TEMP_CONFIG="$TEMP_ROOT/config"
 TEMP_PROFILE="$TEMP_ROOT/profile"
+# Git Bash on Windows does not convert environment variables. The Rust home
+# lookup reads USERPROFILE on Windows, so give it a native Windows path; on
+# Linux cygpath is absent and the same path is used.
+TEMP_PROFILE_WIN="$TEMP_PROFILE"
+if command -v cygpath >/dev/null 2>&1; then
+  TEMP_PROFILE_WIN="$(cygpath -w "$TEMP_PROFILE")"
+fi
 TEMP_GENERATED="$TEMP_ROOT/generated"
 TEMP_TARGETS="$TEMP_ROOT/targets"
 RESULT_DIR="$TEMP_ROOT/result"
@@ -125,8 +132,18 @@ JSON
 CLI="$ARTIFACT_PATH"
 
 run_cli() {
-  ALIASMGR_CONFIG_DIR="$TEMP_CONFIG" HOME="$TEMP_PROFILE" "$CLI" "$@" 2>&1
+  ALIASMGR_CONFIG_DIR="$TEMP_CONFIG" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" "$@" 2>&1
 }
+
+# Enable + install Bash in the isolated config/HOME before CRUD tests. The R2.0
+# add/update preflight refuses targets that are not enabled or whose loader is
+# missing; installing here does both and writes only under $TEMP_PROFILE.
+SHELL_SETUP_RC=0
+SHELL_SETUP_OUT="$(run_cli shell install bash 2>&1)" || SHELL_SETUP_RC=$?
+log_msg "[setup] shell install bash exit=$SHELL_SETUP_RC (isolated HOME/config)"
+if [[ $SHELL_SETUP_RC -ne 0 ]]; then
+  log_msg "[setup] output: $SHELL_SETUP_OUT"
+fi
 
 # ─── test cases ───────────────────────────────────────────────────
 log_msg "=== verify-cli-linux.sh starting ==="
@@ -300,19 +317,22 @@ fi
 ENV_CHECK_CONFIG_A="$TEMP_ROOT/env-check-a"
 ENV_CHECK_CONFIG_B="$TEMP_ROOT/env-check-b"
 mkdir -p "$ENV_CHECK_CONFIG_A" "$ENV_CHECK_CONFIG_B"
-
+# This is a DB/config isolation marker, not a runtime integration check. Use
+# --allow-missing-loader/--no-sync so it does not rewrite the shared temp-home
+# loader block to point at a different config root (which would break later
+# TEMP_CONFIG loader checks).
 ENV_ADD_OUT=""
 ENV_ADD_RC=0
-ENV_ADD_OUT="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" "$CLI" \
-  add aliasmgr_sentinel_test --exec "echo" --arg "sentinel" 2>&1)" || ENV_ADD_RC=$?
+ENV_ADD_OUT="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" \
+  add aliasmgr_sentinel_test --exec "echo" --arg "sentinel" --allow-missing-loader --no-sync 2>&1)" || ENV_ADD_RC=$?
 
 if [[ $ENV_ADD_RC -eq 0 ]]; then
   # Sentinel must appear in config A
   ENV_LIST_A=""
-  ENV_LIST_A="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" "$CLI" list 2>&1)" || true
+  ENV_LIST_A="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" list 2>&1)" || true
   # Sentinel must NOT appear in config B (different, empty dir)
   ENV_LIST_B=""
-  ENV_LIST_B="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_B" HOME="$TEMP_PROFILE" "$CLI" list 2>&1)" || true
+  ENV_LIST_B="$(ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_B" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" list 2>&1)" || true
   if echo "$ENV_LIST_A" | grep -qF "aliasmgr_sentinel_test" && \
      ! echo "$ENV_LIST_B" | grep -qF "aliasmgr_sentinel_test"; then
     record_result "L-004-ENV" "working-dir/env isolation marker" "PASS" \
@@ -324,7 +344,7 @@ if [[ $ENV_ADD_RC -eq 0 ]]; then
       "found_in_A=$(echo "$ENV_LIST_A" | grep -qF aliasmgr_sentinel_test && echo yes || echo no) found_in_B=$(echo "$ENV_LIST_B" | grep -qF aliasmgr_sentinel_test && echo yes || echo no)" \
       "stdout"
   fi
-  ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" "$CLI" \
+  ALIASMGR_CONFIG_DIR="$ENV_CHECK_CONFIG_A" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" \
     remove --yes aliasmgr_sentinel_test 2>/dev/null || true
 else
   record_result "L-004-ENV" "working-dir/env isolation marker" "FAIL" \
@@ -502,7 +522,7 @@ mkdir -p "$IMPORT_CONFIG"
 
 IMPORT_OUT=""
 if [[ -f "$EXPORT_JSON" ]]; then
-  if IMPORT_OUT="$(ALIASMGR_CONFIG_DIR="$IMPORT_CONFIG" HOME="$TEMP_PROFILE" "$CLI" import "$EXPORT_JSON" 2>&1)"; then
+  if IMPORT_OUT="$(ALIASMGR_CONFIG_DIR="$IMPORT_CONFIG" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" import "$EXPORT_JSON" 2>&1)"; then
     if echo "$IMPORT_OUT" | grep -q "imported"; then
       record_result "L-013" "import JSON file" "PASS" \
         "import reads JSON and reports counts" "[redacted]" "stdout"
@@ -525,7 +545,7 @@ mkdir -p "$IMPORT_TOML_CONFIG"
 
 IMPORT_TOML_OUT=""
 if [[ -f "$EXPORT_TOML" ]]; then
-  if IMPORT_TOML_OUT="$(ALIASMGR_CONFIG_DIR="$IMPORT_TOML_CONFIG" HOME="$TEMP_PROFILE" "$CLI" import "$EXPORT_TOML" 2>&1)"; then
+  if IMPORT_TOML_OUT="$(ALIASMGR_CONFIG_DIR="$IMPORT_TOML_CONFIG" HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" import "$EXPORT_TOML" 2>&1)"; then
     if echo "$IMPORT_TOML_OUT" | grep -q "imported"; then
       record_result "L-014" "import TOML file" "PASS" \
         "import reads TOML and reports counts" "[redacted]" "stdout"
@@ -616,16 +636,15 @@ fi
 
 # ─── L-018: shell install to isolated RC ────────────────────────
 # Use --config-dir to give shell install a dedicated, isolated root.
-# Without a config.toml, the CLI falls back to $config_dir/.bashrc
-# as the RC path — fully isolated from real user files.
+# Bash now defaults to the isolated temp HOME's .bashrc, never the real one.
 SHELL_INSTALL_CONFIG="$TEMP_ROOT/shell-install-config"
 mkdir -p "$SHELL_INSTALL_CONFIG"
-ISOLATED_BASHRC="$SHELL_INSTALL_CONFIG/.bashrc"
+ISOLATED_BASHRC="$TEMP_PROFILE/.bashrc"
 touch "$ISOLATED_BASHRC"
 
 INSTALL_OUT=""
 INSTALL_RC=0
-INSTALL_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
+INSTALL_OUT="$(HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || INSTALL_RC=$?
 if [[ $INSTALL_RC -eq 0 ]]; then
   # Shell install must write the loader marker.  A success exit with no marker
   # in the RC file means the install silently did nothing — that is a FAIL.
@@ -649,7 +668,7 @@ fi
 # ─── L-019: loader idempotence ──────────────────────────────────
 IDEM_OUT=""
 IDEM_RC=0
-IDEM_OUT="$(HOME="$TEMP_PROFILE" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
+IDEM_OUT="$(HOME="$TEMP_PROFILE" USERPROFILE="$TEMP_PROFILE_WIN" "$CLI" --config-dir "$SHELL_INSTALL_CONFIG" shell install bash 2>&1)" || IDEM_RC=$?
 if [[ $IDEM_RC -eq 0 ]]; then
   # Count occurrences of the unique START_MARKER to assert no duplication.
   # The marker is "# >>> Alias Manager >>>" — appears exactly once per install block.

@@ -775,15 +775,50 @@ pub enum ShellCommand {
     )]
     Detect,
     #[command(
+        about = "Mark a shell as enabled for integration",
+        long_about = "Persist the user's intent to integrate a shell. This only writes `shells.enabled`; \
+it does not install a loader block. Use `aliasmgr shell install <SHELL>` (which also enables) or \
+`aliasmgr doctor` to install integration. Idempotent: an already-enabled shell succeeds without \
+changing `shells.enabled`.",
+        after_help = "EXAMPLES:\n  aliasmgr shell enable bash\n  aliasmgr shell enable powershell7"
+    )]
+    Enable {
+        /// Shell to enable.
+        #[arg(
+            value_name = "SHELL",
+            help = "Target shell: bash, zsh, powershell5, powershell7."
+        )]
+        shell: String,
+    },
+    #[command(
+        about = "Mark a shell as disabled for integration",
+        long_about = "Remove a shell from `shells.enabled`. This only changes the persisted intent; it \
+does not remove an existing loader block (use `aliasmgr shell uninstall <SHELL>` for that). \
+Idempotent: an already-disabled shell succeeds without changing `shells.enabled`. Disabling also \
+records the detected executable in `shells.seen`, so the startup prompt does not immediately offer to \
+enable the same shell again.",
+        after_help = "EXAMPLES:\n  aliasmgr shell disable zsh"
+    )]
+    Disable {
+        /// Shell to disable.
+        #[arg(
+            value_name = "SHELL",
+            help = "Target shell: bash, zsh, powershell5, powershell7."
+        )]
+        shell: String,
+    },
+    #[command(
         about = "Install the loader block in a shell profile",
-        long_about = "Install the marked Alias Manager loader block in the profile for one shell. The \
-block sources the generated file only when it exists, so a missing file cannot break profile startup. \
-A configured profile path overrides the platform default; profile writes create a backup and honor \
-the RC retention limit.",
+        long_about = "Install the marked Alias Manager loader block in the profile for one shell and \
+persist the shell in `shells.enabled` (explicit installation implies enablement). The block sources \
+the generated file only when it exists, so a missing file cannot break profile startup. A configured \
+profile path overrides the platform default; profile writes create a backup and honor the RC \
+retention limit. Relative configured profile paths are configuration errors.",
         after_help = "EXAMPLES:\n  \
 aliasmgr shell install bash\n  \
 aliasmgr shell install powershell7\n\n\
-PowerShell 5.1 does not exist outside Windows and returns exit 12 there."
+PowerShell 5.1 does not exist outside Windows and returns exit 12 there.\n\
+This is the non-interactive way to prepare a shell for `add`/`update`."
     )]
     Install {
         /// Shell whose loader block should be installed.
@@ -795,9 +830,9 @@ PowerShell 5.1 does not exist outside Windows and returns exit 12 there."
     },
     #[command(
         about = "Remove the loader block from a shell profile",
-        long_about = "Remove the marked Alias Manager loader block from one shell profile. Only the \
-marked block is removed; unrelated profile content is preserved. A missing block is a successful \
-no-op.",
+        long_about = "Remove the marked Alias Manager loader block from one shell profile and remove \
+the shell from `shells.enabled` (explicit uninstall implies disablement). Only the marked block is \
+removed; unrelated profile content is preserved. A missing block is a successful no-op.",
         after_help = "EXAMPLES:\n  aliasmgr shell uninstall bash"
     )]
     Uninstall {

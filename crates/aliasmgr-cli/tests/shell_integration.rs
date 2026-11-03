@@ -545,6 +545,128 @@ fn relative_configured_profile_paths_are_rejected_by_loader_commands_and_doctor(
 }
 
 #[test]
+fn shell_enable_disable_are_idempotent_and_only_persist_intent() {
+    let root = temp_root("shell-enable");
+    let paths = AppPaths { root: root.clone() };
+    AppConfig::default().save(&paths).unwrap();
+    let config_dir = root.to_string_lossy().to_string();
+
+    assert!(commands::shell_enable(Some(&config_dir), "bash").unwrap());
+    assert_eq!(paths.load_config().unwrap().shells.enabled, vec!["bash"]);
+    assert!(!commands::shell_enable(Some(&config_dir), "bash").unwrap());
+    assert!(!commands::shell_enable(Some(&config_dir), "BASH").unwrap());
+    assert!(commands::shell_enable(Some(&config_dir), "powershell7").unwrap());
+    assert_eq!(
+        paths.load_config().unwrap().shells.enabled,
+        vec!["bash", "powershell7"]
+    );
+    assert!(commands::shell_disable(Some(&config_dir), "bash").unwrap());
+    assert_eq!(
+        paths.load_config().unwrap().shells.enabled,
+        vec!["powershell7"]
+    );
+    assert!(!commands::shell_disable(Some(&config_dir), "bash").unwrap());
+    assert!(matches!(
+        commands::shell_enable(Some(&config_dir), "fish"),
+        Err(AliasError::ShellNotInstalled)
+    ));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn shell_install_enables_and_shell_uninstall_disables() {
+    let root = temp_root("shell-install-enable");
+    let paths = AppPaths { root: root.clone() };
+    let profile = root.join("bashrc");
+    let mut config = AppConfig::default();
+    config.shells.bash_rc_path = Some(profile.clone());
+    config.save(&paths).unwrap();
+    let config_dir = root.to_string_lossy().to_string();
+
+    assert!(commands::shell_install(Some(&config_dir), "bash").unwrap());
+    assert_eq!(paths.load_config().unwrap().shells.enabled, vec!["bash"]);
+    assert!(std::fs::read_to_string(&profile)
+        .unwrap()
+        .contains(aliasmgr_core::shells::common::START_MARKER));
+    assert!(!commands::shell_install(Some(&config_dir), "bash").unwrap());
+    assert_eq!(paths.load_config().unwrap().shells.enabled, vec!["bash"]);
+
+    assert!(commands::shell_uninstall(Some(&config_dir), "bash").unwrap());
+    assert!(paths.load_config().unwrap().shells.enabled.is_empty());
+    assert!(!std::fs::read_to_string(&profile)
+        .unwrap()
+        .contains(aliasmgr_core::shells::common::START_MARKER));
+    assert!(!commands::shell_uninstall(Some(&config_dir), "bash").unwrap());
+    assert!(paths.load_config().unwrap().shells.enabled.is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn shell_install_failure_does_not_enable_the_shell() {
+    // An unreadable profile target (a directory) and unpaired loader markers
+    // both fail the loader write. Because install runs before enable, a failure
+    // must leave `shells.enabled` untouched rather than enabling a shell whose
+    // loader was never installed.
+    for label in ["dir", "unpaired"] {
+        let root = temp_root(&format!("shell-install-failure-{label}"));
+        let paths = AppPaths { root: root.clone() };
+        let profile = root.join("bashrc");
+        let mut config = AppConfig::default();
+        config.shells.bash_rc_path = Some(profile.clone());
+        config.save(&paths).unwrap();
+        match label {
+            "dir" => std::fs::create_dir(&profile).unwrap(),
+            _ => std::fs::write(
+                &profile,
+                format!("{}\n", aliasmgr_core::shells::common::START_MARKER),
+            )
+            .unwrap(),
+        }
+        let config_dir = root.to_string_lossy().to_string();
+
+        let result = commands::shell_install(Some(&config_dir), "bash");
+        assert!(
+            result.is_err(),
+            "{label}: loader install should fail, got {result:?}"
+        );
+        assert!(
+            paths.load_config().unwrap().shells.enabled.is_empty(),
+            "{label}: a failed install must not write shells.enabled"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn shell_uninstall_failure_keeps_the_shell_enabled() {
+    let root = temp_root("shell-uninstall-failure");
+    let paths = AppPaths { root: root.clone() };
+    let profile = root.join("bashrc");
+    std::fs::write(
+        &profile,
+        format!("{}\n", aliasmgr_core::shells::common::START_MARKER),
+    )
+    .unwrap();
+    let mut config = AppConfig::default();
+    config.shells.enabled = vec!["bash".into()];
+    config.shells.bash_rc_path = Some(profile.clone());
+    config.save(&paths).unwrap();
+    let config_dir = root.to_string_lossy().to_string();
+
+    let result = commands::shell_uninstall(Some(&config_dir), "bash");
+    assert!(
+        result.is_err(),
+        "unpaired markers must fail the loader removal, got {result:?}"
+    );
+    assert_eq!(
+        paths.load_config().unwrap().shells.enabled,
+        vec!["bash"],
+        "a failed uninstall must leave the shell enabled"
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn update_auto_syncs_the_union_of_old_and_new_shells() {
     let root = temp_root("update-union");
     let paths = AppPaths { root: root.clone() };

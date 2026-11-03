@@ -588,14 +588,46 @@ fn default_powershell_profile_path(shell: &str) -> Option<PathBuf> {
     aliasmgr_core::integration::default_powershell_profile_path(shell)
 }
 
+fn cli_shell_kind(shell: &str) -> Result<ShellKind, AliasError> {
+    shell_kind(shell).ok_or(AliasError::ShellNotInstalled)
+}
+
 pub fn shell_install(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    Ok(aliasmgr_core::integration::install_loader(&paths, shell)?.changed)
+    let kind = cli_shell_kind(shell)?;
+    // Install first: a failed profile write must not leave the shell marked as
+    // enabled without a loader. A successful install implies enablement.
+    let changed = aliasmgr_core::integration::install_loader(&paths, shell)?.changed;
+    shell_setup::set_shell_enabled(&paths, &kind, true)?;
+    Ok(changed)
 }
 
 pub fn shell_uninstall(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
     let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
-    Ok(aliasmgr_core::integration::uninstall_loader(&paths, shell)?.changed)
+    let kind = cli_shell_kind(shell)?;
+    // Remove the loader first: a failed removal must not leave the shell
+    // disabled while its loader is still installed.
+    let changed = aliasmgr_core::integration::uninstall_loader(&paths, shell)?.changed;
+    shell_setup::set_shell_enabled(&paths, &kind, false)?;
+    Ok(changed)
+}
+
+/// Persists `shells.enabled` for one shell. Returns whether the intent changed.
+pub fn shell_enable(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
+    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
+    let kind = cli_shell_kind(shell)?;
+    let was_enabled = shell_setup::enabled_shells(&paths.load_config()?).contains(&kind);
+    shell_setup::set_shell_enabled(&paths, &kind, true)?;
+    Ok(!was_enabled)
+}
+
+/// Removes one shell from `shells.enabled`. Returns whether the intent changed.
+pub fn shell_disable(config_dir: Option<&str>, shell: &str) -> Result<bool, AliasError> {
+    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
+    let kind = cli_shell_kind(shell)?;
+    let was_enabled = shell_setup::enabled_shells(&paths.load_config()?).contains(&kind);
+    shell_setup::set_shell_enabled(&paths, &kind, false)?;
+    Ok(was_enabled)
 }
 
 #[allow(dead_code)]
