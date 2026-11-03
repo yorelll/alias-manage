@@ -96,8 +96,10 @@ list; from detail focus a single `Esc` returns to the list and clears them too.
 | `Left` / `Right` | change target type or restriction mode |
 | `F3` | show / hide advanced fields |
 
-Printing any character in a text field only types it. `Ctrl+S` is the only
-save shortcut, and a save already in progress refuses a second submit.
+Printing any character in a text field only types it. This includes `R`:
+manual refresh is only the Browse `R`; typing `R` in a text field inserts text.
+`Ctrl+S` is the only save shortcut, and a save already in progress refuses a
+second submit.
 
 ### Preview / Doctor / Help / Sync results
 
@@ -115,18 +117,21 @@ save shortcut, and a save already in progress refuses a second submit.
 
 - The footer adapts to width. Key hints wrap as whole tokens (never a truncated
   `d ...`), and the status line remains visible at 80x24 and 120x40.
-- `ALIASMGR_TUI_ASCII=1` uses `+ - |` borders and `...` truncation; no Unicode
-  box drawing or colour is required.
+- `ALIASMGR_TUI_ASCII=1` uses `+ - |` borders and `...` truncation. It changes
+  glyphs only and does not disable colour; combine it with `NO_COLOR` or
+  `TERM=dumb` for monochrome ASCII output.
 - Focus is marked in text: the header shows `focus: list/detail/field X/modal`,
   pane titles carry `[focus]`, the editor marks the selected field with `>`,
   and modal titles start with `[modal]`.
 - The list title shows `selected/total`; preview and Doctor titles show the
-  visible row range and total.
+  visible row range and total, and Doctor prefixes its selection with `sel` so
+  `sel 1/8` is distinct from `rows 13-30/30`.
 - The header shows `refreshed Ns ago`; `R` re-reads the database and reports
   whether external CLI/GUI changes were applied.
 - Rename validates the name live with the core rules (syntax, PowerShell
   reserved names, duplicates and case-fold conflicts) and refuses Enter while
-  invalid.
+  invalid. Renaming to the unchanged name reports a no-op and does not bump the
+  revision.
 - Delete confirmation lists affected Shells, tombstone revision, and states that
   target executable/files are not deleted.
 - Conflict modals show a field-by-field stored -> external diff (environment
@@ -199,7 +204,9 @@ visible. The preview is read-only.
 
 By default the preview renders only the selected alias's definition through the
 same Shell adapter used by sync (`f` switches to the whole generated file as an
-explicit fallback). An unrelated alias with a missing target therefore cannot
+explicit fallback). The per-alias preview needs at least four content rows; the
+80x24 frame minimum guarantees this, and smaller frames use the too-small
+guard. An unrelated alias with a missing target therefore cannot
 break the default preview. The whole-file fallback can report
 `preview unavailable: target is missing: /srv/missing-tool` for another alias;
 that is expected for that mode. The title labels the active mode and its row

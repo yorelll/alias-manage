@@ -122,8 +122,24 @@ impl SyncCoordinator {
         revision: i64,
         names: &ManagedNameSet,
     ) -> Result<SyncReceipt, AliasError> {
-        self.apply_internal(aliases, shells, revision, names)
+        self.apply_internal(aliases, shells, revision, names, None)
     }
+
+    /// Same as [`Self::apply_with_managed_names`] but reuses a caller-owned
+    /// database connection for the shell-state writes instead of opening a
+    /// second connection. Used by the subset/retry path to keep the number of
+    /// live SQLite connections as low as practical.
+    pub fn apply_with_managed_names_using_database(
+        &self,
+        aliases: &[AliasRecord],
+        shells: &[ShellKind],
+        revision: i64,
+        names: &ManagedNameSet,
+        database: &crate::storage::Database,
+    ) -> Result<SyncReceipt, AliasError> {
+        self.apply_internal(aliases, shells, revision, names, Some(database))
+    }
+
     pub fn apply(
         &self,
         aliases: &[AliasRecord],
@@ -134,7 +150,7 @@ impl SyncCoordinator {
             current: aliases.iter().map(|alias| alias.name.clone()).collect(),
             retired: Vec::new(),
         };
-        self.apply_internal(aliases, shells, revision, &names)
+        self.apply_internal(aliases, shells, revision, &names, None)
     }
     fn apply_internal(
         &self,
@@ -142,6 +158,7 @@ impl SyncCoordinator {
         shells: &[ShellKind],
         revision: i64,
         names: &ManagedNameSet,
+        database: Option<&crate::storage::Database>,
     ) -> Result<SyncReceipt, AliasError> {
         fs::create_dir_all(self.config_dir.join("generated"))?;
         fs::create_dir_all(self.config_dir.join("backups/generated"))?;
@@ -150,7 +167,15 @@ impl SyncCoordinator {
             root: self.config_dir.clone(),
         }
         .load_config()?;
-        let database = crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
+        let owned_database;
+        let database = match database {
+            Some(database) => database,
+            None => {
+                owned_database =
+                    crate::storage::Database::open(self.config_dir.join("aliases.db"))?;
+                &owned_database
+            }
+        };
         let journal = self.config_dir.join("operation.journal");
         let revision_from = revision.saturating_sub(1);
         let mut backups = Vec::new();
@@ -703,11 +728,12 @@ fn sync_with_database_shells(
             }
         }
         let generated_path = paths.generated_path(shell.as_str());
-        let receipt = match coordinator.apply_with_managed_names(
+        let receipt = match coordinator.apply_with_managed_names_using_database(
             &shell_aliases,
             std::slice::from_ref(&shell),
             revision,
             &names,
+            database,
         ) {
             Ok(receipt) => receipt,
             Err(error) => {
@@ -1992,6 +2018,41 @@ mod tests {
         assert!(!root.join("generated/zsh.sh").exists());
         let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
         assert!(database.shell_states().unwrap().is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn subset_sync_keeps_wal_integrity_with_another_connection_open() {
+        let root = sync_root("wal-integrity");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        let worker_root = root.clone();
+        let worker = std::thread::spawn(move || {
+            // Repeated subset retries open their own connection and checkpoint
+            // while the main connection above stays open. On SQLite 3.46 this
+            // is the multi-connection WAL-reset window reported by C3.
+            for _ in 0..5 {
+                sync_shells(&worker_root, &[ShellKind::Zsh]).unwrap();
+            }
+        });
+        while !worker.is_finished() {
+            let _ = database.list_aliases().unwrap();
+            std::thread::yield_now();
+        }
+        worker.join().unwrap();
+        let integrity: String = database
+            .conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(integrity, "ok");
+        drop(database);
         let _ = fs::remove_dir_all(root);
     }
 }

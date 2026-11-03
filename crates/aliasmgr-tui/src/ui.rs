@@ -1274,7 +1274,7 @@ fn render_doctor(frame: &mut Frame, area: Rect, app: &App, state: &DoctorState) 
         format!("rows {first_row}-{last_row}/{rows}")
     };
     let title = format!(
-        "Doctor ({} findings) {position}  {range}",
+        "Doctor ({} findings) sel {position}  {range}",
         state.findings.len()
     );
     frame.render_widget(
@@ -1585,13 +1585,21 @@ fn conflict_diff_lines(
             .filter(|key| !current_keys.contains(key))
             .cloned()
             .collect::<Vec<_>>();
+        fn short_keys(keys: &[String]) -> String {
+            let shown = keys.iter().take(2).cloned().collect::<Vec<_>>().join(", ");
+            if keys.len() > 2 {
+                format!("{shown}, +{} more", keys.len() - 2)
+            } else {
+                shown
+            }
+        }
         changes.push((
-            "environment".to_string(),
-            "values masked".to_string(),
+            "env".to_string(),
+            "masked".to_string(),
             format!(
-                "changed (values masked); keys +[{}] -[{}]",
-                added.join(", "),
-                removed.join(", ")
+                "changed +[{}] -[{}]",
+                short_keys(&added),
+                short_keys(&removed)
             ),
         ));
     }
@@ -2175,7 +2183,7 @@ mod tests {
             error: None,
         });
         let rendered = render_string(&mut app, 80, 24);
-        assert!(rendered.contains("1/20"), "{rendered}");
+        assert!(rendered.contains("sel 1/20"), "{rendered}");
         let total = app.doctor_rows;
         app.handle_key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::End,
@@ -2265,6 +2273,11 @@ mod tests {
         external
             .environment
             .insert("TOKEN".into(), "secret-value".into());
+        for key in ["A_KEY", "B_KEY", "C_KEY", "D_KEY"] {
+            external
+                .environment
+                .insert(key.into(), format!("{key}-secret-value"));
+        }
         AliasService::new(&other).update(external).unwrap();
         app.save_editor();
         assert!(matches!(app.modal, Some(Modal::Conflict { .. })));
@@ -2275,8 +2288,9 @@ mod tests {
             rendered.contains("(empty) -> external description"),
             "{rendered}"
         );
-        assert!(rendered.contains("environment:"), "{rendered}");
-        assert!(rendered.contains("values masked"), "{rendered}");
+        assert!(rendered.contains("env:"), "{rendered}");
+        assert!(rendered.contains(": masked -> changed"), "{rendered}");
+        assert!(rendered.contains("+3 more"), "{rendered}");
         assert!(!rendered.contains("secret-value"), "{rendered}");
         assert!(rendered.contains("reload latest"), "{rendered}");
         assert!(rendered.contains("overwrite"), "{rendered}");

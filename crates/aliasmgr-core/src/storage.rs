@@ -1485,4 +1485,26 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(root);
     }
+
+    #[test]
+    fn bundled_sqlite_contains_the_wal_reset_corruption_fix() {
+        let database = Database::open_in_memory().unwrap();
+        let version: String = database
+            .conn
+            .query_row("SELECT sqlite_version()", [], |row| row.get(0))
+            .unwrap();
+        let parts = version
+            .split('.')
+            .map(|part| part.parse::<u32>().unwrap_or(0))
+            .collect::<Vec<_>>();
+        let tuple = (
+            *parts.first().unwrap_or(&0),
+            *parts.get(1).unwrap_or(&0),
+            *parts.get(2).unwrap_or(&0),
+        );
+        assert!(
+            tuple >= (3, 51, 3),
+            "bundled SQLite {version} predates the WAL-reset database corruption fix (>=3.51.3 required)"
+        );
+    }
 }

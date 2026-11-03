@@ -1390,6 +1390,13 @@ impl App {
         if self.writes_blocked() {
             return;
         }
+        if new_name == alias.name {
+            self.set_status(
+                StatusKind::Info,
+                format!("{new_name} already has this name; no rename performed"),
+            );
+            return;
+        }
         let service = AliasService::new(&self.database);
         match service.rename_checked(&alias, &new_name, alias.revision) {
             Ok(saved) => {
@@ -2167,6 +2174,75 @@ mod tests {
     }
 
     #[test]
+    fn subset_retry_keeps_database_integrity_with_the_tui_connection_open() {
+        let root = temp_root("retry-integrity");
+        let mut app = App::new(root.clone()).unwrap();
+        AliasService::new(&app.database)
+            .create(AliasRecord {
+                name: "gs".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        app.reload();
+        let failed = |shell: ShellKind| aliasmgr_core::sync::ShellSyncOutcome {
+            shell,
+            status: ShellStatus::Failed,
+            error: Some("synthetic failure".into()),
+            error_code: Some("sync_failed".into()),
+            generated_path: root.join("generated/zsh.sh"),
+            loader_installed: true,
+            loader_error_code: None,
+        };
+        // C3 reproduced WAL-reset corruption on SQLite 3.46 in exactly this
+        // shape: the TUI connection stays open while the retry worker opens
+        // another connection and checkpoints. On 3.46 the integrity_check below
+        // could report "wrong # of entries in index sqlite_autoindex_shell_state_1".
+        for _ in 0..3 {
+            app.screen = Screen::SyncReport(SyncReportState {
+                run: SyncRun {
+                    revision: 1,
+                    results: vec![
+                        aliasmgr_core::sync::ShellSyncOutcome {
+                            shell: ShellKind::Bash,
+                            status: ShellStatus::Ok,
+                            error: None,
+                            error_code: None,
+                            generated_path: root.join("generated/bash.sh"),
+                            loader_installed: true,
+                            loader_error_code: None,
+                        },
+                        failed(ShellKind::Zsh),
+                    ],
+                },
+                scroll: 0,
+                retry: false,
+            });
+            app.handle_key(key(KeyCode::Char('r')));
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                app.poll_jobs();
+                if !app.jobs.is_busy() {
+                    break;
+                }
+                assert!(Instant::now() < deadline, "retry did not finish");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let integrity: String = app
+                .database
+                .conn
+                .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+                .unwrap();
+            assert_eq!(integrity, "ok");
+        }
+        assert!(!root.join("generated/bash.sh").exists());
+        assert!(root.join("generated/zsh.sh").exists());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn retry_with_no_failed_shells_is_a_no_op() {
         let (root, mut app) = app_with_two();
         app.screen = Screen::SyncReport(SyncReportState {
@@ -2212,6 +2288,27 @@ mod tests {
             .iter()
             .any(|alias| alias.name == "newone"));
         drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn renaming_to_the_unchanged_name_is_a_no_op() {
+        let (root, mut app) = app_with_two();
+        let alias = AliasService::new(&app.database)
+            .get_by_name("gs")
+            .unwrap()
+            .unwrap();
+        select_name(&mut app, "gs");
+        app.handle_key(key(KeyCode::Char('r')));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(app.status.text.contains("no rename performed"));
+        assert!(matches!(app.screen, Screen::Browse));
+        let after = AliasService::new(&app.database)
+            .get_by_name("gs")
+            .unwrap()
+            .unwrap();
+        assert_eq!(after.revision, alias.revision);
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }
