@@ -1,6 +1,7 @@
+use crate::fsutil::write_atomic;
 use crate::{
     error::AliasError,
-    model::{record_checksum, AliasRecord, PathMode, ShellKind, TargetType},
+    model::{contains_powershell, record_checksum, AliasRecord, PathMode, ShellKind, TargetType},
     validation::validate_alias,
 };
 use chrono::Utc;
@@ -123,9 +124,9 @@ pub fn export_toml(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
         exported_by_version: env!("CARGO_PKG_VERSION").into(),
         aliases: sanitized_for_export(aliases)?,
     };
-    fs::write(
+    write_atomic(
         path,
-        toml::to_string_pretty(&file).map_err(|error| AliasError::Config(error.to_string()))?,
+        &toml::to_string_pretty(&file).map_err(|error| AliasError::Config(error.to_string()))?,
     )?;
     Ok(())
 }
@@ -161,7 +162,7 @@ pub fn export_json(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
         exported_by_version: env!("CARGO_PKG_VERSION").into(),
         aliases: sanitized_for_export(aliases)?,
     };
-    fs::write(path, serde_json::to_string_pretty(&file)?)?;
+    write_atomic(path, &serde_json::to_string_pretty(&file)?)?;
     Ok(())
 }
 pub fn read_json(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
@@ -195,16 +196,34 @@ pub fn import_json(
     import_records(read_json(path)?, existing, strategy).map(|report| report.into_public())
 }
 
-fn contains_powershell(shells: &[ShellKind]) -> bool {
-    shells
-        .iter()
-        .any(|shell| matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7))
-}
-
 /// Mirrors the storage-level conflict rule: an exact name always conflicts, and
 /// incoming PowerShell aliases additionally conflict with existing PowerShell
 /// aliases whose name differs only by case. Folding uses `str::to_lowercase`,
 /// exactly like the `name_folded` column, so non-ASCII names agree with storage.
+/// True when an incoming PowerShell record folds to the name of a different
+/// existing PowerShell record. `excluding` lets an exact-name overwrite ignore
+/// its own row while still detecting a second case-fold conflict.
+///
+/// This is public so front ends can mirror the core import decision in a
+/// preview instead of reimplementing it.
+pub fn powershell_casefold_conflict(
+    name: &str,
+    shells: &[ShellKind],
+    existing: &BTreeMap<String, AliasRecord>,
+    excluding: Option<Uuid>,
+) -> bool {
+    if !contains_powershell(shells) {
+        return false;
+    }
+    let folded = name.to_lowercase();
+    existing.values().any(|record| {
+        Some(record.id) != excluding
+            && record.name != name
+            && record.name.to_lowercase() == folded
+            && contains_powershell(&record.shells)
+    })
+}
+
 fn conflicts_with_existing(
     name: &str,
     powershell: bool,

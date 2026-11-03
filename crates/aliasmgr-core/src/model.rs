@@ -172,6 +172,14 @@ pub enum ShellStatus {
     Unknown,
 }
 
+/// True when a record targets either PowerShell adapter. Import conflict
+/// rules use this to decide whether case-fold comparison applies.
+pub fn contains_powershell(shells: &[ShellKind]) -> bool {
+    shells
+        .iter()
+        .any(|shell| matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7))
+}
+
 impl ShellKind {
     /// Stable lowercase name used by the CLI, the GUI and stored metadata.
     pub fn as_str(&self) -> &'static str {

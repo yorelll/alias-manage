@@ -908,24 +908,27 @@ impl App {
         strategy: aliasmgr_core::transfer::ConflictStrategy,
     ) {
         if self.jobs.is_busy() {
+            if let Screen::Import(state) = &mut self.screen {
+                state.on_error(
+                    "another background job is running; import preview was not started".to_string(),
+                );
+            }
             self.set_status(StatusKind::Warning, "a background job is already running");
             return;
-        }
-        if let Screen::Import(state) = &mut self.screen {
-            state.busy = true;
-            state.error = None;
         }
         if self
             .jobs
             .start(JobKind::ImportPreview { path, strategy }, self.root.clone())
         {
+            if let Screen::Import(state) = &mut self.screen {
+                state.begin_preview();
+            }
             self.set_status(
                 StatusKind::Info,
                 "reading and validating the import file...",
             );
         } else if let Screen::Import(state) = &mut self.screen {
-            state.busy = false;
-            state.error = Some("could not start the import preview worker".to_string());
+            state.on_error("could not start the import preview worker".to_string());
         }
     }
 
@@ -938,21 +941,19 @@ impl App {
             self.set_status(StatusKind::Warning, "a background job is already running");
             return;
         }
-        if let Screen::Import(state) = &mut self.screen {
-            state.busy = true;
-            state.error = None;
-        }
         if self
             .jobs
             .start(JobKind::ImportConfirm { path, strategy }, self.root.clone())
         {
+            if let Screen::Import(state) = &mut self.screen {
+                state.begin_confirm();
+            }
             self.set_status(
                 StatusKind::Info,
                 "importing accepted records in one transaction...",
             );
         } else if let Screen::Import(state) = &mut self.screen {
-            state.busy = false;
-            state.error = Some("could not start the import worker".to_string());
+            state.on_error("could not start the import worker".to_string());
         }
     }
 
@@ -2744,6 +2745,59 @@ mod tests {
         assert_eq!(app.filter.sort, SortField::Name);
         assert!(!app.filter.fuzzy);
         assert_eq!(app.visible.len(), 2);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn refused_import_preview_does_not_leave_a_confirmable_empty_preview() {
+        let (root, mut app) = app_with_two();
+        app.jobs.mark_running_for_test(JobKind::Doctor);
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &root.join("input.json"));
+        app.handle_key(key(KeyCode::Enter));
+        let Screen::Import(state) = &app.screen else {
+            panic!("import screen");
+        };
+        assert_eq!(state.phase, ImportPhase::Input);
+        assert!(!state.busy);
+        assert!(state.report.is_none());
+        assert!(state
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("another background job"));
+        assert!(app.status.text.contains("background job"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn confirming_phase_is_visible_while_the_import_writes() {
+        let (root, mut app) = app_with_two();
+        let file = root.join("input.json");
+        aliasmgr_core::transfer::export_json(
+            &file,
+            &[AliasRecord {
+                name: "imported".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        app.handle_key(key(KeyCode::Char('y')));
+        let Screen::Import(state) = &app.screen else {
+            panic!("import screen");
+        };
+        assert_eq!(state.phase, ImportPhase::Confirming);
+        assert!(state.busy);
+        wait_for_jobs(&mut app);
+        assert!(matches!(app.screen, Screen::Import(_)));
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

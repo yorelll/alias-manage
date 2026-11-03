@@ -132,7 +132,9 @@ keys are removed by core before preview, persistence or display.
 
 `X` exports all aliases in the shared database. The format is chosen by
 extension, a path that already exists requires `y` overwrite confirmation, and
-sensitive environment values are omitted by core. Read/parse/write work runs on
+sensitive environment values are omitted by core. Export files are written via
+a temporary file in the same directory and renamed over the target, so a failed
+write leaves the previous file intact; directory targets are rejected. Read/parse/write work runs on
 the existing background job worker; preview and export never hold the sync
 lock. Missing files, invalid JSON/TOML, unsupported `format_version`, missing
 parent directories and permission errors are reported as actionable status
@@ -144,15 +146,18 @@ messages.
 language, `allow_relative_paths`, `backups.rc_keep`/`generated_keep`/`db_keep`
 and `logs.keep_files`. Fields are validated with the shared
 `AppConfig::validate` rules and numeric bounds before anything is written;
-invalid values keep the draft and show a field error. `Ctrl+S` writes only
-`config.toml`, preserving shell path overrides and unknown top-level keys.
+invalid values keep the draft and show a field error. `Ctrl+S` re-reads
+`config.toml` first, applies only the fields this screen edits, then writes via
+a temporary file and rename, preserving shell path overrides, unknown top-level
+keys and external edits to other fields. A failed write leaves the previous
+config intact.
 Backup/log retention applies to future rotations. The config directory is
 fixed at startup and shown read-only; change it with `ALIASMGR_CONFIG_DIR` or
-`--config-dir` before launching. `runtime.language` is a shared CLI/GUI value
-(the TUI itself stays English), and `runtime.default_shell` is a shared
-detection setting that the current CLI still resolves against the live shell
-environment. Unknown keys nested inside known config tables are not preserved;
-top-level unknown keys are.
+`--config-dir` before launching. `runtime.language` is persisted for the GUI;
+it does not localize CLI output or the TUI (which stays English).
+`runtime.default_shell` is saved to shared config but is not currently consumed
+by the CLI or TUI. Unknown keys nested inside known config tables are not
+preserved; top-level unknown keys are.
 
 ## Interaction details
 

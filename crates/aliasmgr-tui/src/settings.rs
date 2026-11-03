@@ -295,7 +295,11 @@ impl SettingsState {
     /// Builds the full config on top of the loaded base, preserving unknown
     /// keys and shell path overrides the editor does not expose.
     pub fn to_config(&self) -> Result<AppConfig, SettingsError> {
-        let mut config = self.base.clone();
+        self.to_config_on(&self.base)
+    }
+
+    fn to_config_on(&self, base: &AppConfig) -> Result<AppConfig, SettingsError> {
+        let mut config = base.clone();
         config.runtime.default_shell = match &self.draft.default_shell {
             Some(value) if !value.trim().is_empty() => Some(value.trim().to_string()),
             _ => None,
@@ -314,15 +318,31 @@ impl SettingsState {
     }
 
     pub fn save(&mut self) -> Result<(), SettingsError> {
-        let config = match self.to_config() {
+        let paths = AppPaths {
+            root: self.config_dir.clone(),
+        };
+        // Re-read before writing so fields the TUI does not edit (shell path
+        // overrides, unknown top-level keys, unrelated settings) are not
+        // replaced with the snapshot loaded when this screen opened.
+        let fresh = match paths.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                let failure = SettingsError::new(
+                    None,
+                    format!(
+                        "could not reload config.toml before saving: {error}; settings were not saved"
+                    ),
+                );
+                self.error = Some(failure.clone());
+                return Err(failure);
+            }
+        };
+        let config = match self.to_config_on(&fresh) {
             Ok(config) => config,
             Err(error) => {
                 self.error = Some(error.clone());
                 return Err(error);
             }
-        };
-        let paths = AppPaths {
-            root: self.config_dir.clone(),
         };
         if let Err(error) = config.save(&paths) {
             let message = friendly_save_error(&error, &self.config_file);
@@ -516,6 +536,47 @@ mod tests {
         );
         let raw = fs::read_to_string(paths.config_file()).unwrap();
         assert!(raw.contains("custom_key = \"keep\""), "{raw}");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_reloads_external_config_changes_before_applying_edits() {
+        let root = temp_root("concurrent");
+        fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let initial = AppConfig::default();
+        initial.save(&paths).unwrap();
+        let mut state = SettingsState::new(&root).unwrap();
+
+        // Another front end changes fields the TUI does not edit and adds an
+        // unknown top-level key after the screen was opened.
+        let mut external = paths.load_config().unwrap();
+        external.shells.bash_rc_path = Some(PathBuf::from("/tmp/external-bashrc"));
+        external.logs.max_file_bytes = 12345;
+        external.save(&paths).unwrap();
+        let saved = fs::read_to_string(paths.config_file()).unwrap();
+        fs::write(
+            paths.config_file(),
+            format!("external_key = \"kept\"\n{saved}"),
+        )
+        .unwrap();
+
+        state.draft.language = "en".into();
+        state.save().unwrap();
+        let loaded = paths.load_config().unwrap();
+        assert_eq!(loaded.runtime.language, "en");
+        assert_eq!(
+            loaded.shells.bash_rc_path.as_deref(),
+            Some(Path::new("/tmp/external-bashrc"))
+        );
+        assert_eq!(loaded.logs.max_file_bytes, 12345);
+        assert_eq!(
+            loaded
+                .extra
+                .get("external_key")
+                .and_then(|value| value.as_str()),
+            Some("kept")
+        );
         let _ = fs::remove_dir_all(root);
     }
 

@@ -1485,11 +1485,11 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App, state: &SettingsSta
         app.theme.muted(),
     )]));
     lines.push(line(vec![span(
-        "  runtime.default_shell is a shared detection setting; the current CLI still prefers the live shell environment; restart after changing it.",
+        "  runtime.default_shell is saved to shared config but is not currently consumed by the CLI or this TUI.",
         app.theme.muted(),
     )]));
     lines.push(line(vec![span(
-        "  runtime.language is a shared CLI/GUI value; the TUI itself stays in English.",
+        "  runtime.language is persisted for the GUI; CLI output and this TUI are not localized by it.",
         app.theme.muted(),
     )]));
     lines.push(line(vec![span(
@@ -2295,6 +2295,33 @@ mod tests {
         let lines = vec![Line::from("one two three four"), Line::from("short")];
         assert_eq!(super::wrapped_rows(&lines, width), 3);
         assert_eq!(super::wrapped_rows(&[], width), 0);
+    }
+
+    #[test]
+    fn import_confirming_phase_renders_write_specific_title_and_footer() {
+        let (root, mut app) = test_app("import-confirming");
+        app.screen = Screen::Import(crate::import_export::ImportState {
+            path_input: crate::input::TextInput::new("in.json"),
+            path: Some(PathBuf::from("in.json")),
+            strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+            phase: crate::import_export::ImportPhase::Confirming,
+            report: None,
+            error: None,
+            busy: true,
+            scroll: 0,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(
+            rendered.contains("Importing accepted records"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("import in progress"), "{rendered}");
+        assert!(
+            !rendered.contains("Refreshing the read-only preview"),
+            "{rendered}"
+        );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

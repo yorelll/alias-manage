@@ -768,12 +768,20 @@ pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
     let mut config = paths.load_config().map_err(|error| error.to_string())?;
     config.backups.rc_keep = settings.backup_keep;
     config.logs.keep_files = settings.log_keep;
-    config.runtime.default_shell = Some(settings.default_shell.clone());
+    let default_shell = settings.default_shell.trim().to_owned();
+    config.runtime.default_shell = if default_shell.is_empty() {
+        None
+    } else {
+        Some(default_shell.clone())
+    };
     config.runtime.allow_relative_paths = settings.allow_relative_paths;
     config.runtime.language = language.to_owned();
+    // Shared validation bounds and default-shell/language rules.
+    config.validate().map_err(|error| error.to_string())?;
     config.save(&paths).map_err(|error| error.to_string())?;
     Ok(SettingsDto {
         config_directory: paths.root.to_string_lossy().into_owned(),
+        default_shell,
         language: language.to_owned(),
         ..settings
     })

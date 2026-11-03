@@ -6,6 +6,7 @@ use crate::{
 use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::{
+    collections::BTreeMap,
     path::{Path, PathBuf},
     str::FromStr,
 };
@@ -195,42 +196,54 @@ impl Database {
         Ok(())
     }
 
-    /// Persists imported records in one transaction. With `overwrite`, an
-    /// incoming record whose exact name already exists updates that row (same
-    /// id, DB-owned created_at, revision bumped) instead of failing on the
-    /// unique-name INSERT; otherwise every accepted record is inserted.
+    /// Persists imported records in one transaction. `overwrite_existing` maps
+    /// names that existed when the import was evaluated to their ids. Only
+    /// those exact rows may be updated; a row inserted or replaced by another
+    /// front end after the preview is a conflict, never a silent overwrite.
     pub fn import_aliases_atomic(
         &self,
         aliases: &[AliasRecord],
-        overwrite: bool,
+        overwrite_existing: &BTreeMap<String, Uuid>,
     ) -> Result<(), AliasError> {
         let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
         for alias in aliases {
-            if overwrite {
-                if let Some(existing) = self.get_alias_by_name(&alias.name)? {
-                    let mut record = alias.clone();
-                    record.id = existing.id;
-                    record.record_checksum = record_checksum(&record)?;
-                    // Removing a shell from the overwritten record must retire
-                    // the old name for that shell so the next sync emits cleanup.
-                    for shell in existing
-                        .shells
-                        .iter()
-                        .filter(|shell| !record.shells.contains(shell))
-                    {
-                        self.retire_name(
-                            &existing.name,
-                            shell,
-                            existing.revision.saturating_add(1),
-                        )?;
+            if let Some(expected_id) = overwrite_existing.get(&alias.name).copied() {
+                match self.get_alias_by_name(&alias.name)? {
+                    Some(existing) if existing.id == expected_id => {
+                        let mut record = alias.clone();
+                        record.id = existing.id;
+                        record.record_checksum = record_checksum(&record)?;
+                        // Removing a shell from the overwritten record must retire
+                        // the old name for that shell so the next sync emits cleanup.
+                        for shell in existing
+                            .shells
+                            .iter()
+                            .filter(|shell| !record.shells.contains(shell))
+                        {
+                            self.retire_name(
+                                &existing.name,
+                                shell,
+                                existing.revision.saturating_add(1),
+                            )?;
+                        }
+                        if !self.update_alias(&record)? {
+                            return Err(AliasError::Config(format!(
+                                "import overwrite could not update {}",
+                                alias.name
+                            )));
+                        }
+                        continue;
                     }
-                    if !self.update_alias(&record)? {
-                        return Err(AliasError::Config(format!(
-                            "import overwrite could not update {}",
+                    Some(_) => {
+                        return Err(AliasError::AliasConflict(format!(
+                            "import overwrite target changed after preview: {}",
                             alias.name
-                        )));
+                        )))
                     }
-                    continue;
+                    None => {
+                        // The row was deleted after preview; insert the imported
+                        // record instead of silently resurrecting the old id.
+                    }
                 }
             }
             self.insert_alias(alias)?;
@@ -1553,6 +1566,59 @@ mod tests {
     }
 
     #[test]
+    fn import_aliases_atomic_rolls_back_mid_batch_conflicts() {
+        let database = Database::open_in_memory().unwrap();
+        let mut first = AliasRecord {
+            name: "one".into(),
+            executable: "first".into(),
+            ..Default::default()
+        };
+        first.record_checksum = record_checksum(&first).unwrap();
+        let mut duplicate = AliasRecord {
+            name: "one".into(),
+            executable: "second".into(),
+            ..Default::default()
+        };
+        duplicate.record_checksum = record_checksum(&duplicate).unwrap();
+        assert!(database
+            .import_aliases_atomic(&[first, duplicate], &BTreeMap::new())
+            .is_err());
+        assert!(database.list_aliases().unwrap().is_empty());
+    }
+
+    #[test]
+    fn import_aliases_atomic_does_not_overwrite_a_row_inserted_after_preview() {
+        let database = Database::open_in_memory().unwrap();
+        let mut winner = AliasRecord {
+            name: "one".into(),
+            executable: "external".into(),
+            ..Default::default()
+        };
+        winner.record_checksum = record_checksum(&winner).unwrap();
+        database.insert_alias(&winner).unwrap();
+        let mut incoming = AliasRecord {
+            name: "one".into(),
+            executable: "imported".into(),
+            ..Default::default()
+        };
+        incoming.record_checksum = record_checksum(&incoming).unwrap();
+        // Preview saw no row for "one"; another front end inserted `winner`
+        // before our BEGIN IMMEDIATE. Inserting must conflict, not update.
+        assert!(matches!(
+            database.import_aliases_atomic(&[incoming], &BTreeMap::new()),
+            Err(AliasError::ExactNameConflict(name)) if name == "one"
+        ));
+        assert_eq!(
+            database
+                .get_alias_by_name("one")
+                .unwrap()
+                .unwrap()
+                .executable,
+            "external"
+        );
+    }
+
+    #[test]
     fn import_aliases_atomic_overwrite_updates_existing_rows() {
         let database = Database::open_in_memory().unwrap();
         let mut original = AliasRecord {
@@ -1568,8 +1634,9 @@ mod tests {
         incoming.executable = "new".into();
         incoming.shells = vec![ShellKind::Bash];
         incoming.record_checksum = record_checksum(&incoming).unwrap();
+        let overwrite = BTreeMap::from([("gs".to_string(), original.id)]);
         database
-            .import_aliases_atomic(std::slice::from_ref(&incoming), true)
+            .import_aliases_atomic(std::slice::from_ref(&incoming), &overwrite)
             .unwrap();
         let saved = database.get_alias(original.id).unwrap().unwrap();
         assert_eq!(saved.id, original.id);

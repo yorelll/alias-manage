@@ -331,6 +331,12 @@ pub fn transfer_format(path: &Path) -> &'static str {
 }
 
 fn read_import_records(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
+    if path.is_dir() {
+        return Err(AliasError::Config(format!(
+            "path is a directory: {}",
+            path.display()
+        )));
+    }
     if transfer_format(path) == "TOML" {
         transfer::read_toml(path)
     } else {
@@ -350,6 +356,30 @@ fn existing_aliases_for_preview(root: &Path) -> Result<BTreeMap<String, AliasRec
         .collect())
 }
 
+/// Applies the same PowerShell case-fold rule that core uses, but for the
+/// Overwrite strategy where core accepts the record. `existing` is the
+/// snapshot used for preview or confirmation, so both report identical counts.
+fn filter_overwrite_casefold(report: &mut ImportReport, existing: &BTreeMap<String, AliasRecord>) {
+    let mut accepted = Vec::new();
+    let mut imported = Vec::new();
+    for record in report.accepted_records.drain(..) {
+        let exact_id = existing.get(&record.name).map(|alias| alias.id);
+        if transfer::powershell_casefold_conflict(&record.name, &record.shells, existing, exact_id)
+        {
+            report.warnings.push(format!(
+                "PowerShell case-fold conflict requires manual resolution: {}",
+                record.name
+            ));
+            report.skipped.push(record.name);
+        } else {
+            imported.push(record.name.clone());
+            accepted.push(record);
+        }
+    }
+    report.accepted_records = accepted;
+    report.imported = imported;
+}
+
 fn import_error(error: &AliasError, path: &Path) -> String {
     match error {
         AliasError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
@@ -357,6 +387,12 @@ fn import_error(error: &AliasError, path: &Path) -> String {
         }
         AliasError::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied => {
             format!("permission denied reading {}", path.display())
+        }
+        AliasError::Io(io)
+            if io.kind() == std::io::ErrorKind::IsADirectory
+                || io.kind() == std::io::ErrorKind::NotADirectory =>
+        {
+            format!("path is a directory: {}", path.display())
         }
         AliasError::Config(message) => message.clone(),
         AliasError::Serialization(error) => format!("invalid JSON export: {error}"),
@@ -372,6 +408,12 @@ fn export_error(error: &AliasError, path: &Path) -> String {
         }
         AliasError::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied => {
             format!("permission denied writing {}", path.display())
+        }
+        AliasError::Io(io)
+            if io.kind() == std::io::ErrorKind::IsADirectory
+                || io.kind() == std::io::ErrorKind::NotADirectory =>
+        {
+            format!("target is a directory: {}", path.display())
         }
         AliasError::Config(message) => message.clone(),
         AliasError::Serialization(error) => format!("could not serialize export: {error}"),
@@ -390,7 +432,10 @@ pub fn import_preview(
     let existing =
         existing_aliases_for_preview(root).map_err(|error| import_error(&error, path))?;
     transfer::import_records(records, &existing, strategy)
-        .map(|report| {
+        .map(|mut report| {
+            if strategy == ConflictStrategy::Overwrite {
+                filter_overwrite_casefold(&mut report, &existing);
+            }
             ImportReportSummary::from_report(
                 report.into_public(),
                 strategy,
@@ -425,29 +470,18 @@ pub fn import_confirm(
         // must update the existing id rather than INSERT. Resolve remaining
         // PowerShell case-fold conflicts before writing instead of failing the
         // whole transaction on a unique/case-fold constraint.
-        let mut accepted = Vec::new();
-        let mut imported = Vec::new();
-        for record in report.accepted_records.drain(..) {
-            let exact_id = existing.get(&record.name).map(|alias| alias.id);
-            let casefold = database
-                .has_powershell_case_conflict(&record.name, exact_id)
-                .map_err(|error| import_error(&error, path))?;
-            if casefold {
-                report.warnings.push(format!(
-                    "PowerShell case-fold conflict requires manual resolution: {}",
-                    record.name
-                ));
-                report.skipped.push(record.name);
-            } else {
-                imported.push(record.name.clone());
-                accepted.push(record);
-            }
-        }
-        report.accepted_records = accepted;
-        report.imported = imported;
+        filter_overwrite_casefold(&mut report, &existing);
     }
+    let overwrite_existing = if overwrite {
+        existing
+            .iter()
+            .map(|(name, alias)| (name.clone(), alias.id))
+            .collect::<BTreeMap<String, uuid::Uuid>>()
+    } else {
+        BTreeMap::new()
+    };
     database
-        .import_aliases_atomic(&report.accepted_records, overwrite)
+        .import_aliases_atomic(&report.accepted_records, &overwrite_existing)
         .map_err(|error| import_error(&error, path))?;
     Ok(ImportReportSummary::from_report(
         report.into_public(),
@@ -458,6 +492,9 @@ pub fn import_confirm(
 }
 
 pub fn export_aliases(root: &Path, path: &Path, overwrite: bool) -> Result<ExportSummary, String> {
+    if path.is_dir() {
+        return Err(format!("target is a directory: {}", path.display()));
+    }
     if path.exists() && !overwrite {
         return Err(format!(
             "file already exists; overwrite was not confirmed: {}",
@@ -629,6 +666,12 @@ impl Jobs {
                 ),
             }),
         }
+    }
+
+    /// Test-only marker for a busy worker without spawning a thread.
+    #[cfg(test)]
+    pub fn mark_running_for_test(&mut self, kind: JobKind) {
+        self.running = Some(kind);
     }
 
     /// Test-only injection of a worker outcome for deterministic UI tests.
@@ -1212,8 +1255,15 @@ mod tests {
                 ..Default::default()
             }],
         );
+        // Incoming PowerShell record: preview and confirm both skip the
+        // case-fold conflict with identical counts/warnings.
         let preview = import_preview(&root, &file, ConflictStrategy::Overwrite).unwrap();
-        assert_eq!(preview.imported, vec!["build"]);
+        assert!(preview.imported.is_empty());
+        assert_eq!(preview.skipped, vec!["build"]);
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("case-fold conflict")));
         let report = import_confirm(&root, &file, ConflictStrategy::Overwrite).unwrap();
         assert!(report.imported.is_empty());
         assert_eq!(report.skipped, vec!["build"]);
@@ -1229,14 +1279,33 @@ mod tests {
             .map(|alias| alias.name)
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["Build"]);
+
+        // Incoming Bash record has no PowerShell case-fold rule and may coexist.
+        let bash_file = root.join("casefold-bash.json");
+        export_file(
+            &bash_file,
+            &[AliasRecord {
+                name: "build".into(),
+                executable: "bash-target".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        );
+        let preview = import_preview(&root, &bash_file, ConflictStrategy::Overwrite).unwrap();
+        assert_eq!(preview.imported, vec!["build"]);
+        assert!(preview.warnings.is_empty());
+        let report = import_confirm(&root, &bash_file, ConflictStrategy::Overwrite).unwrap();
+        assert_eq!(report.imported, vec!["build"]);
+        let database = Database::open(root.join("aliases.db")).unwrap();
         assert_eq!(
             database
-                .get_alias_by_name("Build")
+                .get_alias_by_name("build")
                 .unwrap()
                 .unwrap()
                 .executable,
-            "old"
+            "bash-target"
         );
+        assert!(database.get_alias_by_name("Build").unwrap().is_some());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1331,10 +1400,16 @@ mod tests {
         let missing = root.join("missing.json");
         let error = import_preview(&root, &missing, ConflictStrategy::Ask).unwrap_err();
         assert!(error.contains("file not found"), "{error}");
+
+        let directory = root.join("import-dir");
+        std::fs::create_dir(&directory).unwrap();
+        let error = import_preview(&root, &directory, ConflictStrategy::Ask).unwrap_err();
+        assert!(error.contains("path is a directory"), "{error}");
         let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
+    #[allow(clippy::permissions_set_readonly_false)] // cleanup only
     fn export_handles_formats_overwrite_and_missing_parent_friendly() {
         let root = temp_root("export-errors");
         let database = Database::open(root.join("aliases.db")).unwrap();
@@ -1370,11 +1445,20 @@ mod tests {
         let directory = root.join("target-dir");
         std::fs::create_dir(&directory).unwrap();
         let error = export_aliases(&root, &directory, true).unwrap_err();
-        assert!(
-            error.contains("permission denied writing") || error.contains("could not export to"),
-            "{error}"
-        );
+        assert!(error.contains("target is a directory"), "{error}");
         assert!(!error.starts_with("os error"), "{error}");
+
+        // A read-only target must keep its previous content and leave no temp.
+        let readonly = root.join("readonly.json");
+        std::fs::write(&readonly, "previous").unwrap();
+        let mut permissions = std::fs::metadata(&readonly).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&readonly, permissions.clone()).unwrap();
+        let error = export_aliases(&root, &readonly, true).unwrap_err();
+        assert!(error.contains("permission denied"), "{error}");
+        assert_eq!(std::fs::read_to_string(&readonly).unwrap(), "previous");
+        permissions.set_readonly(false);
+        let _ = std::fs::set_permissions(&readonly, permissions);
         let _ = std::fs::remove_dir_all(root);
     }
 

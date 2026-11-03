@@ -119,7 +119,7 @@ impl AppConfig {
             let shell = shell.trim();
             if !matches!(shell, "bash" | "zsh" | "powershell5" | "powershell7") {
                 return Err(AliasError::Config(format!(
-                    "unsupported default shell: {shell} (expected bash, zsh, powershell5, powershell7, or empty)"
+                    "unsupported default shell: {shell} (expected bash, zsh, powershell5, or powershell7)"
                 )));
             }
         }
@@ -334,9 +334,9 @@ impl AppConfig {
                 table.entry(key.clone()).or_insert_with(|| item.clone());
             }
         }
-        fs::write(
-            paths.config_file(),
-            toml::to_string_pretty(&value)
+        crate::fsutil::write_atomic(
+            &paths.config_file(),
+            &toml::to_string_pretty(&value)
                 .map_err(|error| AliasError::Config(error.to_string()))?,
         )?;
         Ok(())

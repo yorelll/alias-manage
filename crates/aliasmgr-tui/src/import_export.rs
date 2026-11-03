@@ -92,6 +92,14 @@ impl ImportState {
             .unwrap_or("unknown")
     }
 
+    pub fn begin_preview(&mut self) {
+        self.busy = true;
+        self.phase = ImportPhase::Preview;
+        self.report = None;
+        self.error = None;
+        self.scroll = 0;
+    }
+
     pub fn begin_confirm(&mut self) {
         self.busy = true;
         self.phase = ImportPhase::Confirming;
@@ -138,7 +146,9 @@ impl ImportState {
                     let path = PathBuf::from(value);
                     self.path = Some(path.clone());
                     self.error = None;
-                    self.phase = ImportPhase::Preview;
+                    // Stay in Input until the caller actually starts the
+                    // preview worker; a refused start must not leave an empty
+                    // Preview screen that can be confirmed.
                     ImportAction::Preview {
                         path,
                         strategy: self.strategy,
@@ -276,6 +286,11 @@ impl ExportState {
                     }
                     let path = PathBuf::from(value);
                     self.path = Some(path.clone());
+                    if path.is_dir() {
+                        self.error = Some(format!("target is a directory: {}", path.display()));
+                        self.phase = ExportPhase::Input;
+                        return ExportAction::None;
+                    }
                     self.error = None;
                     if path.exists() {
                         self.phase = ExportPhase::ConfirmOverwrite;
@@ -364,6 +379,9 @@ mod tests {
             }
             other => panic!("unexpected {other:?}"),
         }
+        assert_eq!(state.phase, ImportPhase::Input);
+        state.begin_preview();
+        state.busy = false; // simulated worker completion
         assert_eq!(state.phase, ImportPhase::Preview);
         assert_eq!(state.format(), "TOML");
         let action = state.handle_key(key(KeyCode::Char('c')));
@@ -412,6 +430,31 @@ mod tests {
     }
 
     #[test]
+    fn export_rejects_a_directory_without_an_overwrite_prompt() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-transfer-ui-dir-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let mut state = ExportState::new();
+        for character in root.to_string_lossy().chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+        assert_eq!(state.handle_key(key(KeyCode::Enter)), ExportAction::None);
+        assert_eq!(state.phase, ExportPhase::Input);
+        assert!(state
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("target is a directory"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn export_cancelled_overwrite_does_not_start() {
         let path = temp_path("cancel", "toml");
         fs::write(&path, "x").unwrap();
@@ -424,5 +467,46 @@ mod tests {
         assert_eq!(state.phase, ExportPhase::Input);
         assert_eq!(state.format(), "TOML");
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn preview_advances_only_when_the_worker_starts() {
+        let mut state = ImportState::new();
+        for character in "in.json".chars() {
+            state.handle_key(key(KeyCode::Char(character)));
+        }
+        let action = state.handle_key(key(KeyCode::Enter));
+        assert!(matches!(action, ImportAction::Preview { .. }));
+        assert_eq!(state.phase, ImportPhase::Input);
+        state.begin_preview();
+        assert_eq!(state.phase, ImportPhase::Preview);
+        assert!(state.busy);
+        assert!(state
+            .handle_key(key(KeyCode::Char('y')))
+            .eq(&ImportAction::None));
+        state.on_error("worker refused".into());
+        assert_eq!(state.phase, ImportPhase::Input);
+        assert!(!state.busy);
+        assert!(state.error.as_deref().unwrap().contains("worker refused"));
+    }
+
+    #[test]
+    fn confirming_phase_is_reported_until_the_result_arrives() {
+        let mut state = ImportState::new();
+        state.path = Some(PathBuf::from("in.json"));
+        state.begin_confirm();
+        assert_eq!(state.phase, ImportPhase::Confirming);
+        assert!(state.busy);
+        state.on_confirmed(ImportReportSummary {
+            imported: vec!["gs".into()],
+            skipped: Vec::new(),
+            unsupported: Vec::new(),
+            warnings: Vec::new(),
+            strategy: ConflictStrategy::Ask,
+            path: PathBuf::from("in.json"),
+            format: "JSON",
+        });
+        assert_eq!(state.phase, ImportPhase::Result);
+        assert!(!state.busy);
     }
 }
