@@ -7,8 +7,10 @@
 
 mod app;
 mod data;
+mod import_export;
 mod input;
 mod model;
+mod settings;
 mod terminal;
 mod text;
 mod theme;

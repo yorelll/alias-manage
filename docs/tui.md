@@ -73,6 +73,9 @@ compiled in and exits with code 1. No ratatui/crossterm code is linked.
 | `o` / `O` | cycle sort / toggle descending |
 | `R` | manual refresh; reports external changes |
 | `Esc` | clear applied search/tag/sort filters; from detail focus it returns to the list and clears them in one press |
+| `I` | import aliases from JSON/TOML |
+| `X` | export all aliases to JSON/TOML |
+| `S` | edit shared `config.toml` settings |
 | `?` | help |
 | `q` / `Ctrl+C` | quit |
 
@@ -112,6 +115,44 @@ second submit.
 | `r` | rescan (Doctor); retry only failed shells (Sync results) |
 | `Esc` | back to the browser |
 | `q` | quit |
+
+## Import and export
+
+`I` opens an import flow: enter a path, `Enter` previews, `y` confirms and
+`Esc` cancels. Extension `.toml` selects TOML; anything else selects JSON,
+matching the CLI. The preview reports imported/skipped/unsupported/warnings
+without opening for writes or creating the database. `c` cycles the core
+conflict strategy (Ask default, Skip, Overwrite, Rename). Ask and Skip skip
+conflicts; Overwrite updates exact-name rows in place, while PowerShell
+case-fold conflicts that need manual resolution are skipped with a warning.
+On confirmation the file is re-read and re-evaluated against the current
+database, then accepted records are persisted in one transaction
+(`import_aliases_atomic` / `insert_aliases_atomic`). Sensitive environment
+keys are removed by core before preview, persistence or display.
+
+`X` exports all aliases in the shared database. The format is chosen by
+extension, a path that already exists requires `y` overwrite confirmation, and
+sensitive environment values are omitted by core. Read/parse/write work runs on
+the existing background job worker; preview and export never hold the sync
+lock. Missing files, invalid JSON/TOML, unsupported `format_version`, missing
+parent directories and permission errors are reported as actionable status
+messages.
+
+## Settings
+
+`S` edits the shared `config.toml` loaded through `AppPaths`: default shell,
+language, `allow_relative_paths`, `backups.rc_keep`/`generated_keep`/`db_keep`
+and `logs.keep_files`. Fields are validated with the shared
+`AppConfig::validate` rules and numeric bounds before anything is written;
+invalid values keep the draft and show a field error. `Ctrl+S` writes only
+`config.toml`, preserving shell path overrides and unknown top-level keys.
+Backup/log retention applies to future rotations. The config directory is
+fixed at startup and shown read-only; change it with `ALIASMGR_CONFIG_DIR` or
+`--config-dir` before launching. `runtime.language` is a shared CLI/GUI value
+(the TUI itself stays English), and `runtime.default_shell` is a shared
+detection setting that the current CLI still resolves against the live shell
+environment. Unknown keys nested inside known config tables are not preserved;
+top-level unknown keys are.
 
 ## Interaction details
 
@@ -247,8 +288,6 @@ remedy, and the finding disappears after it.
 
 ## Not implemented in the TUI (Phase 5 remainder)
 
-- Import/export preview and confirmation.
-- Settings (`config.toml`) editing.
 - Loader install/uninstall actions (Doctor shows the finding and points at the
   CLI).
 - Bulk multi-select operations.

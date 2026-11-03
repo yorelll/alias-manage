@@ -43,6 +43,7 @@ dependencies = [
  "aliasmgr-core",
  "crossterm",
  "ratatui",
+ "serde_json",
  "unicode-width",
  "uuid",
 ]

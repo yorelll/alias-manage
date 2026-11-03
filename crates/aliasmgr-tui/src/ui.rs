@@ -7,7 +7,9 @@ use crate::{
         StatusKind, SyncReportState,
     },
     data,
+    import_export::{strategy_label, ExportPhase, ExportState, ImportPhase, ImportState},
     model::{shell_label, target_type_label, target_type_semantics, visible_fields, Editor, Field},
+    settings::{SettingsField, SettingsState},
     text,
     theme::Theme,
 };
@@ -163,6 +165,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::Doctor(state) => render_doctor(frame, body, app, state),
         Screen::Help(state) => render_scroll(frame, body, app, state, false),
         Screen::SyncReport(state) => render_sync_report(frame, body, app, state),
+        Screen::Import(state) => render_import(frame, body, app, state),
+        Screen::Export(state) => render_export(frame, body, app, state),
+        Screen::Settings(state) => render_settings(frame, body, app, state),
     }
     render_footer(frame, chunks[2], app);
     render_modal(frame, area, app);
@@ -202,6 +207,9 @@ fn screen_label(app: &App) -> &'static str {
         Screen::Doctor(_) => "Doctor",
         Screen::Help(_) => "Help",
         Screen::SyncReport(_) => "Sync results",
+        Screen::Import(_) => "Import",
+        Screen::Export(_) => "Export",
+        Screen::Settings(_) => "Settings",
     }
 }
 
@@ -219,6 +227,9 @@ fn focus_label(app: &App) -> String {
         Screen::Doctor(_) => "doctor".to_string(),
         Screen::Help(_) => "help".to_string(),
         Screen::SyncReport(_) => "sync report".to_string(),
+        Screen::Import(_) => "import".to_string(),
+        Screen::Export(_) => "export".to_string(),
+        Screen::Settings(settings) => format!("settings field {}", settings.field.label()),
     }
 }
 
@@ -1153,6 +1164,346 @@ fn editor_side_lines(editor: &Editor, theme: Theme) -> Vec<Line<'static>> {
     lines
 }
 
+fn names_line(label: &str, names: &[String], theme: Theme) -> Option<Line<'static>> {
+    if names.is_empty() {
+        return None;
+    }
+    let shown = names
+        .iter()
+        .take(8)
+        .map(|name| text::one_line(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let suffix = if names.len() > 8 {
+        format!(", +{} more", names.len() - 8)
+    } else {
+        String::new()
+    };
+    Some(line(vec![
+        span(format!("{label}: "), theme.label()),
+        span(format!("{shown}{suffix}"), Style::default()),
+    ]))
+}
+
+fn render_import(frame: &mut Frame, area: Rect, app: &App, state: &ImportState) {
+    let title = match state.phase {
+        ImportPhase::Input => "Import aliases",
+        ImportPhase::Preview if state.busy => "Import preview (working)",
+        ImportPhase::Preview => "Import preview",
+        ImportPhase::Confirming => "Importing accepted records",
+        ImportPhase::Result => "Import result",
+    };
+    let mut lines = Vec::new();
+    let mut path_spans = vec![span("File: ", app.theme.label())];
+    if state.phase == ImportPhase::Input {
+        path_spans.extend(input_spans(&state.path_input, app.theme));
+    } else {
+        path_spans.push(span(
+            state
+                .path
+                .as_ref()
+                .map(|path| text::one_line(&path.display().to_string()))
+                .unwrap_or_else(|| "(none)".to_string()),
+            Style::default(),
+        ));
+    }
+    lines.push(line(path_spans));
+    lines.push(line(vec![
+        span("Format: ", app.theme.label()),
+        span(
+            if state.path.is_some() {
+                format!("{} (extension-based)", state.format())
+            } else {
+                ".toml => TOML, anything else => JSON".to_string()
+            },
+            Style::default(),
+        ),
+    ]));
+    lines.push(line(vec![
+        span("Conflict strategy: ", app.theme.label()),
+        span(strategy_label(state.strategy).to_string(), Style::default()),
+        span("  (c changes)", app.theme.muted()),
+    ]));
+    if state.busy {
+        lines.push(Line::default());
+        lines.push(line(vec![span(
+            "Reading and validating in the background; nothing is written during preview.",
+            app.theme.warning(),
+        )]));
+    }
+    if let Some(error) = &state.error {
+        lines.push(Line::default());
+        lines.push(line(vec![span(
+            format!("! {}", text::one_line(error)),
+            app.theme.error(),
+        )]));
+    }
+    if let Some(report) = &state.report {
+        lines.push(Line::default());
+        lines.push(line(vec![span(
+            format!(
+                "imported={} skipped={} unsupported={} warnings={}",
+                report.imported.len(),
+                report.skipped.len(),
+                report.unsupported.len(),
+                report.warnings.len()
+            ),
+            app.theme.title(),
+        )]));
+        for (label, names) in [
+            ("Imported", &report.imported),
+            ("Skipped", &report.skipped),
+            ("Unsupported", &report.unsupported),
+        ] {
+            if let Some(value) = names_line(label, names, app.theme) {
+                lines.push(value);
+            }
+        }
+        if !report.warnings.is_empty() {
+            lines.push(line(vec![span("Warnings:", app.theme.warning())]));
+            for warning in &report.warnings {
+                lines.push(line(vec![
+                    span("  ! ", app.theme.warning()),
+                    span(text::one_line(warning), Style::default()),
+                ]));
+            }
+        }
+        match state.phase {
+            ImportPhase::Preview if !state.busy => {
+                lines.push(Line::default());
+                lines.push(line(vec![span(
+                    "Preview only: the database has not been changed. y imports the accepted records atomically.",
+                    app.theme.warning(),
+                )]));
+            }
+            ImportPhase::Preview => {
+                lines.push(Line::default());
+                lines.push(line(vec![span(
+                    "Refreshing the read-only preview...",
+                    app.theme.warning(),
+                )]));
+            }
+            ImportPhase::Confirming => {
+                lines.push(Line::default());
+                lines.push(line(vec![span(
+                    "Importing accepted records in one transaction...",
+                    app.theme.warning(),
+                )]));
+            }
+            ImportPhase::Result => {
+                lines.push(Line::default());
+                lines.push(line(vec![span(
+                    "Import committed in one transaction. Esc returns to the alias list.",
+                    app.theme.success(),
+                )]));
+            }
+            ImportPhase::Input => {}
+        }
+    } else if state.phase == ImportPhase::Input {
+        lines.push(Line::default());
+        lines.push(line(vec![span(
+            "Enter previews imports/skips/warnings without writing. Esc cancels.",
+            app.theme.muted(),
+        )]));
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block(title, app.theme))
+            .wrap(Wrap { trim: false })
+            .scroll((state.scroll, 0)),
+        area,
+    );
+}
+
+fn render_export(frame: &mut Frame, area: Rect, app: &App, state: &ExportState) {
+    let title = match state.phase {
+        ExportPhase::Input => "Export aliases",
+        ExportPhase::ConfirmOverwrite => "Export: overwrite?",
+        ExportPhase::Result => "Export result",
+    };
+    let mut lines = Vec::new();
+    let mut path_spans = vec![span("File: ", app.theme.label())];
+    if state.phase == ExportPhase::Input {
+        path_spans.extend(input_spans(&state.path_input, app.theme));
+    } else {
+        path_spans.push(span(
+            state
+                .path
+                .as_ref()
+                .map(|path| text::one_line(&path.display().to_string()))
+                .unwrap_or_else(|| "(none)".to_string()),
+            Style::default(),
+        ));
+    }
+    lines.push(line(path_spans));
+    lines.push(line(vec![
+        span("Format: ", app.theme.label()),
+        span(
+            if state.path.is_some() {
+                format!("{} (extension-based)", state.format())
+            } else {
+                ".toml => TOML, anything else => JSON".to_string()
+            },
+            Style::default(),
+        ),
+    ]));
+    lines.push(line(vec![
+        span("Scope: ", app.theme.label()),
+        span(
+            format!(
+                "all aliases in the shared database ({} loaded)",
+                app.snapshot.aliases.len()
+            ),
+            Style::default(),
+        ),
+    ]));
+    lines.push(line(vec![span(
+        "Sensitive environment variables are omitted by core; values are never shown.",
+        app.theme.muted(),
+    )]));
+    if state.busy {
+        lines.push(Line::default());
+        lines.push(line(vec![span(
+            "Exporting in the background...",
+            app.theme.warning(),
+        )]));
+    }
+    if let Some(error) = &state.error {
+        lines.push(Line::default());
+        lines.push(line(vec![span(
+            format!("! {}", text::one_line(error)),
+            app.theme.error(),
+        )]));
+    }
+    if state.busy {
+        // The busy line above is sufficient; do not advertise actions that are
+        // ignored while the worker owns the flow.
+    } else {
+        match state.phase {
+            ExportPhase::Input => {
+                lines.push(Line::default());
+                lines.push(line(vec![span(
+                    "Enter exports after confirmation if the file exists. Esc cancels.",
+                    app.theme.muted(),
+                )]));
+            }
+            ExportPhase::ConfirmOverwrite => {
+                lines.push(Line::default());
+                lines.push(line(vec![span(
+                    "The target file already exists. y overwrites it, n/Esc returns to the path.",
+                    app.theme.warning(),
+                )]));
+            }
+            ExportPhase::Result => {
+                if let Some(summary) = &state.summary {
+                    lines.push(Line::default());
+                    lines.push(line(vec![span(
+                        format!(
+                            "Exported {} alias(es) as {} to {}.",
+                            summary.count,
+                            summary.format,
+                            text::one_line(&summary.path.display().to_string())
+                        ),
+                        app.theme.success(),
+                    )]));
+                    lines.push(line(vec![span(
+                        "Esc returns to the alias list.",
+                        app.theme.muted(),
+                    )]));
+                }
+            }
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block(title, app.theme))
+            .wrap(Wrap { trim: false })
+            .scroll((state.scroll, 0)),
+        area,
+    );
+}
+
+fn render_settings(frame: &mut Frame, area: Rect, app: &App, state: &SettingsState) {
+    let title = format!("Settings [field: {}]", state.field.label());
+    let mut lines = vec![
+        line(vec![
+            span("Config dir: ", app.theme.label()),
+            span(
+                text::one_line(&state.config_dir.display().to_string()),
+                Style::default(),
+            ),
+            span("  (fixed at startup)", app.theme.muted()),
+        ]),
+        line(vec![span(
+            "Change the config root only by restarting with ALIASMGR_CONFIG_DIR or --config-dir.",
+            app.theme.muted(),
+        )]),
+        line(vec![span(
+            "These settings are shared with the CLI and GUI; config.toml is the only file written.",
+            app.theme.muted(),
+        )]),
+        Line::default(),
+    ];
+    if let Some(error) = &state.error {
+        lines.push(line(vec![span(
+            format!(
+                "! {}: {}",
+                error
+                    .field
+                    .map(SettingsField::label)
+                    .unwrap_or("config.toml"),
+                text::one_line(&error.message)
+            ),
+            app.theme.error(),
+        )]));
+        lines.push(Line::default());
+    }
+    for field in SettingsField::ALL {
+        let selected = state.field == field;
+        let mut spans = vec![
+            span(if selected { "> " } else { "  " }, app.theme.accent()),
+            span(format!("{}: ", field.label()), app.theme.label()),
+        ];
+        if selected && field.is_text() {
+            spans.extend(input_spans(&state.input, app.theme));
+        } else {
+            spans.push(span(
+                text::one_line(&state.draft.display(field)),
+                if selected {
+                    app.theme.selected()
+                } else {
+                    Style::default()
+                },
+            ));
+        }
+        lines.push(line(spans));
+    }
+    lines.push(Line::default());
+    lines.push(line(vec![span("Effects", app.theme.title())]));
+    lines.push(line(vec![span(
+        "  backups.rc_keep/generated_keep/db_keep and logs.keep_files apply to future rotations.",
+        app.theme.muted(),
+    )]));
+    lines.push(line(vec![span(
+        "  runtime.default_shell is a shared detection setting; the current CLI still prefers the live shell environment; restart after changing it.",
+        app.theme.muted(),
+    )]));
+    lines.push(line(vec![span(
+        "  runtime.language is a shared CLI/GUI value; the TUI itself stays in English.",
+        app.theme.muted(),
+    )]));
+    lines.push(line(vec![span(
+        "  allow_relative_paths is a shared config switch; the TUI does not gate its own input on it.",
+        app.theme.muted(),
+    )]));
+    frame.render_widget(
+        Paragraph::new(Text::from(lines))
+            .block(block(&title, app.theme))
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 fn preview_lines(state: &PreviewState, theme: Theme) -> Vec<Line<'static>> {
     if let Some(error) = &state.error {
         vec![line(vec![span(
@@ -1432,7 +1783,7 @@ fn footer_key_lines(app: &App, width: usize) -> Vec<String> {
             current = token.to_string();
         }
     }
-    if !current.is_empty() {
+    if lines.len() < 2 && !current.is_empty() {
         lines.push(current);
     }
     if lines.is_empty() {
@@ -1464,7 +1815,7 @@ fn footer_keys(app: &App) -> String {
             "type to search   Up/Down move   Enter apply   Esc clear".to_string()
         }
         Screen::Browse => {
-            "Up/Down move  Enter detail  / search  n new  e edit  r rename  Space on/off  d delete  s sync  p preview  D doctor  ? help  q quit  t tags  o sort  R refresh".to_string()
+            "Up/Down move  Enter detail  q quit  / search  n new  e edit  r rename  Space on/off  d delete  s sync  p preview  D doctor  I import  X export  S settings  ? help  R refresh".to_string()
         }
         Screen::Editor(_) => {
             "Tab field  Ctrl+S save  Esc cancel  Up/Down select  a add  d delete  J/K reorder  Enter edit  Space toggle  F3 advanced".to_string()
@@ -1479,6 +1830,22 @@ fn footer_keys(app: &App) -> String {
         Screen::Help(_) => "j/k scroll  PgUp/PgDn  Home/End  Esc back  q quit".to_string(),
         Screen::SyncReport(_) => {
             "j/k scroll  PgUp/PgDn  r retry failed  Esc back  q quit".to_string()
+        }
+        Screen::Import(state) => match state.phase {
+            ImportPhase::Input => "type a file path   Enter preview   Esc cancel".to_string(),
+            ImportPhase::Preview => {
+                "y import   c conflict strategy   j/k scroll   Esc cancel".to_string()
+            }
+            ImportPhase::Confirming => "import in progress...".to_string(),
+            ImportPhase::Result => "j/k scroll   Esc back".to_string(),
+        },
+        Screen::Export(state) => match state.phase {
+            ExportPhase::Input => "type a file path   Enter export   Esc cancel".to_string(),
+            ExportPhase::ConfirmOverwrite => "y overwrite   n/Esc back".to_string(),
+            ExportPhase::Result => "j/k scroll   Esc back".to_string(),
+        },
+        Screen::Settings(_) => {
+            "Tab field  Left/Right or Space toggle  Ctrl+S save  Esc cancel".to_string()
         }
     }
 }
@@ -1928,6 +2295,118 @@ mod tests {
         let lines = vec![Line::from("one two three four"), Line::from("short")];
         assert_eq!(super::wrapped_rows(&lines, width), 3);
         assert_eq!(super::wrapped_rows(&[], width), 0);
+    }
+
+    #[test]
+    fn import_preview_render_shows_counts_warnings_and_no_secret_values() {
+        let (root, mut app) = test_app("import-render");
+        app.screen = Screen::Import(crate::import_export::ImportState {
+            path_input: crate::input::TextInput::new("in.json"),
+            path: Some(PathBuf::from("in.json")),
+            strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+            phase: crate::import_export::ImportPhase::Preview,
+            report: Some(data::ImportReportSummary {
+                imported: vec!["gs".into()],
+                skipped: vec!["taken".into()],
+                unsupported: vec![],
+                warnings: vec![
+                    "sensitive environment variable omitted: TOKEN".into(),
+                    "name conflict skipped: taken".into(),
+                ],
+                strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+                path: PathBuf::from("in.json"),
+                format: "JSON",
+            }),
+            error: None,
+            busy: false,
+            scroll: 0,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("Import preview"), "{rendered}");
+        assert!(rendered.contains("imported=1"), "{rendered}");
+        assert!(rendered.contains("skipped=1"), "{rendered}");
+        assert!(rendered.contains("warnings=2"), "{rendered}");
+        assert!(
+            rendered.contains("sensitive environment variable omitted"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("database has not been changed"),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("hunter2"), "{rendered}");
+        assert!(rendered.contains("y import"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_overwrite_and_result_render_paths_and_counts() {
+        let (root, mut app) = test_app("export-render");
+        let path = PathBuf::from("out.json");
+        app.screen = Screen::Export(crate::import_export::ExportState {
+            path_input: crate::input::TextInput::new(path.to_string_lossy()),
+            path: Some(path.clone()),
+            phase: crate::import_export::ExportPhase::ConfirmOverwrite,
+            summary: None,
+            error: None,
+            busy: false,
+            scroll: 0,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(
+            rendered.contains("target file already exists") || rendered.contains("already exists"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("y overwrite"), "{rendered}");
+        assert!(rendered.contains("out.json"), "{rendered}");
+
+        app.screen = Screen::Export(crate::import_export::ExportState {
+            path_input: crate::input::TextInput::new(path.to_string_lossy()),
+            path: Some(path.clone()),
+            phase: crate::import_export::ExportPhase::Result,
+            summary: Some(data::ExportSummary {
+                count: 7,
+                path,
+                format: "JSON",
+            }),
+            error: None,
+            busy: false,
+            scroll: 0,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("Exported 7 alias(es)"), "{rendered}");
+        assert!(rendered.contains("JSON"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_render_shows_fixed_config_dir_fields_errors_and_effects() {
+        let (root, mut app) = test_app("settings-render");
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('S'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 100, 34);
+        assert!(rendered.contains("Config dir:"), "{rendered}");
+        assert!(rendered.contains("fixed at startup"), "{rendered}");
+        assert!(rendered.contains("runtime.default_shell"), "{rendered}");
+        assert!(rendered.contains("backups.rc_keep"), "{rendered}");
+        assert!(rendered.contains("Ctrl+S save"), "{rendered}");
+        assert!(rendered.contains("> runtime.default_shell"), "{rendered}");
+
+        if let Screen::Settings(state) = &mut app.screen {
+            state.error = Some(crate::settings::SettingsError::new(
+                Some(SettingsField::Language),
+                "unsupported language: fr",
+            ));
+        }
+        let rendered = render_string(&mut app, 100, 34);
+        assert!(rendered.contains("runtime.language"), "{rendered}");
+        assert!(rendered.contains("unsupported language"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

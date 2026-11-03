@@ -33,7 +33,9 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
   - The `tui` feature is on by default. A `--no-default-features` build rejects
     the command with a clear "TUI support is not compiled in" message (exit 1).
   - The TUI reads/writes the same `<config-root>/aliases.db`, runs the same
-    sync/doctor/loader core helpers and never reloads the current shell. It
+    sync/doctor/loader core helpers, uses the same `transfer` import/export
+    code and `AppConfig`/`config.toml` semantics, and never reloads the current
+    shell. It
     does not change the output, arguments or exit codes of any other command.
   - `NO_COLOR` (presence), `TERM=dumb` and `ALIASMGR_TUI_ASCII=1` control
     colour and ASCII fallback inside the TUI; the CLI's reserved `--no-color`

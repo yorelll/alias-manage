@@ -14,6 +14,7 @@ use aliasmgr_core::{
     shells,
     storage::Database,
     sync::{self, ShellContentState, ShellContentStatus, SyncRun},
+    transfer::{self, ConflictStrategy, ImportReport},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -284,6 +285,207 @@ pub fn preview_alias(alias: &AliasRecord, shell: &ShellKind) -> Result<String, A
     shells::render_alias(&redacted, shell)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportReportSummary {
+    pub imported: Vec<String>,
+    pub skipped: Vec<String>,
+    pub unsupported: Vec<String>,
+    pub warnings: Vec<String>,
+    pub strategy: ConflictStrategy,
+    pub path: PathBuf,
+    pub format: &'static str,
+}
+
+impl ImportReportSummary {
+    fn from_report(
+        report: ImportReport,
+        strategy: ConflictStrategy,
+        path: PathBuf,
+        format: &'static str,
+    ) -> Self {
+        Self {
+            imported: report.imported,
+            skipped: report.skipped,
+            unsupported: report.unsupported,
+            warnings: report.warnings,
+            strategy,
+            path,
+            format,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExportSummary {
+    pub count: usize,
+    pub path: PathBuf,
+    pub format: &'static str,
+}
+
+pub fn transfer_format(path: &Path) -> &'static str {
+    if path.extension().and_then(|value| value.to_str()) == Some("toml") {
+        "TOML"
+    } else {
+        "JSON"
+    }
+}
+
+fn read_import_records(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
+    if transfer_format(path) == "TOML" {
+        transfer::read_toml(path)
+    } else {
+        transfer::read_json(path)
+    }
+}
+
+fn existing_aliases_for_preview(root: &Path) -> Result<BTreeMap<String, AliasRecord>, AliasError> {
+    let database = root.join("aliases.db");
+    if !database.exists() {
+        return Ok(BTreeMap::new());
+    }
+    Ok(Database::open_read_only(database)?
+        .list_aliases()?
+        .into_iter()
+        .map(|alias| (alias.name.clone(), alias))
+        .collect())
+}
+
+fn import_error(error: &AliasError, path: &Path) -> String {
+    match error {
+        AliasError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+            format!("file not found: {}", path.display())
+        }
+        AliasError::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied => {
+            format!("permission denied reading {}", path.display())
+        }
+        AliasError::Config(message) => message.clone(),
+        AliasError::Serialization(error) => format!("invalid JSON export: {error}"),
+        _ => format!("could not import {}: {error}", path.display()),
+    }
+}
+
+fn export_error(error: &AliasError, path: &Path) -> String {
+    match error {
+        AliasError::Io(io) if io.kind() == std::io::ErrorKind::NotFound => {
+            let parent = path.parent().unwrap_or_else(|| Path::new("."));
+            format!("target directory does not exist: {}", parent.display())
+        }
+        AliasError::Io(io) if io.kind() == std::io::ErrorKind::PermissionDenied => {
+            format!("permission denied writing {}", path.display())
+        }
+        AliasError::Config(message) => message.clone(),
+        AliasError::Serialization(error) => format!("could not serialize export: {error}"),
+        _ => format!("could not export to {}: {error}", path.display()),
+    }
+}
+
+/// Read-only preview: parses and evaluates conflicts without creating the
+/// database or writing any file. `ImportReport::accepted_records` is dropped.
+pub fn import_preview(
+    root: &Path,
+    path: &Path,
+    strategy: ConflictStrategy,
+) -> Result<ImportReportSummary, String> {
+    let records = read_import_records(path).map_err(|error| import_error(&error, path))?;
+    let existing =
+        existing_aliases_for_preview(root).map_err(|error| import_error(&error, path))?;
+    transfer::import_records(records, &existing, strategy)
+        .map(|report| {
+            ImportReportSummary::from_report(
+                report.into_public(),
+                strategy,
+                path.to_path_buf(),
+                transfer_format(path),
+            )
+        })
+        .map_err(|error| import_error(&error, path))
+}
+
+/// Re-evaluates against the current database at confirmation time and inserts
+/// the accepted records in one transaction.
+pub fn import_confirm(
+    root: &Path,
+    path: &Path,
+    strategy: ConflictStrategy,
+) -> Result<ImportReportSummary, String> {
+    let records = read_import_records(path).map_err(|error| import_error(&error, path))?;
+    let database =
+        Database::open(root.join("aliases.db")).map_err(|error| import_error(&error, path))?;
+    let existing = database
+        .list_aliases()
+        .map_err(|error| import_error(&error, path))?
+        .into_iter()
+        .map(|alias| (alias.name.clone(), alias))
+        .collect::<BTreeMap<_, _>>();
+    let mut report = transfer::import_records(records, &existing, strategy)
+        .map_err(|error| import_error(&error, path))?;
+    let overwrite = strategy == ConflictStrategy::Overwrite;
+    if overwrite {
+        // Core's Overwrite strategy accepts the record, but exact-name rows
+        // must update the existing id rather than INSERT. Resolve remaining
+        // PowerShell case-fold conflicts before writing instead of failing the
+        // whole transaction on a unique/case-fold constraint.
+        let mut accepted = Vec::new();
+        let mut imported = Vec::new();
+        for record in report.accepted_records.drain(..) {
+            let exact_id = existing.get(&record.name).map(|alias| alias.id);
+            let casefold = database
+                .has_powershell_case_conflict(&record.name, exact_id)
+                .map_err(|error| import_error(&error, path))?;
+            if casefold {
+                report.warnings.push(format!(
+                    "PowerShell case-fold conflict requires manual resolution: {}",
+                    record.name
+                ));
+                report.skipped.push(record.name);
+            } else {
+                imported.push(record.name.clone());
+                accepted.push(record);
+            }
+        }
+        report.accepted_records = accepted;
+        report.imported = imported;
+    }
+    database
+        .import_aliases_atomic(&report.accepted_records, overwrite)
+        .map_err(|error| import_error(&error, path))?;
+    Ok(ImportReportSummary::from_report(
+        report.into_public(),
+        strategy,
+        path.to_path_buf(),
+        transfer_format(path),
+    ))
+}
+
+pub fn export_aliases(root: &Path, path: &Path, overwrite: bool) -> Result<ExportSummary, String> {
+    if path.exists() && !overwrite {
+        return Err(format!(
+            "file already exists; overwrite was not confirmed: {}",
+            path.display()
+        ));
+    }
+    let database = root.join("aliases.db");
+    let aliases = if database.exists() {
+        Database::open_read_only(&database)
+            .and_then(|database| database.list_aliases())
+            .map_err(|error| export_error(&error, path))?
+    } else {
+        Vec::new()
+    };
+    let format = transfer_format(path);
+    let result = if format == "TOML" {
+        transfer::export_toml(path, &aliases)
+    } else {
+        transfer::export_json(path, &aliases)
+    };
+    result.map_err(|error| export_error(&error, path))?;
+    Ok(ExportSummary {
+        count: aliases.len(),
+        path: path.to_path_buf(),
+        format,
+    })
+}
+
 /// Inserts or replaces a record in a preview list without touching the DB.
 pub fn with_draft(aliases: &[AliasRecord], draft: Option<&AliasRecord>) -> Vec<AliasRecord> {
     let Some(draft) = draft else {
@@ -303,6 +505,18 @@ pub enum JobKind {
     /// Retry only the shells that failed in a previous partial sync.
     SyncRetry(Vec<ShellKind>),
     Doctor,
+    ImportPreview {
+        path: PathBuf,
+        strategy: ConflictStrategy,
+    },
+    ImportConfirm {
+        path: PathBuf,
+        strategy: ConflictStrategy,
+    },
+    Export {
+        path: PathBuf,
+        overwrite: bool,
+    },
     LoaderInstall(String),
     LoaderUninstall(String),
 }
@@ -313,6 +527,9 @@ impl JobKind {
             JobKind::Sync => "syncing".to_string(),
             JobKind::SyncRetry(shells) => format!("retrying {} failed shell(s)", shells.len()),
             JobKind::Doctor => "running doctor".to_string(),
+            JobKind::ImportPreview { .. } => "previewing import".to_string(),
+            JobKind::ImportConfirm { .. } => "importing aliases".to_string(),
+            JobKind::Export { .. } => "exporting aliases".to_string(),
             JobKind::LoaderInstall(shell) => format!("installing {shell} loader"),
             JobKind::LoaderUninstall(shell) => format!("removing {shell} loader"),
         }
@@ -323,6 +540,9 @@ impl JobKind {
 pub enum JobResult {
     Sync(Result<SyncRun, String>),
     Doctor(Result<Vec<DoctorFinding>, String>),
+    ImportPreview(Result<ImportReportSummary, String>),
+    ImportConfirm(Result<ImportReportSummary, String>),
+    Export(Result<ExportSummary, String>),
     Loader(Result<LoaderOutcome, String>),
     /// The worker panicked or its channel disappeared before it could report.
     WorkerFailed(String),
@@ -449,6 +669,15 @@ fn run_job(kind: &JobKind, root: &Path) -> JobResult {
             JobResult::Sync(sync::sync_shells(root, shells).map_err(|error| error.to_string()))
         }
         JobKind::Doctor => JobResult::Doctor(run_doctor(root)),
+        JobKind::ImportPreview { path, strategy } => {
+            JobResult::ImportPreview(import_preview(root, path, *strategy))
+        }
+        JobKind::ImportConfirm { path, strategy } => {
+            JobResult::ImportConfirm(import_confirm(root, path, *strategy))
+        }
+        JobKind::Export { path, overwrite } => {
+            JobResult::Export(export_aliases(root, path, *overwrite))
+        }
         JobKind::LoaderInstall(shell) => JobResult::Loader(
             integration::install_loader(
                 &AppPaths {
@@ -775,6 +1004,398 @@ mod tests {
         assert!(jobs.start(JobKind::Sync, root.clone()));
         assert!(!jobs.start(JobKind::Doctor, root.clone()));
         let _ = jobs.wait(Duration::from_secs(10));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn export_file(path: &Path, aliases: &[AliasRecord]) {
+        transfer::export_json(path, aliases).unwrap();
+    }
+
+    fn write_raw_export(path: &Path, aliases: Vec<AliasRecord>, version: u32) {
+        let file = transfer::ExportFile {
+            format_version: version,
+            exported_at: "2026-01-01T00:00:00+00:00".into(),
+            exported_by_version: "test".into(),
+            aliases,
+        };
+        std::fs::write(path, serde_json::to_string(&file).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn import_preview_is_read_only_and_does_not_create_a_database() {
+        let root = temp_root("import-preview");
+        let file = root.join("input.json");
+        export_file(
+            &file,
+            &[AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        );
+        let report = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert_eq!(report.imported, vec!["gs"]);
+        assert_eq!(report.format, "JSON");
+        assert!(!root.join("aliases.db").exists());
+        assert!(!root.join("generated").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_confirm_revalidates_and_persists_only_accepted_records() {
+        let root = temp_root("import-confirm");
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        insert(
+            &database,
+            AliasRecord {
+                name: "existing".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            },
+        );
+        drop(database);
+        let file = root.join("input.json");
+        write_raw_export(
+            &file,
+            vec![
+                AliasRecord {
+                    name: "one".into(),
+                    executable: "tool".into(),
+                    shells: vec![ShellKind::Bash],
+                    ..Default::default()
+                },
+                AliasRecord {
+                    name: "bad name".into(),
+                    executable: "tool".into(),
+                    shells: vec![ShellKind::Bash],
+                    ..Default::default()
+                },
+            ],
+            1,
+        );
+        let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert_eq!(preview.imported, vec!["one"]);
+        assert_eq!(preview.skipped, vec!["bad name"]);
+        assert!(!root.join("aliases.db").to_string_lossy().is_empty());
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        assert_eq!(database.list_aliases().unwrap().len(), 1);
+
+        let report = import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert_eq!(report.imported, vec!["one"]);
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let names = database
+            .list_aliases()
+            .unwrap()
+            .into_iter()
+            .map(|alias| alias.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["existing", "one"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_confirm_re_evaluates_conflicts_created_after_preview() {
+        let root = temp_root("import-recheck");
+        let file = root.join("input.json");
+        export_file(
+            &file,
+            &[AliasRecord {
+                name: "gs".into(),
+                executable: "imported".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        );
+        let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert_eq!(preview.imported, vec!["gs"]);
+
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        insert(
+            &database,
+            AliasRecord {
+                name: "gs".into(),
+                executable: "existing".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            },
+        );
+        drop(database);
+        let report = import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["gs"]);
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        assert_eq!(database.list_aliases().unwrap().len(), 1);
+        assert_eq!(
+            database
+                .get_alias_by_name("gs")
+                .unwrap()
+                .unwrap()
+                .executable,
+            "existing"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_conflict_strategies_produce_distinct_counts_and_results() {
+        let root = temp_root("import-conflicts");
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        insert(
+            &database,
+            AliasRecord {
+                name: "gs".into(),
+                executable: "old".into(),
+                description: "old".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            },
+        );
+        drop(database);
+        let file = root.join("input.json");
+        export_file(
+            &file,
+            &[AliasRecord {
+                name: "gs".into(),
+                executable: "new".into(),
+                description: "imported".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        );
+        let skip = import_preview(&root, &file, ConflictStrategy::Skip).unwrap();
+        assert!(skip.imported.is_empty());
+        assert_eq!(skip.skipped, vec!["gs"]);
+        let ask = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert_eq!(ask.skipped, vec!["gs"]);
+        let overwrite = import_preview(&root, &file, ConflictStrategy::Overwrite).unwrap();
+        assert_eq!(overwrite.imported, vec!["gs"]);
+        let renamed = import_preview(&root, &file, ConflictStrategy::Rename).unwrap();
+        assert_eq!(renamed.imported, vec!["gs_imported"]);
+
+        import_confirm(&root, &file, ConflictStrategy::Overwrite).unwrap();
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let alias = database.get_alias_by_name("gs").unwrap().unwrap();
+        assert_eq!(alias.executable, "new");
+        assert_eq!(alias.description, "imported");
+
+        // Rename confirm inserts the renamed record and keeps the original.
+        import_confirm(&root, &file, ConflictStrategy::Rename).unwrap();
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        assert!(database.get_alias_by_name("gs_imported").unwrap().is_some());
+        assert!(database.get_alias_by_name("gs").unwrap().is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn overwrite_skips_powershell_casefold_conflicts_instead_of_partial_writes() {
+        let root = temp_root("import-casefold");
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        insert(
+            &database,
+            AliasRecord {
+                name: "Build".into(),
+                executable: "old".into(),
+                shells: vec![ShellKind::PowerShell7],
+                ..Default::default()
+            },
+        );
+        drop(database);
+        let file = root.join("casefold.json");
+        export_file(
+            &file,
+            &[AliasRecord {
+                name: "build".into(),
+                executable: "new".into(),
+                shells: vec![ShellKind::PowerShell7],
+                ..Default::default()
+            }],
+        );
+        let preview = import_preview(&root, &file, ConflictStrategy::Overwrite).unwrap();
+        assert_eq!(preview.imported, vec!["build"]);
+        let report = import_confirm(&root, &file, ConflictStrategy::Overwrite).unwrap();
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["build"]);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("case-fold conflict")));
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let names = database
+            .list_aliases()
+            .unwrap()
+            .into_iter()
+            .map(|alias| alias.name)
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["Build"]);
+        assert_eq!(
+            database
+                .get_alias_by_name("Build")
+                .unwrap()
+                .unwrap()
+                .executable,
+            "old"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn sensitive_environment_values_are_filtered_on_import_and_export() {
+        let root = temp_root("import-sensitive");
+        let file = root.join("input.json");
+        let mut alias = AliasRecord {
+            name: "secret".into(),
+            executable: "tool".into(),
+            shells: vec![ShellKind::Bash],
+            ..Default::default()
+        };
+        alias.environment.insert("TOKEN".into(), "hunter2".into());
+        alias.environment.insert("MODE".into(), "fast".into());
+        write_raw_export(&file, vec![alias], 1);
+        let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert!(preview
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("sensitive environment variable omitted")));
+        assert!(!preview.warnings.join("\n").contains("hunter2"));
+        import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        let saved = database.get_alias_by_name("secret").unwrap().unwrap();
+        assert!(!saved.environment.contains_key("TOKEN"));
+        assert_eq!(
+            saved.environment.get("MODE").map(String::as_str),
+            Some("fast")
+        );
+
+        let exported = root.join("out.json");
+        let summary = export_aliases(&root, &exported, false).unwrap();
+        assert_eq!(summary.count, 1);
+        let raw = std::fs::read_to_string(&exported).unwrap();
+        assert!(!raw.contains("hunter2"));
+        assert!(!raw.contains("TOKEN"));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn empty_import_and_relative_restriction_records_are_handled() {
+        let root = temp_root("import-empty");
+        let empty = root.join("empty.json");
+        std::fs::write(&empty, "[]").unwrap();
+        let report = import_preview(&root, &empty, ConflictStrategy::Ask).unwrap();
+        assert!(report.imported.is_empty());
+        assert!(report.skipped.is_empty());
+        assert!(!root.join("aliases.db").exists());
+
+        let relative = root.join("relative.json");
+        export_file(
+            &relative,
+            &[AliasRecord {
+                name: "relative".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                path_mode: aliasmgr_core::model::PathMode::RelativeToWorkingDirectory,
+                ..Default::default()
+            }],
+        );
+        let report = import_preview(&root, &relative, ConflictStrategy::Ask).unwrap();
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["relative"]);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("relative path requires")));
+        assert!(!root.join("aliases.db").exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_formats_versions_and_missing_files_are_friendly() {
+        let root = temp_root("import-invalid");
+        let bad_json = root.join("bad.json");
+        std::fs::write(&bad_json, "{not json").unwrap();
+        let error = import_preview(&root, &bad_json, ConflictStrategy::Ask).unwrap_err();
+        assert!(error.contains("invalid JSON export"), "{error}");
+        assert!(!root.join("aliases.db").exists());
+
+        let bad_version = root.join("version.json");
+        write_raw_export(&bad_version, Vec::new(), 99);
+        let error = import_preview(&root, &bad_version, ConflictStrategy::Ask).unwrap_err();
+        assert!(error.contains("unsupported format_version"), "{error}");
+
+        let bad_toml = root.join("bad.toml");
+        std::fs::write(&bad_toml, "not = [valid").unwrap();
+        let error = import_preview(&root, &bad_toml, ConflictStrategy::Ask).unwrap_err();
+        assert!(error.contains("invalid TOML export"), "{error}");
+
+        let missing = root.join("missing.json");
+        let error = import_preview(&root, &missing, ConflictStrategy::Ask).unwrap_err();
+        assert!(error.contains("file not found"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_handles_formats_overwrite_and_missing_parent_friendly() {
+        let root = temp_root("export-errors");
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        insert(
+            &database,
+            AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            },
+        );
+        drop(database);
+        let json = root.join("out.json");
+        let summary = export_aliases(&root, &json, false).unwrap();
+        assert_eq!(summary.count, 1);
+        assert_eq!(summary.format, "JSON");
+        let error = export_aliases(&root, &json, false).unwrap_err();
+        assert!(error.contains("already exists"), "{error}");
+        export_aliases(&root, &json, true).unwrap();
+
+        let toml = root.join("out.toml");
+        let summary = export_aliases(&root, &toml, false).unwrap();
+        assert_eq!(summary.format, "TOML");
+        assert!(std::fs::read_to_string(&toml)
+            .unwrap()
+            .contains("format_version"));
+
+        let missing = root.join("missing-dir").join("out.json");
+        let error = export_aliases(&root, &missing, false).unwrap_err();
+        assert!(error.contains("target directory does not exist"), "{error}");
+
+        let directory = root.join("target-dir");
+        std::fs::create_dir(&directory).unwrap();
+        let error = export_aliases(&root, &directory, true).unwrap_err();
+        assert!(
+            error.contains("permission denied writing") || error.contains("could not export to"),
+            "{error}"
+        );
+        assert!(!error.starts_with("os error"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn large_import_preview_and_confirm_keep_counts() {
+        let root = temp_root("import-large");
+        let file = root.join("large.json");
+        let aliases = (0..300)
+            .map(|index| AliasRecord {
+                name: format!("bulk_{index:03}"),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .collect::<Vec<_>>();
+        write_raw_export(&file, aliases, 1);
+        let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert_eq!(preview.imported.len(), 300);
+        import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        let database = Database::open(root.join("aliases.db")).unwrap();
+        assert_eq!(database.list_aliases().unwrap().len(), 300);
         let _ = std::fs::remove_dir_all(root);
     }
 }

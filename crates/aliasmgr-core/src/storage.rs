@@ -195,6 +195,50 @@ impl Database {
         Ok(())
     }
 
+    /// Persists imported records in one transaction. With `overwrite`, an
+    /// incoming record whose exact name already exists updates that row (same
+    /// id, DB-owned created_at, revision bumped) instead of failing on the
+    /// unique-name INSERT; otherwise every accepted record is inserted.
+    pub fn import_aliases_atomic(
+        &self,
+        aliases: &[AliasRecord],
+        overwrite: bool,
+    ) -> Result<(), AliasError> {
+        let tx = Transaction::new_unchecked(&self.conn, TransactionBehavior::Immediate)?;
+        for alias in aliases {
+            if overwrite {
+                if let Some(existing) = self.get_alias_by_name(&alias.name)? {
+                    let mut record = alias.clone();
+                    record.id = existing.id;
+                    record.record_checksum = record_checksum(&record)?;
+                    // Removing a shell from the overwritten record must retire
+                    // the old name for that shell so the next sync emits cleanup.
+                    for shell in existing
+                        .shells
+                        .iter()
+                        .filter(|shell| !record.shells.contains(shell))
+                    {
+                        self.retire_name(
+                            &existing.name,
+                            shell,
+                            existing.revision.saturating_add(1),
+                        )?;
+                    }
+                    if !self.update_alias(&record)? {
+                        return Err(AliasError::Config(format!(
+                            "import overwrite could not update {}",
+                            alias.name
+                        )));
+                    }
+                    continue;
+                }
+            }
+            self.insert_alias(alias)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn get_alias_by_name(&self, name: &str) -> Result<Option<AliasRecord>, AliasError> {
         self.fetch("name", name)
     }
@@ -1506,5 +1550,34 @@ mod tests {
             tuple >= (3, 51, 3),
             "bundled SQLite {version} predates the WAL-reset database corruption fix (>=3.51.3 required)"
         );
+    }
+
+    #[test]
+    fn import_aliases_atomic_overwrite_updates_existing_rows() {
+        let database = Database::open_in_memory().unwrap();
+        let mut original = AliasRecord {
+            name: "gs".into(),
+            executable: "old".into(),
+            shells: vec![ShellKind::Bash, ShellKind::Zsh],
+            ..Default::default()
+        };
+        original.record_checksum = record_checksum(&original).unwrap();
+        database.insert_alias(&original).unwrap();
+        let mut incoming = original.clone();
+        incoming.id = Uuid::new_v4();
+        incoming.executable = "new".into();
+        incoming.shells = vec![ShellKind::Bash];
+        incoming.record_checksum = record_checksum(&incoming).unwrap();
+        database
+            .import_aliases_atomic(std::slice::from_ref(&incoming), true)
+            .unwrap();
+        let saved = database.get_alias(original.id).unwrap().unwrap();
+        assert_eq!(saved.id, original.id);
+        assert_eq!(saved.executable, "new");
+        assert_eq!(saved.revision, original.revision + 1);
+        assert!(database.get_alias(incoming.id).unwrap().is_none());
+        assert_eq!(database.list_aliases().unwrap().len(), 1);
+        let zsh = database.managed_name_set(&ShellKind::Zsh).unwrap();
+        assert_eq!(zsh.retired, vec!["gs".to_string()]);
     }
 }

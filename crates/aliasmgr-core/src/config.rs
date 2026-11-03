@@ -97,6 +97,53 @@ pub struct AppConfig {
     pub retired_names: RetiredNameConfig,
     pub shells: ShellPathOverrides,
     pub runtime: ShellRuntimeConfig,
+    /// Unknown top-level keys are retained across load/save so front ends do
+    /// not silently drop configuration they do not understand. `load_config`
+    /// fills this after deserializing the known fields, and `save` merges it
+    /// back into the output table.
+    #[serde(skip)]
+    pub extra: std::collections::BTreeMap<String, toml::Value>,
+}
+
+/// Upper bound for any retained-file count edited by a front end. The rotation
+/// code itself accepts larger values; this is a sanity bound for interactive
+/// settings so a typo cannot request unbounded retention.
+pub const MAX_RETAINED_FILES: usize = 1000;
+
+impl AppConfig {
+    /// Validation shared by interactive settings editors. `load_config` stays
+    /// permissive so old or partially invalid files remain inspectable, but a
+    /// save must not persist an unusable default shell or language.
+    pub fn validate(&self) -> Result<(), AliasError> {
+        if let Some(shell) = &self.runtime.default_shell {
+            let shell = shell.trim();
+            if !matches!(shell, "bash" | "zsh" | "powershell5" | "powershell7") {
+                return Err(AliasError::Config(format!(
+                    "unsupported default shell: {shell} (expected bash, zsh, powershell5, powershell7, or empty)"
+                )));
+            }
+        }
+        let language = self.runtime.language.trim();
+        if !matches!(language, "zh" | "en") {
+            return Err(AliasError::Config(format!(
+                "unsupported language: {} (expected zh or en)",
+                self.runtime.language
+            )));
+        }
+        for (name, value) in [
+            ("backups.rc_keep", self.backups.rc_keep),
+            ("backups.generated_keep", self.backups.generated_keep),
+            ("backups.db_keep", self.backups.db_keep),
+            ("logs.keep_files", self.logs.keep_files),
+        ] {
+            if value > MAX_RETAINED_FILES {
+                return Err(AliasError::Config(format!(
+                    "{name} must be <= {MAX_RETAINED_FILES} (got {value})"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -177,7 +224,21 @@ impl AppPaths {
             return Ok(AppConfig::default());
         }
         let content = fs::read_to_string(self.config_file())?;
-        toml::from_str(&content).map_err(|error| AliasError::Config(error.to_string()))
+        let value: toml::Value =
+            toml::from_str(&content).map_err(|error| AliasError::Config(error.to_string()))?;
+        let table = value
+            .as_table()
+            .ok_or_else(|| AliasError::Config("config.toml must contain a table".into()))?;
+        let mut config: AppConfig = value
+            .clone()
+            .try_into()
+            .map_err(|error: toml::de::Error| AliasError::Config(error.to_string()))?;
+        let mut extra = table.clone();
+        for key in ["backups", "logs", "retired_names", "shells", "runtime"] {
+            extra.remove(key);
+        }
+        config.extra = extra.into_iter().collect();
+        Ok(config)
     }
 }
 
@@ -266,9 +327,17 @@ pub fn path_safety(path: &Path) -> PathSafety {
 impl AppConfig {
     pub fn save(&self, paths: &AppPaths) -> Result<(), AliasError> {
         paths.ensure_directories()?;
+        let mut value =
+            toml::Value::try_from(self).map_err(|error| AliasError::Config(error.to_string()))?;
+        if let Some(table) = value.as_table_mut() {
+            for (key, item) in &self.extra {
+                table.entry(key.clone()).or_insert_with(|| item.clone());
+            }
+        }
         fs::write(
             paths.config_file(),
-            toml::to_string_pretty(self).map_err(|error| AliasError::Config(error.to_string()))?,
+            toml::to_string_pretty(&value)
+                .map_err(|error| AliasError::Config(error.to_string()))?,
         )?;
         Ok(())
     }
@@ -537,5 +606,57 @@ server:/data /data nfs4 rw 0 0
             reliability_from_mounts(mounts, Path::new("/srv/local")),
             FilesystemReliability::Reliable
         );
+    }
+
+    #[test]
+    fn unknown_top_level_config_keys_survive_load_and_save() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-config-extra-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let defaults = toml::to_string_pretty(&AppConfig::default()).unwrap();
+        let source = format!("custom_key = \"keep-me\"\n{defaults}");
+        fs::write(paths.config_file(), source).unwrap();
+
+        let mut config = paths.load_config().unwrap();
+        assert_eq!(
+            config
+                .extra
+                .get("custom_key")
+                .and_then(|value| value.as_str()),
+            Some("keep-me")
+        );
+        config.backups.rc_keep = 7;
+        config.save(&paths).unwrap();
+        let saved = fs::read_to_string(paths.config_file()).unwrap();
+        assert!(saved.contains("custom_key = \"keep-me\""), "{saved}");
+        assert_eq!(paths.load_config().unwrap().backups.rc_keep, 7);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn config_validation_rejects_invalid_shell_language_and_keep_bounds() {
+        let mut config = AppConfig::default();
+        assert!(config.validate().is_ok());
+        config.runtime.default_shell = Some("fish".into());
+        assert!(config.validate().is_err());
+        config.runtime.default_shell = Some("powershell7".into());
+        assert!(config.validate().is_ok());
+        config.runtime.language = "fr".into();
+        assert!(config.validate().is_err());
+        config.runtime.language = "en".into();
+        assert!(config.validate().is_ok());
+        config.backups.rc_keep = MAX_RETAINED_FILES + 1;
+        assert!(config.validate().is_err());
+        config.backups.rc_keep = MAX_RETAINED_FILES;
+        assert!(config.validate().is_ok());
+        config.logs.keep_files = MAX_RETAINED_FILES + 1;
+        assert!(config.validate().is_err());
     }
 }

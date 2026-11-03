@@ -5,8 +5,10 @@
 
 use crate::{
     data::{self, JobKind, JobResult, Jobs, Snapshot},
+    import_export::{ExportAction, ExportState, ImportAction, ImportState},
     input::{is_actionable, is_ctrl, TextInput},
     model::{DraftError, Editor, EditorOutcome, Field},
+    settings::{SettingsOutcome, SettingsState},
     text,
     theme::Theme,
 };
@@ -168,7 +170,7 @@ pub enum Modal {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Screen {
     Browse,
     Editor(Box<Editor>),
@@ -176,6 +178,9 @@ pub enum Screen {
     Doctor(DoctorState),
     Help(ScrollState),
     SyncReport(SyncReportState),
+    Import(ImportState),
+    Export(ExportState),
+    Settings(Box<SettingsState>),
 }
 
 pub struct App {
@@ -480,15 +485,19 @@ impl App {
             Screen::Doctor(_) => self.handle_doctor_key(key),
             Screen::Help(_) => self.handle_scroll_key(key),
             Screen::SyncReport(_) => self.handle_sync_report_key(key),
+            Screen::Import(_) => self.handle_import_key(key),
+            Screen::Export(_) => self.handle_export_key(key),
+            Screen::Settings(_) => self.handle_settings_key(key),
         }
     }
 
     fn request_quit(&mut self) {
-        let dirty_editor = match &self.screen {
+        let unsaved = match &self.screen {
             Screen::Editor(editor) => editor.is_dirty(),
+            Screen::Settings(settings) => settings.is_dirty(),
             _ => false,
         };
-        if dirty_editor {
+        if unsaved {
             self.modal = Some(Modal::ConfirmQuit);
             self.dirty = true;
         } else {
@@ -618,6 +627,9 @@ impl App {
             KeyCode::Char('s') => self.start_sync(),
             KeyCode::Char('D') => self.start_doctor(),
             KeyCode::Char('R') => self.manual_refresh(),
+            KeyCode::Char('I') => self.open_import(),
+            KeyCode::Char('X') => self.open_export(),
+            KeyCode::Char('S') => self.open_settings(),
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Char('t') => self.open_tag_filter(),
             KeyCode::Char('o') => self.cycle_sort(false),
@@ -784,6 +796,184 @@ impl App {
                 }
             ),
         );
+    }
+
+    fn open_import(&mut self) {
+        self.screen = Screen::Import(ImportState::new());
+        self.dirty = true;
+    }
+
+    fn open_export(&mut self) {
+        self.screen = Screen::Export(ExportState::new());
+        self.dirty = true;
+    }
+
+    fn open_settings(&mut self) {
+        match SettingsState::new(&self.root) {
+            Ok(state) => {
+                self.screen = Screen::Settings(Box::new(state));
+                self.dirty = true;
+            }
+            Err(error) => {
+                self.set_status(
+                    StatusKind::Error,
+                    format!("could not load config.toml: {error}"),
+                );
+            }
+        }
+    }
+
+    fn handle_settings_key(&mut self, key: KeyEvent) {
+        let (outcome, dirty) = if let Screen::Settings(state) = &mut self.screen {
+            (state.handle_key(key), state.is_dirty())
+        } else {
+            return;
+        };
+        self.dirty = true;
+        match outcome {
+            SettingsOutcome::None | SettingsOutcome::Dirty => {}
+            SettingsOutcome::SaveRequested => self.save_settings(),
+            SettingsOutcome::CancelRequested => {
+                if dirty {
+                    self.modal = Some(Modal::ConfirmDiscard);
+                } else {
+                    self.screen = Screen::Browse;
+                }
+            }
+        }
+    }
+
+    fn save_settings(&mut self) {
+        if self.writes_blocked() {
+            return;
+        }
+        let result = match &mut self.screen {
+            Screen::Settings(state) => state.save(),
+            _ => return,
+        };
+        match result {
+            Ok(()) => self.set_status(
+                StatusKind::Success,
+                "settings saved to the shared config.toml; CLI/GUI see the same values (restart the shell after changing the default shell)",
+            ),
+            Err(error) => self.set_status(
+                StatusKind::Error,
+                format!(
+                    "{}: {}",
+                    error
+                        .field
+                        .map(|field| field.label())
+                        .unwrap_or("config.toml"),
+                    error.message
+                ),
+            ),
+        }
+        self.dirty = true;
+    }
+
+    fn handle_import_key(&mut self, key: KeyEvent) {
+        let action = match &mut self.screen {
+            Screen::Import(state) => state.handle_key(key),
+            _ => return,
+        };
+        self.dirty = true;
+        match action {
+            ImportAction::None => {}
+            ImportAction::Back => self.screen = Screen::Browse,
+            ImportAction::Preview { path, strategy } => {
+                self.start_import_preview(path, strategy);
+            }
+            ImportAction::Confirm { path, strategy } => {
+                self.start_import_confirm(path, strategy);
+            }
+        }
+    }
+
+    fn handle_export_key(&mut self, key: KeyEvent) {
+        let action = match &mut self.screen {
+            Screen::Export(state) => state.handle_key(key),
+            _ => return,
+        };
+        self.dirty = true;
+        match action {
+            ExportAction::None => {}
+            ExportAction::Back => self.screen = Screen::Browse,
+            ExportAction::Start { path, overwrite } => self.start_export(path, overwrite),
+        }
+    }
+
+    fn start_import_preview(
+        &mut self,
+        path: PathBuf,
+        strategy: aliasmgr_core::transfer::ConflictStrategy,
+    ) {
+        if self.jobs.is_busy() {
+            self.set_status(StatusKind::Warning, "a background job is already running");
+            return;
+        }
+        if let Screen::Import(state) = &mut self.screen {
+            state.busy = true;
+            state.error = None;
+        }
+        if self
+            .jobs
+            .start(JobKind::ImportPreview { path, strategy }, self.root.clone())
+        {
+            self.set_status(
+                StatusKind::Info,
+                "reading and validating the import file...",
+            );
+        } else if let Screen::Import(state) = &mut self.screen {
+            state.busy = false;
+            state.error = Some("could not start the import preview worker".to_string());
+        }
+    }
+
+    fn start_import_confirm(
+        &mut self,
+        path: PathBuf,
+        strategy: aliasmgr_core::transfer::ConflictStrategy,
+    ) {
+        if self.jobs.is_busy() {
+            self.set_status(StatusKind::Warning, "a background job is already running");
+            return;
+        }
+        if let Screen::Import(state) = &mut self.screen {
+            state.busy = true;
+            state.error = None;
+        }
+        if self
+            .jobs
+            .start(JobKind::ImportConfirm { path, strategy }, self.root.clone())
+        {
+            self.set_status(
+                StatusKind::Info,
+                "importing accepted records in one transaction...",
+            );
+        } else if let Screen::Import(state) = &mut self.screen {
+            state.busy = false;
+            state.error = Some("could not start the import worker".to_string());
+        }
+    }
+
+    fn start_export(&mut self, path: PathBuf, overwrite: bool) {
+        if self.jobs.is_busy() {
+            self.set_status(StatusKind::Warning, "a background job is already running");
+            return;
+        }
+        if let Screen::Export(state) = &mut self.screen {
+            state.busy = true;
+            state.error = None;
+        }
+        if self
+            .jobs
+            .start(JobKind::Export { path, overwrite }, self.root.clone())
+        {
+            self.set_status(StatusKind::Info, "exporting aliases...");
+        } else if let Screen::Export(state) = &mut self.screen {
+            state.busy = false;
+            state.error = Some("could not start the export worker".to_string());
+        }
     }
 
     fn open_preview(&mut self) {
@@ -1641,6 +1831,75 @@ impl App {
                 }
                 self.set_status(StatusKind::Error, format!("doctor failed: {error}"));
             }
+            JobResult::ImportPreview(Ok(report)) => {
+                let counts = (
+                    report.imported.len(),
+                    report.skipped.len(),
+                    report.unsupported.len(),
+                    report.warnings.len(),
+                );
+                if let Screen::Import(state) = &mut self.screen {
+                    state.on_preview(report);
+                }
+                self.set_status(
+                    StatusKind::Info,
+                    format!(
+                        "import preview: imported={} skipped={} unsupported={} warnings={}",
+                        counts.0, counts.1, counts.2, counts.3
+                    ),
+                );
+            }
+            JobResult::ImportPreview(Err(error)) => {
+                if let Screen::Import(state) = &mut self.screen {
+                    state.on_error(error.clone());
+                }
+                self.set_status(StatusKind::Error, format!("import preview failed: {error}"));
+            }
+            JobResult::ImportConfirm(Ok(report)) => {
+                let counts = (
+                    report.imported.len(),
+                    report.skipped.len(),
+                    report.unsupported.len(),
+                    report.warnings.len(),
+                );
+                self.reload();
+                if let Screen::Import(state) = &mut self.screen {
+                    state.on_confirmed(report);
+                }
+                self.set_status(
+                    StatusKind::Success,
+                    format!(
+                        "imported {} alias(es); skipped={} unsupported={} warnings={} (single transaction)",
+                        counts.0, counts.1, counts.2, counts.3
+                    ),
+                );
+            }
+            JobResult::ImportConfirm(Err(error)) => {
+                if let Screen::Import(state) = &mut self.screen {
+                    state.on_error(error.clone());
+                }
+                self.set_status(StatusKind::Error, format!("import failed: {error}"));
+            }
+            JobResult::Export(Ok(summary)) => {
+                if let Screen::Export(state) = &mut self.screen {
+                    state.on_result(summary.clone());
+                }
+                self.set_status(
+                    StatusKind::Success,
+                    format!(
+                        "exported {} alias(es) to {} ({})",
+                        summary.count,
+                        summary.path.display(),
+                        summary.format
+                    ),
+                );
+            }
+            JobResult::Export(Err(error)) => {
+                if let Screen::Export(state) = &mut self.screen {
+                    state.on_error(error.clone());
+                }
+                self.set_status(StatusKind::Error, format!("export failed: {error}"));
+            }
             JobResult::WorkerFailed(message) => {
                 if let Screen::Doctor(state) = &mut self.screen {
                     state.busy = false;
@@ -1787,6 +2046,17 @@ pub fn help_lines() -> Vec<String> {
         "  Doctor: j/k PgUp/PgDn Home/End scroll, s sync, r rescan, Esc back".to_string(),
         "  Sync results: r retries only the failed shells".to_string(),
         String::new(),
+        "IMPORT / EXPORT / SETTINGS".to_string(),
+        "  I: type a path, Enter previews, c changes conflict strategy, y imports, Esc cancels"
+            .to_string(),
+        "  X: type a path, Enter exports; an existing file requires y overwrite confirmation"
+            .to_string(),
+        "  S: Tab field, Left/Right or Space toggle, Ctrl+S save, Esc cancel".to_string(),
+        "  Import preview is read-only; confirmation re-evaluates and persists atomically."
+            .to_string(),
+        "  Sensitive environment values are filtered by core; config.toml is shared with CLI/GUI."
+            .to_string(),
+        String::new(),
         "TARGET TYPES".to_string(),
     ];
     for target in crate::model::target_type_choices() {
@@ -1816,6 +2086,7 @@ pub fn help_lines() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::import_export::{ExportPhase, ImportPhase};
     use crate::model::{visible_fields, Field};
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -2024,6 +2295,24 @@ mod tests {
         assert!(app.modal.is_none());
         drop(app);
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn wait_for_jobs(app: &mut App) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            app.poll_jobs();
+            if !app.jobs.is_busy() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "background job did not finish");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn type_path(app: &mut App, path: &std::path::Path) {
+        for character in path.to_string_lossy().chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
     }
 
     fn select_name(app: &mut App, name: &str) {
@@ -2455,6 +2744,274 @@ mod tests {
         assert_eq!(app.filter.sort, SortField::Name);
         assert!(!app.filter.fuzzy);
         assert_eq!(app.visible.len(), 2);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_preview_then_confirm_persists_and_cancel_does_not() {
+        let root = temp_root("import-flow");
+        let mut app = App::new(root.clone()).unwrap();
+        let file = root.join("input.json");
+        aliasmgr_core::transfer::export_json(
+            &file,
+            &[AliasRecord {
+                name: "imported".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        app.handle_key(key(KeyCode::Char('I')));
+        assert!(matches!(app.screen, Screen::Import(_)));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import screen");
+        };
+        assert_eq!(state.phase, ImportPhase::Preview);
+        assert_eq!(state.report.as_ref().unwrap().imported, vec!["imported"]);
+        assert!(app.database.list_aliases().unwrap().is_empty());
+
+        app.handle_key(key(KeyCode::Char('y')));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import result");
+        };
+        assert_eq!(state.phase, ImportPhase::Result);
+        assert!(app
+            .snapshot
+            .aliases
+            .iter()
+            .any(|alias| alias.name == "imported"));
+        assert!(app.status.text.contains("single transaction"));
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.screen, Screen::Browse));
+
+        // Cancel before preview.
+        let cancel_file = root.join("cancel.json");
+        aliasmgr_core::transfer::export_json(
+            &cancel_file,
+            &[AliasRecord {
+                name: "not_imported".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &cancel_file);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.screen, Screen::Browse));
+        assert!(!app
+            .database
+            .list_aliases()
+            .unwrap()
+            .iter()
+            .any(|alias| alias.name == "not_imported"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_missing_file_and_sensitive_values_are_reported_without_secrets() {
+        let root = temp_root("import-errors");
+        let mut app = App::new(root.clone()).unwrap();
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &root.join("missing.json"));
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import screen");
+        };
+        assert_eq!(state.phase, ImportPhase::Input);
+        assert!(state.error.as_deref().unwrap().contains("file not found"));
+        app.handle_key(key(KeyCode::Esc));
+
+        let file = root.join("sensitive.json");
+        let mut alias = AliasRecord {
+            name: "secret".into(),
+            executable: "tool".into(),
+            shells: vec![ShellKind::Bash],
+            ..Default::default()
+        };
+        alias.environment.insert("TOKEN".into(), "hunter2".into());
+        alias.environment.insert("MODE".into(), "fast".into());
+        let envelope = aliasmgr_core::transfer::ExportFile {
+            format_version: aliasmgr_core::transfer::FORMAT_VERSION,
+            exported_at: "2026-01-01T00:00:00+00:00".into(),
+            exported_by_version: "test".into(),
+            aliases: vec![alias],
+        };
+        std::fs::write(&file, serde_json::to_string(&envelope).unwrap()).unwrap();
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import preview");
+        };
+        let report = state.report.as_ref().unwrap();
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("sensitive environment variable omitted")));
+        assert!(!report.warnings.join("\n").contains("hunter2"));
+        app.handle_key(key(KeyCode::Char('y')));
+        wait_for_jobs(&mut app);
+        let saved = AliasService::new(&app.database)
+            .get_by_name("secret")
+            .unwrap()
+            .unwrap();
+        assert!(!saved.environment.contains_key("TOKEN"));
+        assert_eq!(
+            saved.environment.get("MODE").map(String::as_str),
+            Some("fast")
+        );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_export_settings_keys_are_text_inside_a_dirty_editor() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('e')));
+        assert!(matches!(app.screen, Screen::Editor(_)));
+        let before = match &app.screen {
+            Screen::Editor(editor) => editor.draft.name.clone(),
+            _ => String::new(),
+        };
+        for character in "IXS".chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        let Screen::Editor(editor) = &app.screen else {
+            panic!("editor must stay open");
+        };
+        assert_eq!(editor.draft.name, format!("{before}IXS"));
+        assert!(editor.is_dirty());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn export_flow_writes_json_and_requires_overwrite_confirmation() {
+        let (root, mut app) = app_with_two();
+        let file = root.join("export.json");
+        app.handle_key(key(KeyCode::Char('X')));
+        assert!(matches!(app.screen, Screen::Export(_)));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        let Screen::Export(state) = &app.screen else {
+            panic!("export result");
+        };
+        assert_eq!(state.phase, ExportPhase::Result);
+        assert_eq!(state.summary.as_ref().unwrap().count, 2);
+        assert!(file.exists());
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.screen, Screen::Browse));
+
+        std::fs::write(&file, "keep-me").unwrap();
+        app.handle_key(key(KeyCode::Char('X')));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        let Screen::Export(state) = &app.screen else {
+            panic!("export confirm");
+        };
+        assert_eq!(state.phase, ExportPhase::ConfirmOverwrite);
+        app.handle_key(key(KeyCode::Esc));
+        let Screen::Export(state) = &app.screen else {
+            panic!("export input");
+        };
+        assert_eq!(state.phase, ExportPhase::Input);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "keep-me");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_save_is_shared_and_invalid_counts_keep_the_draft() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('S')));
+        let Screen::Settings(state) = &app.screen else {
+            panic!("settings");
+        };
+        assert_eq!(state.config_dir, root);
+        if let Screen::Settings(state) = &mut app.screen {
+            state.draft.allow_relative_paths = true;
+            state.draft.language = "en".into();
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        let loaded = aliasmgr_core::config::AppPaths { root: root.clone() }
+            .load_config()
+            .unwrap();
+        assert!(loaded.runtime.allow_relative_paths);
+        assert_eq!(loaded.runtime.language, "en");
+        assert!(app.status.text.contains("settings saved"));
+        assert!(matches!(app.screen, Screen::Settings(_)));
+
+        let before = std::fs::read_to_string(root.join("config.toml")).unwrap();
+        if let Screen::Settings(state) = &mut app.screen {
+            state.draft.rc_keep = "not-a-number".into();
+        }
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.status.text.contains("must be a non-negative integer"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("config.toml")).unwrap(),
+            before
+        );
+        let Screen::Settings(state) = &app.screen else {
+            panic!("settings stays open");
+        };
+        assert_eq!(state.draft.rc_keep, "not-a-number");
+        assert!(state.error.is_some());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn invalid_config_file_reports_an_error_instead_of_opening_settings() {
+        let (root, mut app) = app_with_two();
+        std::fs::write(root.join("config.toml"), "not = [valid").unwrap();
+        app.handle_key(key(KeyCode::Char('S')));
+        assert!(matches!(app.screen, Screen::Browse));
+        assert!(app.status.text.contains("could not load config.toml"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_cancel_dirty_and_save_failure_keep_the_draft() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('S')));
+        if let Screen::Settings(state) = &mut app.screen {
+            state.draft.language = "en".into();
+        }
+        app.handle_key(key(KeyCode::Esc));
+        assert!(matches!(app.modal, Some(Modal::ConfirmDiscard)));
+        app.handle_key(key(KeyCode::Char('n')));
+        assert!(matches!(app.screen, Screen::Settings(_)));
+
+        if let Screen::Settings(state) = &mut app.screen {
+            state.draft.language = "en".into();
+        }
+        // Force a deterministic write failure by making the target a directory.
+        let config_file = root.join("config.toml");
+        if config_file.exists() {
+            std::fs::remove_file(&config_file).unwrap();
+        }
+        std::fs::create_dir(&config_file).unwrap();
+        app.handle_key(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL));
+        assert!(app.status.text.contains("settings were not saved"));
+        let Screen::Settings(state) = &app.screen else {
+            panic!("settings stays open");
+        };
+        assert_eq!(state.draft.language, "en");
+        assert!(state.error.is_some());
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }
