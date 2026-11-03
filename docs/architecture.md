@@ -75,11 +75,31 @@ drift:
 - The interactive doctor previews every shell that will be applied and applies
   exactly that previewed set; a checked shell that still needs a path blocks
   the confirmation instead of being written un-previewed.
-- The CLI `add`/`update` preflight uses the same helpers and refuses to save
-  when a target shell is not enabled or its loader is not verifiable
-  (`ShellNotReady`, exit 12), unless `--allow-missing-loader` is supplied.
+- `shell_readiness_problems` is the shared preflight rule: a target shell must
+  be in `shells.enabled` and its loader block must verify. The GUI save
+  commands use it strictly (a blocked save writes nothing and keeps the draft).
+  The CLI applies the same rule before `add`/`update` and returns
+  `ShellNotReady` (exit 12) unless `--allow-missing-loader` is supplied;
   `--no-sync` skips the loader probe and post-save sync but still checks
   `enabled`.
+- The GUI (`crates/aliasmgr-gui/src-tauri/src/commands.rs`) exposes read-only
+  `shell_status` / `shell_startup_state`, plan/preview `shell_setup_plan`,
+  confirmed `shell_setup_apply`, `shell_set_enabled`, `shell_setup_skip` and
+  `preflight_alias_shells`. `shell_startup_state.first_run` is true only when
+  `config.toml` is absent; skipping writes an empty configuration so later
+  launches show a compact notice instead of the full wizard. Startup reports
+  `invalid_enabled` (enabled but loader missing/invalid) and `newly_detected`
+  (detected, not enabled, non-WSL) without writing anything.
+- Each `shell_setup_apply`/`shell_setup_plan` call delegates path, marker,
+  backup, lock and journal handling to `integration`/`sync`; the GUI never
+  edits profile text itself. The status scan reports probed versions; previews
+  reuse the shared planner and do not add a version field of their own.
+- GUI writes use the same post-commit auto-sync contract as the CLI:
+  `create`/`update` sync old ∪ new shells, `delete` syncs the removed record's
+  shells (tombstones), and confirmed imports sync all referenced shells once.
+  `update_alias` honors the stored revision and retires removed shells through
+  `AliasService::update_checked`. Per-shell failures and orchestration errors
+  are returned in `AutoSyncDto` so the UI can show them; preview never syncs.
 
 After a successful CLI alias write, `commands::sync_after_write` computes the
 affected shells (old ∪ new for `add`/`update`, bound shells for

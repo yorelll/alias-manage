@@ -177,6 +177,82 @@ impl ShellSetupOutcome {
     }
 }
 
+/// One reason a target shell cannot load aliases yet. Interactive front ends
+/// share this check so the GUI, TUI and CLI cannot disagree about what
+/// "ready" means (`enabled` intent plus a verifiable loader block). Path,
+/// marker and error-code rules still live in `integration`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellReadinessProblem {
+    pub kind: ShellKind,
+    /// Stable code: `shell_disabled`, `loader_missing` or a `loader_*` code.
+    pub code: &'static str,
+    pub message: String,
+    pub loader_target: Option<PathBuf>,
+}
+
+/// Preflights the requested target shells without writing anything. Unknown
+/// shells are ignored (aliases only support the four `SUPPORTED_SHELLS`), and
+/// the returned problems use canonical shell order.
+pub fn shell_readiness_problems(
+    config: &AppConfig,
+    paths: &AppPaths,
+    shells: &[ShellKind],
+) -> Result<Vec<ShellReadinessProblem>, AliasError> {
+    let targets = SUPPORTED_SHELLS
+        .iter()
+        .filter(|kind| shells.contains(kind))
+        .cloned()
+        .collect::<Vec<_>>();
+    if targets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let enabled = enabled_shells(config);
+    let mut problems = Vec::new();
+    for kind in targets {
+        if !enabled.contains(&kind) {
+            let target = integration::loader_target(config, paths, kind.as_str())
+                .ok()
+                .map(|target| target.path);
+            problems.push(ShellReadinessProblem {
+                message: format!("{} integration is not enabled", kind.label()),
+                kind,
+                code: "shell_disabled",
+                loader_target: target,
+            });
+            continue;
+        }
+        match integration::loader_status_with_config(config, paths, kind.as_str()) {
+            Ok(outcome) if outcome.installed => {}
+            Ok(outcome) => problems.push(ShellReadinessProblem {
+                message: format!(
+                    "{} loader block is not installed at {}",
+                    kind.label(),
+                    outcome.target.display()
+                ),
+                kind,
+                code: "loader_missing",
+                loader_target: Some(outcome.target),
+            }),
+            Err(error) => {
+                let target = integration::loader_target(config, paths, kind.as_str())
+                    .ok()
+                    .map(|target| target.path);
+                problems.push(ShellReadinessProblem {
+                    message: format!(
+                        "{} loader cannot be verified ({}: {error})",
+                        kind.label(),
+                        integration::loader_error_code(&error)
+                    ),
+                    kind,
+                    code: integration::loader_error_code(&error),
+                    loader_target: target,
+                });
+            }
+        }
+    }
+    Ok(problems)
+}
+
 fn normalize_override(label: &str, path: &Path) -> Result<PathBuf, AliasError> {
     if path.as_os_str().is_empty() {
         return Err(AliasError::Config(format!("{label} must not be empty")));
@@ -775,6 +851,87 @@ mod tests {
             Some(executable)
         );
         assert_eq!(config.shells.bash_rc_path, Some(profile));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn readiness_reports_disabled_missing_and_unsafe_loaders_without_writing() {
+        let root = temp_root("readiness");
+        let (paths, config) = configured_bash(&root);
+        let profile = root.join("bashrc");
+
+        // Disabled: the user intent is missing even though the profile resolves.
+        let problems =
+            shell_readiness_problems(&config, &paths, &[ShellKind::Bash, ShellKind::Bash]).unwrap();
+        assert_eq!(problems.len(), 1);
+        assert_eq!(problems[0].kind, ShellKind::Bash);
+        assert_eq!(problems[0].code, "shell_disabled");
+        assert_eq!(problems[0].loader_target, Some(profile.clone()));
+        assert!(!profile.exists());
+
+        // Enabled but no loader block yet.
+        let mut enabled = config.clone();
+        enabled.shells.enabled = vec!["bash".into()];
+        let problems = shell_readiness_problems(&enabled, &paths, &[ShellKind::Bash]).unwrap();
+        assert_eq!(problems[0].code, "loader_missing");
+        assert_eq!(problems[0].loader_target, Some(profile.clone()));
+
+        // A confirmed setup makes the shell ready.
+        apply_shell_setup(&paths, &ShellKind::Bash, &ShellSetupOptions::default()).unwrap();
+        let saved = paths.load_config().unwrap();
+        assert!(shell_readiness_problems(&saved, &paths, &[ShellKind::Bash])
+            .unwrap()
+            .is_empty());
+
+        // A malformed marker still blocks a save; the stable loader code wins.
+        fs::write(
+            &profile,
+            format!("{}\n", crate::shells::common::START_MARKER),
+        )
+        .unwrap();
+        let problems = shell_readiness_problems(&saved, &paths, &[ShellKind::Bash]).unwrap();
+        assert_eq!(problems[0].code, "loader_unsafe");
+
+        // Unsupported and empty target lists are ignored, like the CLI.
+        assert!(shell_readiness_problems(&saved, &paths, &[ShellKind::Fish])
+            .unwrap()
+            .is_empty());
+        assert!(shell_readiness_problems(&saved, &paths, &[])
+            .unwrap()
+            .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn readiness_uses_canonical_order_for_multiple_disabled_shells() {
+        let root = temp_root("readiness-order");
+        let paths = AppPaths { root: root.clone() };
+        let config = AppConfig::default();
+        let problems = shell_readiness_problems(
+            &config,
+            &paths,
+            &[
+                ShellKind::PowerShell7,
+                ShellKind::Bash,
+                ShellKind::PowerShell5,
+                ShellKind::Bash,
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            problems
+                .iter()
+                .map(|problem| problem.kind.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                ShellKind::Bash,
+                ShellKind::PowerShell5,
+                ShellKind::PowerShell7
+            ]
+        );
+        assert!(problems
+            .iter()
+            .all(|problem| problem.code == "shell_disabled"));
         let _ = fs::remove_dir_all(root);
     }
 }

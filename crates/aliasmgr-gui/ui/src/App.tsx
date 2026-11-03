@@ -8,18 +8,25 @@ import { DoctorPanel } from "./components/DoctorPanel";
 import { GeneratedFilePanel } from "./components/GeneratedFilePanel";
 import { ImportPanel } from "./components/ImportPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
+import { ShellSetupWizard } from "./components/ShellSetupWizard";
+import { ShellStartupBanner } from "./components/ShellStartupBanner";
 import { UninstallPanel } from "./components/UninstallPanel";
-import type { AliasDto, Settings } from "./lib";
+import type { AliasDto, AutoSyncNotice, SaveAliasOutcome, Settings, ShellStartupState } from "./lib";
 import {
   type StartupStatus,
   type Page,
   NAV_ITEMS,
+  autoSyncNotice,
   createAliasPayload,
   aliasFiltersActive,
   clearAliasFilters,
   mergeEditedAlias,
   nextDataVersion,
+  normalizeDeleteAliasResult,
+  normalizeSaveAliasResult,
   normalizeSettings,
+  normalizeShellStartupState,
+  preflightMessage,
   searchAliasesArgs,
   statusShellText,
   statusSummaryText,
@@ -92,7 +99,7 @@ export function StatusDrawer({ status, error }: StatusDrawerProps) {
 
 type WizardState = { mode: "create" } | { mode: "edit"; alias: AliasDto };
 
-export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?: number; onOpenImport?: () => void }) {
+export function AliasesPage({ refreshToken = 0, onOpenImport, onOpenShellSetup }: { refreshToken?: number; onOpenImport?: () => void; onOpenShellSetup?: () => void }) {
   const { language, t } = useI18n();
   const [aliases, setAliases] = useState<AliasDto[]>([]);
   const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
@@ -104,6 +111,7 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
   const [deleteArmed, setDeleteArmed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncNotice, setSyncNotice] = useState<AutoSyncNotice | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
   const deleteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hasLoaded = useRef(false);
@@ -156,9 +164,16 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
     setDeleteArmed(false);
   };
 
+  const showAutoSync = (notice: AutoSyncNotice) => {
+    setSyncNotice(notice.tone === "none" ? null : notice);
+  };
+
   const executeDelete = async (alias: AliasDto) => {
     try {
-      await tauriInvoke("delete_alias", { id: alias.id });
+      const result = normalizeDeleteAliasResult(
+        await tauriInvoke("delete_alias", { id: alias.id }),
+      );
+      showAutoSync(autoSyncNotice(result.autoSync, language));
       cancelDelete();
       setError(null);
       refresh();
@@ -182,28 +197,42 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
     void executeDelete(alias);
   };
 
-  const saveAlias = async (draft: AliasDto): Promise<string | null> => {
+  const saveAlias = async (draft: AliasDto): Promise<SaveAliasOutcome> => {
     try {
-      if (wizard?.mode === "edit") {
-        await tauriInvoke("update_alias", { alias: mergeEditedAlias(wizard.alias, draft) });
-      } else {
-        await tauriInvoke("create_alias", { alias: createAliasPayload(draft) });
+      const result = normalizeSaveAliasResult(
+        wizard?.mode === "edit"
+          ? await tauriInvoke("update_alias", { alias: mergeEditedAlias(wizard.alias, draft) })
+          : await tauriInvoke("create_alias", { alias: createAliasPayload(draft) }),
+      );
+      if (!result.saved) {
+        // Keep the wizard (and its draft) open; the preflight block offers the
+        // shared setup flow. Nothing was written to the database.
+        setError(null);
+        return { error: null, preflight: result.preflight };
       }
+      showAutoSync(autoSyncNotice(result.autoSync, language));
       cancelDelete();
       setWizard(null);
       setError(null);
       refresh();
-      return null;
+      return { error: null, preflight: null };
     } catch (reason) {
       const message = String(reason);
       setError(message);
-      return message;
+      return { error: message, preflight: null };
     }
   };
 
   const toggleEnabled = async (alias: AliasDto) => {
     try {
-      await tauriInvoke("update_alias", { alias: toggleAliasEnabled(alias) });
+      const result = normalizeSaveAliasResult(
+        await tauriInvoke("update_alias", { alias: toggleAliasEnabled(alias) }),
+      );
+      if (!result.saved) {
+        setError(preflightMessage(result.preflight, language));
+        return;
+      }
+      showAutoSync(autoSyncNotice(result.autoSync, language));
       cancelDelete();
       setError(null);
       refresh();
@@ -226,6 +255,25 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
         </div>
       </div>
       {error && <p role="alert">{error}</p>}
+      {syncNotice && syncNotice.tone !== "none" && (
+        <div
+          className={`auto-sync-notice auto-sync-${syncNotice.tone}`}
+          role={syncNotice.tone === "warning" ? "alert" : "status"}
+          data-testid="auto-sync-notice"
+        >
+          <p>{syncNotice.text}</p>
+          {syncNotice.reloadCommands.length > 0 && (
+            <details>
+              <summary>{t("autoSync.reloadTitle")}</summary>
+              <ul>
+                {syncNotice.reloadCommands.map((command) => (
+                  <li key={command}><code>{command}</code></li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
       <div className="alias-toolbar">
         <SearchBar
           query={query}
@@ -255,6 +303,7 @@ export function AliasesPage({ refreshToken = 0, onOpenImport }: { refreshToken?:
           tags={Object.keys(tagCounts)}
           onCancel={() => setWizard(null)}
           onSave={saveAlias}
+          onOpenShellSetup={onOpenShellSetup}
         />
       )}
       {loading ? (
@@ -296,10 +345,36 @@ export function App() {
   const [statusError, setStatusError] = useState(false);
   const [dataVersion, setDataVersion] = useState(0);
   const [language, setLanguage] = useState<Language>(DEFAULT_LANGUAGE);
+  const [shellState, setShellState] = useState<ShellStartupState | null>(null);
+  const [shellStateError, setShellStateError] = useState<string | null>(null);
+  const [shellStateLoading, setShellStateLoading] = useState(true);
+  const [showShellWizard, setShowShellWizard] = useState(false);
+  const [ignoredShellWarnings, setIgnoredShellWarnings] = useState<string[]>([]);
+  const [shellPanelToken, setShellPanelToken] = useState(0);
   const syncPageRef = useRef<HTMLDivElement | null>(null);
   const focusSyncAfterNavigation = useRef(false);
 
   const invalidateAliasData = () => setDataVersion((value) => nextDataVersion(value));
+
+  const loadShellState = async () => {
+    setShellStateLoading(true);
+    try {
+      const state = normalizeShellStartupState(await tauriInvoke("shell_startup_state"));
+      setShellState(state);
+      setShellStateError(null);
+      return state;
+    } catch (reason) {
+      setShellStateError(String(reason));
+      return null;
+    } finally {
+      setShellStateLoading(false);
+    }
+  };
+
+  const openShellSetup = () => {
+    setShellPanelToken((value) => value + 1);
+    setPage("settings");
+  };
 
   const openImportPage = () => {
     focusSyncAfterNavigation.current = true;
@@ -340,6 +415,31 @@ export function App() {
     tauriInvoke("startup_status").then((value) => setStatus(value as StartupStatus)).catch(() => setStatusError(true));
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    tauriInvoke("shell_startup_state")
+      .then((value) => {
+        if (cancelled) return;
+        const state = normalizeShellStartupState(value);
+        setShellState(state);
+        setShellStateError(null);
+        // The full wizard is a fresh-install experience only. Skipping writes
+        // an empty configuration, so later launches show a compact notice.
+        if (state.firstRun) setShowShellWizard(true);
+      })
+      .catch((reason) => { if (!cancelled) setShellStateError(String(reason)); })
+      .finally(() => { if (!cancelled) setShellStateLoading(false); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const ignoreShellWarning = (shell: string) => {
+    setIgnoredShellWarnings((current) => (
+      current.includes(shell) ? current : [...current, shell]
+    ));
+  };
+
+  const refreshShellState = () => { void loadShellState(); };
+
   return (
     <I18nContext.Provider value={i18n}>
       <div className="app-layout">
@@ -350,13 +450,33 @@ export function App() {
           </ul>
         </nav>
         <div className="main-content">
+          {showShellWizard && (
+            <ShellSetupWizard
+              statuses={shellState?.shells ?? []}
+              loading={shellStateLoading}
+              error={shellStateError}
+              firstRun
+              onRescan={() => void loadShellState()}
+              onClose={() => setShowShellWizard(false)}
+              onApplied={() => void loadShellState()}
+            />
+          )}
+          {!showShellWizard && shellState && (
+            <ShellStartupBanner
+              state={shellState}
+              ignored={ignoredShellWarnings}
+              onIgnore={ignoreShellWarning}
+              onChanged={refreshShellState}
+              onOpenSetup={openShellSetup}
+            />
+          )}
           <div className="page-area">
             {/* Pages stay mounted so drafts survive navigation; inactive pages
                 are hidden from layout, the accessibility tree, and tab order. */}
-            <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} /></div>
+            <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} onOpenShellSetup={openShellSetup} /></div>
             <div hidden={page !== "sync"} ref={syncPageRef} tabIndex={-1}><ImportPanel onImported={invalidateAliasData} /><GeneratedFilePanel /></div>
             <div hidden={page !== "doctor"}><DoctorPanel /></div>
-            <div hidden={page !== "settings"}><SettingsPanel /><UninstallPanel onUninstalled={invalidateAliasData} /></div>
+            <div hidden={page !== "settings"}><SettingsPanel focusShellsToken={shellPanelToken} onShellsChanged={refreshShellState} /><UninstallPanel onUninstalled={invalidateAliasData} /></div>
           </div>
           <StatusDrawer status={status} error={statusError} />
         </div>

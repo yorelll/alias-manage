@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import type { AliasDto, EnvRow, PathRestriction, PreviewSnippet, RestrictionMode } from "../lib";
+import type {
+  AliasDto,
+  AliasPreflight,
+  EnvRow,
+  PathRestriction,
+  PreviewSnippet,
+  RestrictionMode,
+  SaveAliasOutcome,
+  ShellStatus,
+} from "../lib";
 import {
   SHELLS,
   TARGET_TYPES,
@@ -11,9 +20,14 @@ import {
   foldRestrictionPath,
   latestPreviewResponse,
   normalizePreviewSnippets,
+  normalizeShellStatuses,
+  preflightMessage,
   previewAliasArgs,
   rowsToEnvironment,
   shellLabel,
+  shellLoaderLabel,
+  shellOptionState,
+  shellOptionStateLabel,
   targetExecutableWarning,
   targetTypeExplanation,
   targetTypeLabel,
@@ -28,10 +42,12 @@ interface AliasWizardProps {
   initial?: AliasDto;
   tags: string[];
   onCancel: () => void;
-  onSave: (alias: AliasDto) => Promise<string | null>;
+  onSave: (alias: AliasDto) => Promise<SaveAliasOutcome>;
+  /** Navigate to the shared shell setup flow, keeping this wizard mounted. */
+  onOpenShellSetup?: () => void;
 }
 
-export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProps) {
+export function AliasWizard({ initial, tags, onCancel, onSave, onOpenShellSetup }: AliasWizardProps) {
   const { language, t } = useI18n();
   const [draft, setDraft] = useState<AliasDto>(initial ?? emptyAliasDraft());
   const [envRows, setEnvRows] = useState<EnvRow[]>(() => environmentToRows((initial ?? emptyAliasDraft()).environment));
@@ -39,6 +55,8 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
     initial.working_directory || initial.fixed_args.length > 0 || Object.keys(initial.environment).length > 0
   )));
   const [error, setError] = useState<string | null>(null);
+  const [preflight, setPreflight] = useState<AliasPreflight | null>(null);
+  const [shellStatuses, setShellStatuses] = useState<ShellStatus[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<PreviewSnippet[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -62,7 +80,17 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   }, []);
 
   // Localized validation/save/preview messages must not survive a language switch.
-  useEffect(() => { setError(null); setPreviewError(null); }, [language]);
+  useEffect(() => { setError(null); setPreviewError(null); setPreflight(null); }, [language]);
+
+  // Shell availability labels (enabled / disabled / not installed) come from
+  // the same core-backed status command the setup panels use.
+  useEffect(() => {
+    let cancelled = false;
+    tauriInvoke("shell_status")
+      .then((value) => { if (!cancelled) setShellStatuses(normalizeShellStatuses(value)); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const invalidatePreview = () => {
     previewToken.current += 1;
@@ -74,6 +102,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
   const update = (patch: Partial<AliasDto>) => {
     setDraft((value) => ({ ...value, ...patch }));
     setError(null);
+    setPreflight(null);
     invalidatePreview();
   };
 
@@ -107,9 +136,11 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
     }
     setSaving(true);
     setError(null);
+    setPreflight(null);
     const result = await onSave(finalized);
     setSaving(false);
-    if (result) setError(result);
+    setPreflight(result.preflight);
+    if (result.error) setError(result.error);
   };
 
   const runPreview = async () => {
@@ -147,6 +178,18 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
       <h2 id="alias-wizard-title">{initial ? t("wizard.editTitle", { name: initial.name }) : t("wizard.addTitle")}</h2>
 
       {error && <p className="form-error" role="alert">{t("wizard.unableToSave", { error })}</p>}
+
+      {preflight && !preflight.ok && (
+        <div className="preflight-block" role="alert" data-testid="alias-preflight-block">
+          <p className="form-error">{preflightMessage(preflight, language)}</p>
+          <p className="hint">{t("preflight.draftKept")}</p>
+          {onOpenShellSetup && (
+            <button type="button" className="btn-primary" onClick={onOpenShellSetup}>
+              {t("preflight.openSetup")}
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="field-grid">
         <label className="field">
@@ -202,16 +245,25 @@ export function AliasWizard({ initial, tags, onCancel, onSave }: AliasWizardProp
         <fieldset className="field-group field-full">
           <legend>{t("wizard.shells")}</legend>
           <div className="check-group">
-            {SHELLS.map((shell) => (
-              <label className="check-row" key={shell}>
-                <input
-                  type="checkbox"
-                  checked={draft.shells.includes(shell)}
-                  onChange={() => update({ shells: toggleShell(draft.shells, shell) })}
-                />
-                <span>{shellLabel(shell, language)}</span>
-              </label>
-            ))}
+            {SHELLS.map((shell) => {
+              const status = shellStatuses.find((entry) => entry.shell === shell);
+              return (
+                <label className="check-row" key={shell}>
+                  <input
+                    type="checkbox"
+                    checked={draft.shells.includes(shell)}
+                    onChange={() => update({ shells: toggleShell(draft.shells, shell) })}
+                  />
+                  <span>{shellLabel(shell, language)}</span>
+                  {status && (
+                    <span className="hint" data-shell-status={shell}>
+                      {shellOptionStateLabel(shellOptionState(status), language)}
+                      {status.enabled ? ` · ${shellLoaderLabel(status.loader_status, language)}` : ""}
+                    </span>
+                  )}
+                </label>
+              );
+            })}
           </div>
           {unknownShells.length > 0 && (
             <p className="hint">{t("wizard.alsoTargets", { shells: unknownShells.map((shell) => shellLabel(shell, language)).join(", ") })}</p>

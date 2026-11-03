@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ChangeEvent } from "react";
 import type { ImportReport, ImportSkipEntry } from "../lib";
 import {
+  autoSyncNotice,
   importContentArgs,
   importReportCounts,
   importSkipEntries,
@@ -123,6 +124,7 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
   };
 
   const counts = report ? importReportCounts(report) : null;
+  const syncNotice = report && confirmed ? autoSyncNotice(report.auto_sync, language) : null;
 
   return (
     <section className="panel" aria-labelledby="import-title">
@@ -173,6 +175,25 @@ export function ImportPanel({ onImported }: { onImported?: () => void }) {
             <ReportList title={t("import.warnings")} items={report.warnings} />
             <ReportList title={t("import.unsupported")} items={report.unsupported} />
           </div>
+        </div>
+      )}
+
+      {syncNotice && syncNotice.tone !== "none" && (
+        <div
+          className={`auto-sync-notice auto-sync-${syncNotice.tone}`}
+          role={syncNotice.tone === "warning" ? "alert" : "status"}
+        >
+          <p>{syncNotice.text}</p>
+          {syncNotice.reloadCommands.length > 0 && (
+            <details>
+              <summary>{t("autoSync.reloadTitle")}</summary>
+              <ul>
+                {syncNotice.reloadCommands.map((command) => (
+                  <li key={command}><code>{command}</code></li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 

@@ -57,7 +57,7 @@ aliasmgr reload --print --shell bash
 aliasmgr tui
 ```
 
-首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。没有单独的 `setup` 命令。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；`--allow-missing-loader` 可显式保存并警告（该 Shell 暂不生效）。
+首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。GUI 首次启动也提供同样的 Shell 集成面板（可跳过，不阻塞进入主界面）；没有单独的 `setup` 命令。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；`--allow-missing-loader` 可显式保存并警告（该 Shell 暂不生效）。GUI 保存始终严格预检，不提供该逃生参数。
 
 配置根优先级：
 
@@ -94,6 +94,15 @@ bash = "C:\\Program Files\\Git\\bin\\bash.exe"
 - 检测来源：`PATH`、Windows 已知安装路径（PS5 系统路径、PS7 Program Files/WindowsApps、Git Bash、MSYS2/Cygwin Zsh）、Unix `/bin`、`/usr/bin`、`/usr/local/bin`，以及 `shells.executables` 手动路径（最高优先级）。版本探测有约 2 秒超时；失败只表示版本未知，不表示未安装。
 - 无法保证发现所有安装方式（便携版、Store 别名、启动后安装、WSL、不同 PATH）。`doctor` 始终列出四个 Shell 并允许手动填写路径。
 - Windows `System32\bash.exe`/WindowsApps `bash.exe` 会标记为 WSL；不会向 Windows profile 写入 WSL 的 loader。若同一机器还有 Git Bash，检测会优先选择非 WSL 的已知安装；WSL 行也可在 `doctor` 中手动输入原生 Windows executable/profile，或在 WSL 发行版内运行 `doctor`。
+
+### GUI 首次集成、启动检查与自动同步
+
+- **首次启动**：配置根下没有 `config.toml` 时，GUI 在主页顶部显示首次集成面板。它始终列出四个 Shell 及 detected/路径/版本/WSL/loader 状态；默认只勾选已启用或已有有效 loader 的 Shell，用户确认后才写入 `shells.enabled`。勾选 detected Shell 后会先预览 profile/RC 路径与标记块，再安装 loader、执行一次同步并显示 reload 命令。未检测到的 Shell 可填写 executable/profile（或先安装并加入 PATH 后重启）；WSL 行可用原生 Windows 路径覆盖，或在 WSL 发行版内运行 `doctor`。`暂时跳过` 会写入空的 `shells.enabled`，因此后续启动只显示紧凑的“尚未配置”提示，而不是每次弹出完整向导。
+- **后续启动**：只检查已启用 Shell 的 loader。loader 缺失/无效时显示非阻塞提示，提供 `重新启用` / `暂时忽略`（仅本次会话）/ `禁用`（持久化）。新检测到但未启用的 Shell 显示一次可忽略的启用提示；不会自动启用。
+- **设置页 Shell 面板**：启用/禁用、重新检测、查看 loader 状态与路径、为非标准安装填写 executable/profile、重新运行 setup。预览通过后才写入，且只修改标记块。
+- **保存预检（严格）**：GUI 创建/编辑别名时，若目标 Shell 未启用或 loader 无效，保存被拦截并保留草稿，提供“打开 Shell 设置”按钮；不会静默保存不会生效的别名。`--allow-missing-loader` 仅属于 CLI。
+- **自动同步**：GUI 创建/更新/删除/启停别名成功后，若 `runtime.auto_sync = true`，在一次数据库写入后同步受影响的 Shell（更新为旧 ∪ 新集合），并在页面上显示每个 Shell 的结果与 reload 命令；失败明确显示，不伪装成功。导入预览不同步，确认导入后同步一次。设置页可关闭自动同步。
+- 检测边界同 CLI：无法保证发现所有安装方式；始终列出四个 Shell 并允许手动路径。版本探测有约 2 秒上限，失败只表示版本未知。GUI 不自动 reload 当前终端、不写环境变量/注册表、不修改标记块以外的 profile 内容。
 
 - Bash/Zsh 使用 `source '<config-root>/generated/bash.sh'`。
 - PowerShell 使用 `. '<config-root>\generated\powershell7.ps1'`；开头的 `.` 是 **点源（dot-source）运算符**，不是逗号，表示在当前会话中运行该文件。

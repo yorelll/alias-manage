@@ -280,7 +280,20 @@ test("import accepts only json and toml filenames and sends content plus filenam
 });
 
 test("import report normalization and counts handle missing fields and reasons", () => {
-  assert.deepEqual(normalizeImportReport(null), { imported: [], skipped: [], warnings: [], unsupported: [] });
+  const emptyAutoSync = {
+    attempted: false,
+    skippedReason: null,
+    run: null,
+    error: null,
+    errorCode: null,
+  };
+  assert.deepEqual(normalizeImportReport(null), {
+    imported: [],
+    skipped: [],
+    warnings: [],
+    unsupported: [],
+    auto_sync: emptyAutoSync,
+  });
   const report = normalizeImportReport({
     imported: ["gui-import-test"],
     skipped: ["INVALID NAME WITH SPACES: invalid name"],
@@ -293,6 +306,7 @@ test("import report normalization and counts handle missing fields and reasons",
     skipped: ["INVALID NAME WITH SPACES: invalid name"],
     warnings: ["shell alias rewritten"],
     unsupported: ["raw_shell_command"],
+    auto_sync: emptyAutoSync,
   });
   assert.deepEqual(importReportCounts(report), { imported: 1, skipped: 1, warnings: 1, unsupported: 1 });
   assert.deepEqual(toStringList(["a", 1, "", "b"]), ["a", "b"]);
@@ -441,6 +455,7 @@ test("settings normalization supplies safe defaults", () => {
     log_keep: 10,
     allow_relative_paths: false,
     language: "zh",
+    auto_sync: true,
   });
   assert.deepEqual(normalizeSettings({ config_directory: "/tmp", default_shell: "zsh", backup_keep: 3.9, log_keep: -1, allow_relative_paths: true }), {
     config_directory: "/tmp",
@@ -449,7 +464,9 @@ test("settings normalization supplies safe defaults", () => {
     log_keep: 10,
     allow_relative_paths: true,
     language: "zh",
+    auto_sync: true,
   });
+  assert.equal(normalizeSettings({ auto_sync: false }).auto_sync, false);
   assert.equal(normalizeSettings({ language: "en" }).language, "en");
   assert.equal(normalizeSettings({ language: "fr" }).language, "zh", "unknown languages fall back to Chinese");
 });
@@ -486,6 +503,7 @@ test("settingsDirty detects changes field by field", () => {
   assert.equal(settingsDirty(loaded, { ...loaded }), false);
   assert.equal(settingsDirty(loaded, { ...loaded, default_shell: "zsh" }), true);
   assert.equal(settingsDirty(loaded, { ...loaded, allow_relative_paths: true }), true);
+  assert.equal(settingsDirty(loaded, { ...loaded, auto_sync: false }), true);
   assert.equal(settingsDirty(loaded, { ...loaded, language: "en" }), true);
 });
 

@@ -165,6 +165,14 @@ it does not localize CLI output or the TUI (which stays English).
 by the CLI or TUI. Unknown keys nested inside known config tables are not
 preserved; top-level unknown keys are.
 
+The GUI (R2.0-P2a) already uses the shared first-run/setup APIs and strict save
+preflight, and auto-syncs affected shells after GUI writes. The TUI first-run
+integration and auto-sync are later TUI work: the current TUI still requires
+the explicit `s` sync action, and shell enable/loader management remains in the
+CLI `doctor`/GUI Settings panel. Both front ends share the same
+`config.toml`, database and `shells.enabled` intent, so a shell enabled in the
+GUI is immediately visible to the TUI.
+
 ## Interaction details
 
 - The footer adapts to width. Key hints wrap as whole tokens (never a truncated

@@ -17,8 +17,9 @@ import {
 import type { Language } from "../i18n";
 import { LANGUAGES, isLanguage } from "../i18n";
 import { useI18n } from "../language";
+import { ShellSettingsPanel } from "./ShellSettingsPanel";
 
-export function SettingsPanel() {
+export function SettingsPanel({ focusShellsToken = 0, onShellsChanged }: { focusShellsToken?: number; onShellsChanged?: () => void }) {
   const { language, setLanguage, t } = useI18n();
   const [loaded, setLoaded] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
@@ -202,6 +203,15 @@ export function SettingsPanel() {
           />
           <span>{t("settings.allowRelativePaths")}</span>
         </label>
+
+        <label className="check-row field-full">
+          <input
+            type="checkbox"
+            checked={draft.auto_sync}
+            onChange={(event) => edit({ auto_sync: event.target.checked })}
+          />
+          <span>{t("settings.autoSync")}</span>
+        </label>
       </div>
 
       {loaded && settingsDirty(loaded, draft) && <p className="hint" role="status">{t("settings.unsaved")}</p>}
@@ -215,6 +225,8 @@ export function SettingsPanel() {
           {busy ? t("common.saving") : t("settings.save")}
         </button>
       </div>
+
+      <ShellSettingsPanel focusToken={focusShellsToken} onChanged={onShellsChanged} />
     </section>
   );
 }
