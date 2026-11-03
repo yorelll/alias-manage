@@ -40,6 +40,8 @@ pub enum AliasError {
     Config(String),
     #[error("shell is not installed")]
     ShellNotInstalled,
+    #[error("shell integration is not ready: {0}")]
+    ShellNotReady(String),
     #[error("generated file failed syntax check: {0}")]
     SyntaxCheck(String),
     #[error("sync failed for some shells: {0}")]

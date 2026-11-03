@@ -43,6 +43,44 @@ The TUI is a presentation and input-state layer:
 - The TUI re-reads the database on every refresh and polls a cheap SQLite
   fingerprint for external CLI/GUI writes. It never treats its cached snapshot
   as the source of truth.
+- The same crate exposes `run_shell_setup`, the interactive `aliasmgr doctor`
+  Shell integration screen. It is not part of the `aliasmgr tui` app: it is
+  reached only from the CLI when the `tui` feature is enabled and gives the
+  `--no-default-features` build a line-based fallback instead of crossterm.
+
+## Shell detection and setup
+
+`aliasmgr-core` owns shell integration policy so the CLI, TUI and GUI cannot
+drift:
+
+- `detection::detect_shells(&AppConfig)` returns all four supported shells with
+  executable, detected flag, source (`manual`, `path`, `known_path`, `wsl`,
+  `not_found`), optional version and a WSL marker. Manual
+  `shells.executables` entries win over `PATH`, which wins over known install
+  paths. Probes are read-only and bounded by a short timeout; a failed probe
+  only leaves the version unknown.
+- `config::ShellPathOverrides` persists the user's `enabled` intent using the
+  stable `ShellKind::as_str()` spellings, plus the existing profile overrides
+  and the optional `shells.executables` map. Loading a legacy configuration
+  leaves `enabled` empty; nothing is enabled without an explicit user action.
+- `shell_setup` owns `enabled_shells`, `set_enabled_shells`,
+  `plan_shell_setup` (read-only plan with loader target/status and next action),
+  `preview_loader` (block and path without writing), and
+  `apply_shell_setup` (persist intent/overrides, install via `integration`,
+  sync via `sync`). It reuses the existing loader marker, backup, lock,
+  journal and revision code instead of duplicating it.
+- The CLI `add`/`update` preflight uses the same helpers and refuses to save
+  when a target shell is not enabled or its loader is not verifiable
+  (`ShellNotReady`, exit 12), unless `--allow-missing-loader` is supplied.
+  `--no-sync` skips the loader probe and post-save sync but still checks
+  `enabled`.
+
+After a successful CLI alias write, `commands::sync_after_write` computes the
+affected shells (old ∪ new for `add`/`update`, bound shells for
+`remove`/`rename`/`enable`/`disable`) and calls `sync::sync_shells` once when
+`runtime.auto_sync` is true. A per-shell failure is reported as `PartialSync`
+(exit 10) after the database commit; the generated file and `shell_state`
+remain the source of truth for diagnostics.
 
 ## Data model and storage
 

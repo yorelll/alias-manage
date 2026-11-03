@@ -18,6 +18,8 @@ fn add_args(name: &str) -> AddArgs {
         no_pass_args: false,
         target_type: None,
         path_mode: None,
+        no_sync: true,
+        allow_missing_loader: true,
     }
 }
 
@@ -38,6 +40,8 @@ fn update_args(name: &str) -> UpdateArgs {
         pass_args: false,
         target_type: None,
         path_mode: None,
+        no_sync: true,
+        allow_missing_loader: true,
     }
 }
 

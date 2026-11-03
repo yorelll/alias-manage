@@ -192,7 +192,40 @@ impl ShellKind {
             ShellKind::PosixSh => "posix_sh",
         }
     }
+
+    /// Parses one of the four installable shells from its stable spelling.
+    /// Deliberately does not accept serde enum spellings such as
+    /// `power_shell5`, and does not accept `fish`/`posix_sh`.
+    pub fn parse_supported(value: &str) -> Option<Self> {
+        match value {
+            "bash" => Some(ShellKind::Bash),
+            "zsh" => Some(ShellKind::Zsh),
+            "powershell5" => Some(ShellKind::PowerShell5),
+            "powershell7" => Some(ShellKind::PowerShell7),
+            _ => None,
+        }
+    }
+
+    /// Human-readable label used by setup previews and diagnostics.
+    pub fn label(&self) -> &'static str {
+        match self {
+            ShellKind::Bash => "Bash",
+            ShellKind::Zsh => "Zsh",
+            ShellKind::PowerShell5 => "PowerShell 5.1",
+            ShellKind::PowerShell7 => "PowerShell 7",
+            ShellKind::Fish => "Fish",
+            ShellKind::PosixSh => "POSIX sh",
+        }
+    }
 }
+
+/// The four shells Alias Manager can integrate, in canonical order.
+pub const SUPPORTED_SHELLS: [ShellKind; 4] = [
+    ShellKind::Bash,
+    ShellKind::Zsh,
+    ShellKind::PowerShell5,
+    ShellKind::PowerShell7,
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ShellState {

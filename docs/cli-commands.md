@@ -1,6 +1,6 @@
 # CLI Commands
 
-This document describes the current CLI surface (the TUI is launched from `aliasmgr tui`). It is a command contract verified against `crates/aliasmgr-cli` and the core library on 2026-11-01, not a claim that every environment-dependent Shell behavior is accepted on every machine. CI and tests always use an isolated temporary configuration directory.
+This document describes the current CLI surface (the TUI is launched from `aliasmgr tui`). It is a command contract verified against `crates/aliasmgr-cli` and the core library on 2026-11-04, not a claim that every environment-dependent Shell behavior is accepted on every machine. CI and tests always use an isolated temporary configuration directory.
 
 ## Global options
 
@@ -25,6 +25,37 @@ Every command that touches configuration resolves one root through `AppPaths::di
 
 The database, generated files, backups, journal, loader paths, `sync`, `reload --print`, and `uninstall` all use this same root. There is no separate current-directory database fallback.
 
+## Shell integration and save-is-done
+
+The user's intent is stored in `config.toml`; loader validity is detected on every run and is never persisted as a fact:
+
+```toml
+[runtime]
+auto_sync = true
+
+[shells]
+enabled = ["powershell5", "powershell7"]   # stable ShellKind::as_str() spellings
+bash_rc_path = "..."                       # existing profile overrides are unchanged
+powershell7_profile_path = "..."
+
+[shells.executables]                       # optional non-standard install paths
+powershell7 = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+bash = "C:\\Program Files\\Git\\bin\\bash.exe"
+```
+
+- `enabled` is the user's intent. It defaults to `[]`; loading a configuration written before this key existed does **not** enable anything. Only an explicit `doctor`/settings action writes it. Use `bash`, `zsh`, `powershell5`, and `powershell7`; serde spellings such as `power_shell5` and unsupported shells (`fish`, `posix_sh`) are rejected on save.
+- `shells.executables.<shell>` is the highest-priority detection source. A configured but missing path is reported as not detected; it does not silently fall back to `PATH`.
+- `runtime.auto_sync` defaults to `true` for old and new configurations. Set it to `false` to require an explicit `aliasmgr sync`.
+- There is **no `setup` command**. First-run integration happens in `aliasmgr doctor` (GUI/TUI first-run screens are later work). `doctor` lists all four supported shells even when detection fails, and requires confirmation before writing `enabled`, a profile path, a loader block, or syncing.
+- Detection is read-only and best effort. It checks `PATH`, known Windows install paths (PowerShell 5.1 system path, PowerShell 7 `Program Files`/`WindowsApps`, Git Bash, MSYS2/Cygwin Zsh) and Unix `/bin`, `/usr/bin`, `/usr/local/bin`. Version probes are bounded at about two seconds; a failed or timed-out probe leaves the version unknown but does not mark the shell undetected. A Windows `System32\bash.exe`/WindowsApps `bash.exe` is reported as WSL (`wsl=true`); Alias Manager does not write a Windows profile for it — run `doctor` inside the distribution instead.
+- `add` and `update` preflight every **target** shell before writing. A target that is not in `shells.enabled`, or whose loader block is not installed/verifiable, is refused with `ShellNotReady` (exit 12) and a pointer to `aliasmgr doctor`. Non-target shells are not checked.
+  - `--allow-missing-loader` saves anyway with a warning on stderr. The alias is in the database but will not take effect in that shell until integration is repaired.
+  - `--no-sync` skips the post-save sync and also skips the loader check (the enabled check still runs).
+- After a successful `add`, `update`, `remove`, `rename`, `enable`, or `disable` write, the affected shells are synced once when `runtime.auto_sync` is true and `--no-sync` is absent. Affected shells are the record's old ∪ new shells for `add`/`update`, and the record's shells for `remove`/`rename`/`enable`/`disable`. Sync targets are independent of `shells.enabled`; the renderer output does not depend on that list, and only enabled shells have loaders.
+  - A partial sync failure prints the per-shell errors and exits with `PartialSync` (exit 10). The database write is already committed and is not rolled back; run `aliasmgr sync` or `aliasmgr doctor` to retry.
+  - `--no-sync`, `runtime.auto_sync = false`, or no supported affected shell returns the normal success exit code (0).
+  - Import preview never syncs. Import confirmation and other batch paths keep their existing behavior.
+
 ## TUI
 
 - `tui`: launch the interactive terminal UI (see [docs/tui.md](tui.md)).
@@ -43,7 +74,7 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
 
 ## Alias lifecycle
 
-- `add <NAME> --exec <PROGRAM> [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--description TEXT] [--restrict MODE] [--restrict-path PATH]... [--no-pass-args] [--target-type TYPE] [--path-mode MODE]`
+- `add <NAME> --exec <PROGRAM> [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--description TEXT] [--restrict MODE] [--restrict-path PATH]... [--no-pass-args] [--target-type TYPE] [--path-mode MODE] [--no-sync] [--allow-missing-loader]`
   - `--arg` is repeatable and accepts leading hyphens, so `--arg --oneline` is valid. Because hyphen values are allowed, a following flag can be consumed as a value when it is ambiguous; use `--arg=--oneline` or place other flags before `--arg` in that case.
   - `--shell` accepts `bash`, `zsh`, `powershell5`, and `powershell7`, and is repeatable. When omitted, the alias targets Bash only.
   - `--env KEY=VALUE` is repeatable and is stored on the record. A missing `=`, an empty key, or an invalid shell is a configuration error (exit 1).
@@ -62,17 +93,17 @@ The database, generated files, backups, journal, loader paths, `sync`, `reload -
 - `find <QUERY> [--fuzzy] [--field FIELD] [--limit N] [--tag TAG]...`
   - `--field` accepts `all` (default), `name`, `target`, `description`, `tags`, `shells`, and `target_type`.
   - `--fuzzy` adds subsequence matching on top of exact/prefix/substring scoring. Without it, exact, prefix, and substring matches still score; there is no separate exact-only mode.
-- `update <NAME> [--exec <PROGRAM>] [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--description TEXT] [--restrict MODE] [--restrict-path PATH]... [--clear-restriction] [--no-pass-args|--pass-args] [--target-type TYPE] [--path-mode MODE]`
+- `update <NAME> [--exec <PROGRAM>] [--arg VALUE]... [--shell SHELL]... [--cwd PATH] [--env KEY=VALUE]... [--tag TAG]... [--description TEXT] [--restrict MODE] [--restrict-path PATH]... [--clear-restriction] [--no-pass-args|--pass-args] [--target-type TYPE] [--path-mode MODE] [--no-sync] [--allow-missing-loader]`
   - Only supplied fields change. Omitted fields keep their stored values.
   - `--arg`, `--shell`, and `--tag` replace their whole collection when supplied. `--env` merges keys into the existing environment map. `--cwd` replaces the stored working directory; there is currently no flag to clear it.
   - `--description` replaces the stored memo; `--description ""` clears it.
   - Restriction updates: `--restrict` alone changes only the mode and keeps existing paths (error if the record has no restriction and no paths are supplied); `--restrict-path` alone replaces the path list and keeps the existing mode (error if the record has no restriction); supplying both replaces both; `--clear-restriction` removes the restriction. Omitted restriction flags preserve the stored value. Validation and path rules match `add`. `--clear-restriction` conflicts with `--restrict` and `--restrict-path` (clap usage error, exit 2). See `docs/restrictions.md`.
   - Removing a shell from the record retires the old name for that shell so the next `sync` cleans it up.
   - `--target-type` and `--path-mode` accept the same values as `add` and replace the stored values when supplied; omitted values are preserved.
-  - A missing alias is `NotFound` (exit 4). An invalid shell or environment entry is a configuration error (exit 1). `--no-pass-args` and `--pass-args` conflict and are rejected by clap (exit 2). An unsupported `--target-type` or `--path-mode` value is a clap usage error (exit 2).
-- `rename <OLD> <NEW>`: retires the old name for every bound shell and updates the record. A missing source is `NotFound` (exit 4); a name conflict is exit 3.
-- `enable <NAME>` / `disable <NAME>`: flips the `enabled` flag. A missing alias is `NotFound` (exit 4).
-- `remove <NAME> [--yes]`: retires the name for every bound shell (tombstones advance the revision) and deletes the row. A missing alias is `NotFound` (exit 4). Without `--yes` in a non-interactive process, the command fails with `ConfirmationRequired` (exit 14).
+  - A missing alias is `NotFound` (exit 4). An invalid shell or environment entry is a configuration error (exit 1). `--no-pass-args` and `--pass-args` conflict and are rejected by clap (exit 2). An unsupported `--target-type` or `--path-mode` value is a clap usage error (exit 2). Target-shell preflight and `--allow-missing-loader` are described in [Shell integration and save-is-done](#shell-integration-and-save-is-done).
+- `rename <OLD> <NEW> [--no-sync]`: retires the old name for every bound shell and updates the record. A missing source is `NotFound` (exit 4); a name conflict is exit 3.
+- `enable <NAME> [--no-sync]` / `disable <NAME> [--no-sync]`: flips the `enabled` flag. A missing alias is `NotFound` (exit 4).
+- `remove <NAME> [--yes] [--no-sync]`: retires the name for every bound shell (tombstones advance the revision) and deletes the row. A missing alias is `NotFound` (exit 4). Without `--yes` in a non-interactive process, the command fails with `ConfirmationRequired` (exit 14).
 
 ## Target type semantics
 
@@ -132,7 +163,11 @@ Paths are single-quoted for the target shell, so spaces and non-ASCII directory
 names survive. PowerShell doubles embedded single quotes; POSIX shells use
 `'\''`.
 
-- `doctor`: reports missing database, generated-file and checksum problems, staleness, recorded sync errors, loader problems, and a filesystem-reliability finding when one is available. It does not repair anything. Exit codes and command syntax are unchanged from earlier releases; the findings below are additive.
+- `doctor [--format table|json]`: reports missing database, generated-file and checksum problems, staleness, recorded sync errors, loader problems, and a filesystem-reliability finding when one is available.
+  - When stdin **and** stdout are TTYs and no `--format` is supplied, `doctor` opens the interactive Shell integration screen: it lists all four supported shells with detection path/version/loader state, uses Space to select, Enter to preview and apply, `r` to rescan, and `q` to quit. It pre-checks shells that are already enabled or have a valid loader, but nothing is written until the user confirms. Detected shells are previewed with the exact profile target and marked block before the loader install and sync. Not-detected shells offer install-then-restart instructions, manual executable/profile entry with defaults, or cancel; WSL bash is shown as "integrate inside the distribution". Version probes run in the background and never show a fake percentage.
+  - Non-TTY sessions (pipes, CI, redirected output) keep the text report and never enter raw mode or wait for input. `--format json` always forces a machine-readable JSON array of findings and disables the interactive screen, even on a TTY; it never prompts. `--format table` explicitly selects the text report.
+  - Doctor is read-only with respect to the database/generated files. The interactive screen writes only after confirmation: `shells.enabled`, optional `shells.executables`/profile overrides, the marked loader block, and the affected generated file.
+  - The text report and JSON findings are unchanged from earlier releases; the findings below are additive. Doctor's exit code stays 0 for a completed report and uses the normal `AliasError` mapping for I/O or configuration failures.
   - Doctor inspects database presence, generated files and checksums, staleness, sync errors, loader installation, and filesystem reliability. It is read-only and shares its implementation between CLI and GUI.
   - Generated-file checks cover every shell referenced by an alias or tombstone, plus any leftover generated file that still exists (leftover files are validated but unreferenced shells are not reported as missing). It recomputes each file's embedded `# file_checksum:` and reports `生成文件校验和不匹配（可能被手工修改）` for a hand-edited file or a missing checksum line.
   - Target shells and the expected revision come from the same core helpers as `sync`, so a revision-0 record cannot create a permanent unfixable stale finding.
@@ -144,7 +179,7 @@ names survive. PowerShell doubles embedded single quotes; POSIX shells use
     - `config_invalid`: `config.toml` cannot be parsed, so loader paths cannot be resolved.
   - Other codes: `database_missing`, `generated_missing`, `generated_unreadable`, `generated_modified`, `render_failed`, `stale`, `sync_failed`, `unreliable_filesystem`.
   - Loader and generated-file details (paths, checksum mismatches, parse errors) are reported as diagnostic detail and never auto-repaired.
-  - The GUI Doctor page adds an action button to actionable findings: **Sync now** for `generated_missing`, `stale`, `sync_failed`, `generated_unreadable`, `generated_modified`, and `render_failed`; **Install shell integration** for `loader_missing`. `loader_shared_path`, marker, permission, I/O, encoding, and config findings have no install button. Actions run the same core operations as `sync` and `shell install`, then rescan automatically. The CLI has no action buttons: run `aliasmgr sync` or `aliasmgr shell install <SHELL>` yourself.
+  - The GUI Doctor page adds an action button to actionable findings: **Sync now** for `generated_missing`, `stale`, `sync_failed`, `generated_unreadable`, `generated_modified`, and `render_failed`; **Install shell integration** for `loader_missing`. `loader_shared_path`, marker, permission, I/O, encoding, and config findings have no install button. Actions run the same core operations as `sync` and `shell install`, then rescan automatically. The non-interactive CLI has no action buttons: run `aliasmgr sync` or `aliasmgr shell install <SHELL>` yourself, or use interactive `aliasmgr doctor`.
 - `shell detect`: reports the detected Shell.
 - `shell install <SHELL>` / `shell uninstall <SHELL>`: installs or removes the marked loader block for `bash`, `zsh`, `powershell5`, or `powershell7`. Other Shell names return `ShellNotInstalled` (exit 12).
   - The loader path comes from `config.toml` (`shells.bash_rc_path`, `shells.zsh_rc_path`, `shells.powershell5_profile_path`, `shells.powershell7_profile_path`).

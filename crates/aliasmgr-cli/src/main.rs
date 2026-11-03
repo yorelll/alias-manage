@@ -34,16 +34,24 @@ fn main() {
             tags.clone(),
         )
         .map(|values| output::alias_rows(&values, cli.format)),
-        cli::Command::Remove { name, .. } => commands::remove(cli.config_dir.as_deref(), name)
-            .map(|_| messages::ALIAS_REMOVED.to_string()),
-        cli::Command::Enable { name } => commands::enable(cli.config_dir.as_deref(), name, true)
-            .map(|_| messages::ALIAS_ENABLED.to_string()),
-        cli::Command::Disable { name } => commands::enable(cli.config_dir.as_deref(), name, false)
-            .map(|_| messages::ALIAS_DISABLED.to_string()),
+        cli::Command::Remove { name, no_sync, .. } => {
+            commands::remove_with_sync(cli.config_dir.as_deref(), name, *no_sync)
+                .map(|_| messages::ALIAS_REMOVED.to_string())
+        }
+        cli::Command::Enable { name, no_sync } => {
+            commands::enable_with_sync(cli.config_dir.as_deref(), name, true, *no_sync)
+                .map(|_| messages::ALIAS_ENABLED.to_string())
+        }
+        cli::Command::Disable { name, no_sync } => {
+            commands::enable_with_sync(cli.config_dir.as_deref(), name, false, *no_sync)
+                .map(|_| messages::ALIAS_DISABLED.to_string())
+        }
         cli::Command::Update(args) => commands::update(cli.config_dir.as_deref(), args)
             .map(|_| messages::ALIAS_UPDATED.to_string()),
-        cli::Command::Rename { old, new } => commands::rename(cli.config_dir.as_deref(), old, new)
-            .map(|_| messages::ALIAS_RENAMED.to_string()),
+        cli::Command::Rename { old, new, no_sync } => {
+            commands::rename_with_sync(cli.config_dir.as_deref(), old, new, *no_sync)
+                .map(|_| messages::ALIAS_RENAMED.to_string())
+        }
         cli::Command::Find {
             query,
             fuzzy,
@@ -68,8 +76,27 @@ fn main() {
                 Ok(messages::RELOAD_REQUIRED.to_string())
             }
         }
-        cli::Command::Doctor => {
-            commands::doctor(cli.config_dir.as_deref()).map(|findings| findings.join("\n"))
+        cli::Command::Doctor { format } => {
+            let config_dir = cli.config_dir.as_deref();
+            match format {
+                Some(cli::OutputFormat::Json) => commands::doctor_json(config_dir),
+                Some(cli::OutputFormat::Table) => {
+                    commands::doctor(config_dir).map(|findings| findings.join("\n"))
+                }
+                None => {
+                    let interactive = commands::doctor_is_interactive(
+                        atty::is(atty::Stream::Stdin),
+                        atty::is(atty::Stream::Stdout),
+                    );
+                    if interactive {
+                        commands::doctor_interactive(config_dir)
+                    } else {
+                        // Non-TTY sessions keep the existing text contract and
+                        // never enter raw mode or wait for input.
+                        commands::doctor(config_dir).map(|findings| findings.join("\n"))
+                    }
+                }
+            }
         }
         cli::Command::Shell {
             command: cli::ShellCommand::Detect,

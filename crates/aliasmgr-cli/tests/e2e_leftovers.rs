@@ -56,6 +56,7 @@ fn binary_accepts_target_type_and_path_mode_and_rejects_raw_shell_command() {
         &root,
         &[
             "add",
+            "--allow-missing-loader",
             "gs",
             "--exec",
             "git",
@@ -81,6 +82,7 @@ fn binary_accepts_target_type_and_path_mode_and_rejects_raw_shell_command() {
         &[
             "update",
             "gs",
+            "--allow-missing-loader",
             "--target-type",
             "batch",
             "--path-mode",
@@ -100,6 +102,7 @@ fn binary_accepts_target_type_and_path_mode_and_rejects_raw_shell_command() {
         &root,
         &[
             "add",
+            "--allow-missing-loader",
             "raw",
             "--exec",
             "git",
@@ -170,7 +173,15 @@ fn binary_writes_crlf_powershell5_generated_file_when_configured() {
 
     let add = run(
         &root,
-        &["add", "gs", "--exec", "git", "--shell", "powershell5"],
+        &[
+            "add",
+            "gs",
+            "--allow-missing-loader",
+            "--exec",
+            "git",
+            "--shell",
+            "powershell5",
+        ],
     );
     assert!(add.status.success(), "add failed: {}", stderr(&add));
     let sync = run(&root, &["sync"]);
@@ -203,7 +214,18 @@ fn binary_writes_crlf_powershell5_generated_file_when_configured() {
 fn binary_doctor_reports_a_tampered_generated_file() {
     let root = temp_root("doctor-tamper");
     std::fs::create_dir_all(&root).unwrap();
-    let add = run(&root, &["add", "gs", "--exec", "git", "--shell", "bash"]);
+    let add = run(
+        &root,
+        &[
+            "add",
+            "gs",
+            "--allow-missing-loader",
+            "--exec",
+            "git",
+            "--shell",
+            "bash",
+        ],
+    );
     assert!(add.status.success(), "add failed: {}", stderr(&add));
     let sync = run(&root, &["sync"]);
     assert!(sync.status.success(), "sync failed: {}", stderr(&sync));
@@ -235,6 +257,7 @@ fn binary_rejects_relative_restriction_path_with_validation_exit_code() {
         &root,
         &[
             "add",
+            "--allow-missing-loader",
             "rma",
             "--exec",
             "rm",
@@ -269,7 +292,7 @@ fn git_bash_root_restriction_is_stored_converted_and_enforced() {
     // Windows install path before the native CLI sees it.
     let binary = env!("CARGO_BIN_EXE_aliasmgr");
     let script = format!(
-        "BIN=\"$(cygpath -u {bin})\"\n\"$BIN\" add broot --exec echo --arg ran --restrict blacklist --restrict-path / --shell bash\n\"$BIN\" add wroot --exec echo --arg ran --restrict whitelist --restrict-path / --shell bash\n",
+        "BIN=\"$(cygpath -u {bin})\"\n\"$BIN\" add broot --allow-missing-loader --exec echo --arg ran --restrict blacklist --restrict-path / --shell bash\n\"$BIN\" add wroot --allow-missing-loader --exec echo --arg ran --restrict whitelist --restrict-path / --shell bash\n",
         bin = quote_sh(binary)
     );
     let add = Command::new("bash")

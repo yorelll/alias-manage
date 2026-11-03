@@ -1,4 +1,4 @@
-use crate::error::AliasError;
+use crate::{error::AliasError, model::ShellKind};
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
@@ -50,6 +50,15 @@ impl Default for RetiredNameConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ShellPathOverrides {
+    /// User intent: shells the user chose to integrate. Values use the stable
+    /// `ShellKind::as_str()` spellings (`bash`, `zsh`, `powershell5`,
+    /// `powershell7`), never serde enum spellings such as `power_shell5`.
+    /// Empty by default: loading an old configuration never enables a shell.
+    #[serde(default)]
+    pub enabled: Vec<String>,
+    /// Optional non-standard executable paths keyed by stable shell name.
+    #[serde(default)]
+    pub executables: std::collections::BTreeMap<String, PathBuf>,
     pub bash_rc_path: Option<PathBuf>,
     pub zsh_rc_path: Option<PathBuf>,
     pub powershell5_profile_path: Option<PathBuf>,
@@ -63,6 +72,10 @@ pub struct ShellRuntimeConfig {
     /// validates the value before saving.
     #[serde(default = "default_language")]
     pub language: String,
+    /// Sync affected shells automatically after a successful alias write.
+    /// Defaults to true for configurations written before this key existed.
+    #[serde(default = "default_true")]
+    pub auto_sync: bool,
     pub allow_relative_paths: bool,
     pub execution_policy: Option<String>,
     pub powershell5_bom: bool,
@@ -75,11 +88,16 @@ pub fn default_language() -> String {
     "zh".to_owned()
 }
 
+pub fn default_true() -> bool {
+    true
+}
+
 impl Default for ShellRuntimeConfig {
     fn default() -> Self {
         Self {
             default_shell: None,
             language: default_language(),
+            auto_sync: true,
             allow_relative_paths: false,
             execution_policy: None,
             powershell5_bom: true,
@@ -129,6 +147,32 @@ impl AppConfig {
                 "unsupported language: {} (expected zh or en)",
                 self.runtime.language
             )));
+        }
+        let mut enabled = std::collections::BTreeSet::new();
+        for value in &self.shells.enabled {
+            let shell = value.trim();
+            if ShellKind::parse_supported(shell).is_none() {
+                return Err(AliasError::Config(format!(
+                    "unsupported enabled shell: {value} (expected bash, zsh, powershell5, or powershell7)"
+                )));
+            }
+            if !enabled.insert(shell.to_string()) {
+                return Err(AliasError::Config(format!(
+                    "duplicate enabled shell: {shell}"
+                )));
+            }
+        }
+        for (name, path) in &self.shells.executables {
+            if ShellKind::parse_supported(name).is_none() {
+                return Err(AliasError::Config(format!(
+                    "unsupported shell executable key: {name} (expected bash, zsh, powershell5, or powershell7)"
+                )));
+            }
+            if path.as_os_str().is_empty() {
+                return Err(AliasError::Config(format!(
+                    "shell executable path for {name} must not be empty"
+                )));
+            }
         }
         for (name, value) in [
             ("backups.rc_keep", self.backups.rc_keep),
@@ -658,5 +702,154 @@ server:/data /data nfs4 rw 0 0
         assert!(config.validate().is_ok());
         config.logs.keep_files = MAX_RETAINED_FILES + 1;
         assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn auto_sync_defaults_to_true_and_legacy_runtime_tables_inherit_it() {
+        assert!(ShellRuntimeConfig::default().auto_sync);
+        assert!(default_true());
+
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-config-auto-sync-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let serialized = toml::to_string_pretty(&AppConfig::default()).unwrap();
+        assert!(serialized.contains("auto_sync = true"), "{serialized}");
+        let legacy = serialized
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("auto_sync ="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(paths.config_file(), legacy).unwrap();
+        assert!(paths.load_config().unwrap().runtime.auto_sync);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn enabled_and_executables_round_trip_with_stable_spellings() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-config-enabled-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let mut config = AppConfig::default();
+        config.shells.enabled = vec!["bash".into(), "powershell7".into()];
+        config
+            .shells
+            .executables
+            .insert("powershell7".into(), PathBuf::from(r"C:\Tools\pwsh.exe"));
+        config
+            .shells
+            .executables
+            .insert("bash".into(), PathBuf::from("/opt/git/bash"));
+        config.save(&paths).unwrap();
+
+        let saved = fs::read_to_string(paths.config_file()).unwrap();
+        let value: toml::Value = toml::from_str(&saved).unwrap();
+        let enabled = value["shells"]["enabled"].as_array().unwrap();
+        assert_eq!(
+            enabled
+                .iter()
+                .filter_map(|value| value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["bash", "powershell7"]
+        );
+        assert_eq!(
+            value["shells"]["executables"]["powershell7"].as_str(),
+            Some(r"C:\Tools\pwsh.exe")
+        );
+        assert!(saved.contains("[shells.executables]"), "{saved}");
+        assert!(!saved.contains("power_shell7"), "{saved}");
+
+        let loaded = paths.load_config().unwrap();
+        assert_eq!(loaded.shells.enabled, vec!["bash", "powershell7"]);
+        assert_eq!(
+            loaded.shells.executables.get("powershell7"),
+            Some(&PathBuf::from(r"C:\Tools\pwsh.exe"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_config_without_enabled_or_executables_loads_without_enabling_anything() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-config-legacy-enabled-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let mut legacy = AppConfig::default();
+        legacy.shells.bash_rc_path = Some(PathBuf::from("/tmp/custom-bashrc"));
+        let serialized = toml::to_string_pretty(&legacy).unwrap();
+        let serialized = serialized
+            .lines()
+            .filter(|line| {
+                let trimmed = line.trim_start();
+                !trimmed.starts_with("enabled =")
+                    && !trimmed.starts_with("executables =")
+                    && !trimmed.starts_with("[shells.executables]")
+                    && !trimmed.starts_with("bash =")
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(paths.config_file(), serialized).unwrap();
+
+        let loaded = paths.load_config().unwrap();
+        assert!(loaded.shells.enabled.is_empty());
+        assert!(loaded.shells.executables.is_empty());
+        assert_eq!(
+            loaded.shells.bash_rc_path,
+            Some(PathBuf::from("/tmp/custom-bashrc"))
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn validation_rejects_invalid_enabled_entries_and_executable_maps() {
+        let mut config = AppConfig::default();
+        config.shells.enabled = vec!["power_shell5".into()];
+        assert!(config.validate().is_err());
+        config.shells.enabled = vec!["bash".into(), "bash".into()];
+        assert!(config.validate().is_err());
+        config.shells.enabled = vec![" bash ".into()];
+        assert!(
+            config.validate().is_ok(),
+            "surrounding whitespace is normalized on read"
+        );
+        config.shells.enabled = vec!["fish".into()];
+        assert!(config.validate().is_err());
+
+        config.shells.enabled = vec!["bash".into()];
+        config
+            .shells
+            .executables
+            .insert("fish".into(), PathBuf::from("/bin/fish"));
+        assert!(config.validate().is_err());
+        config.shells.executables.clear();
+        config
+            .shells
+            .executables
+            .insert("bash".into(), PathBuf::new());
+        assert!(config.validate().is_err());
+        config
+            .shells
+            .executables
+            .insert("bash".into(), PathBuf::from("/bin/bash"));
+        assert!(config.validate().is_ok());
     }
 }

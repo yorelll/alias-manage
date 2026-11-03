@@ -12,9 +12,9 @@
 | 7 | Permission problem | Reserved in the error mapping; no current producer emits `PermissionDenied` |
 | 8 | Lock timeout | Lock acquisition timeout |
 | 9 | Syntax check failure | Core-level `SyntaxCheck`; reserved for a future direct command path |
-| 10 | Partial synchronization failure | `sync` when any Shell fails, including a syntax-check failure |
+| 10 | Partial synchronization failure | `sync` when any Shell fails, or an auto-sync after `add`/`update`/`remove`/`rename`/`enable`/`disable` (the database write is already committed) |
 | 11 | Rollback failure | Reserved; no `AliasError` variant currently maps to it |
-| 12 | Unsupported environment | Newer schema, unsupported/uninstalled Shell |
+| 12 | Unsupported environment | Newer schema, unsupported/uninstalled Shell, or a target Shell whose integration is not ready (`ShellNotReady`) |
 | 13 | Storage error | Checksum mismatch, SQLite, serialization, I/O, unreliable filesystem |
 | 14 | Non-interactive confirmation required | Destructive command without `--yes` in a non-interactive process |
 
@@ -30,8 +30,8 @@ Current `AliasError` mappings in `crates/aliasmgr-cli/src/exit_code.rs`:
 - Code 7: `PermissionDenied` is mapped but has no current producer in the CLI or core paths.
 - Code 8: `LockTimeout`.
 - Code 9: `SyntaxCheck`. The core maps it to 9, but the current CLI `sync` path collects per-Shell failures and returns `PartialSync`, so users observe exit 10 rather than 9.
-- Code 10: `PartialSync`, returned by `sync` when at least one Shell fails.
-- Code 12: `SchemaTooNew` and `ShellNotInstalled`.
+- Code 10: `PartialSync`, returned by `sync` when at least one Shell fails, and by `add`/`update`/`remove`/`rename`/`enable`/`disable` when the post-write auto-sync has a per-Shell or orchestration failure. The database write has already succeeded in the auto-sync case; run `sync` or `doctor` to retry. `--no-sync` and `runtime.auto_sync=false` return 0 instead.
+- Code 12: `SchemaTooNew`, `ShellNotInstalled`, and `ShellNotReady`. `add`/`update` return `ShellNotReady` when a target Shell is not enabled or its loader is not installed/verifiable; the message points at `aliasmgr doctor`. `--allow-missing-loader` bypasses this preflight with a warning.
 - Code 13: `ChecksumMismatch`, `Database`, `Serialization`, `Io`, and `UnreliableFilesystem`. An atomic write that refuses a cyclic or over-deep symlink chain reports `Io` (`InvalidInput`), so it also exits 13.
 - Code 14: `ConfirmationRequired`, returned by `remove` without `--yes` and by `uninstall --purge-aliases` without `--yes` when stdin is not a TTY.
 

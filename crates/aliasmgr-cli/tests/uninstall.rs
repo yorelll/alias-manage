@@ -120,6 +120,8 @@ fn cli_uninstall_removes_marked_loader_blocks_and_keeps_user_content_and_targets
         no_pass_args: false,
         target_type: None,
         path_mode: None,
+        no_sync: true,
+        allow_missing_loader: true,
     };
     commands::add(Some(&config_dir), &add).unwrap();
     commands::sync(Some(&config_dir), false).unwrap();

@@ -18,6 +18,8 @@ fn add_args(name: &str) -> AddArgs {
         no_pass_args: false,
         target_type: None,
         path_mode: None,
+        no_sync: true,
+        allow_missing_loader: true,
     }
 }
 
@@ -38,6 +40,8 @@ fn update_args(name: &str) -> UpdateArgs {
         pass_args: false,
         target_type: None,
         path_mode: None,
+        no_sync: true,
+        allow_missing_loader: true,
     }
 }
 
@@ -136,7 +140,7 @@ fn deletions_keep_revisions_monotonic_and_doctor_detects_staleness() {
     let updated = commands::update(Some(&config), &change).unwrap();
     assert_eq!(updated.revision, 2);
 
-    assert!(commands::remove(Some(&config), "b").unwrap());
+    assert!(commands::remove_with_sync(Some(&config), "b", true).unwrap());
     let tombstone = Database::open(root.join("aliases.db"))
         .unwrap()
         .max_retired_revision()

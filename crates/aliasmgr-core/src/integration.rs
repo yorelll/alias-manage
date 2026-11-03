@@ -177,8 +177,18 @@ pub fn expected_loader(
     shell: &str,
 ) -> Result<(LoaderTarget, String), AliasError> {
     let config = paths.load_config()?;
+    expected_loader_for(&config, paths, shell)
+}
+
+/// Same as [`expected_loader`] but uses an in-memory configuration, so setup
+/// previews can show the block for unsaved path overrides.
+pub fn expected_loader_for(
+    config: &AppConfig,
+    paths: &AppPaths,
+    shell: &str,
+) -> Result<(LoaderTarget, String), AliasError> {
     let name = shell.to_ascii_lowercase();
-    let target = loader_target(&config, paths, &name)?;
+    let target = loader_target(config, paths, &name)?;
     let loader = render_loader(&paths.generated_path(&name), target.powershell);
     Ok((target, loader))
 }
@@ -244,8 +254,18 @@ pub fn loader_error_code(error: &AliasError) -> &'static str {
 /// surface those instead of guessing at a repair.
 pub fn loader_status(paths: &AppPaths, shell: &str) -> Result<LoaderOutcome, AliasError> {
     let config = paths.load_config()?;
+    loader_status_with_config(&config, paths, shell)
+}
+
+/// Same as [`loader_status`] but uses an in-memory configuration. Setup
+/// planning uses this to evaluate unsaved executable/profile overrides.
+pub fn loader_status_with_config(
+    config: &AppConfig,
+    paths: &AppPaths,
+    shell: &str,
+) -> Result<LoaderOutcome, AliasError> {
     let name = shell.to_ascii_lowercase();
-    let target = loader_target(&config, paths, &name)?;
+    let target = loader_target(config, paths, &name)?;
     let content = profile_content(&target.path)?;
     let loader = render_loader(&paths.generated_path(&name), target.powershell);
     let installed = target.path.exists()
@@ -264,8 +284,18 @@ pub fn loader_status(paths: &AppPaths, shell: &str) -> Result<LoaderOutcome, Ali
 /// config root, or is not at the end of the profile is replaced/relocated.
 pub fn install_loader(paths: &AppPaths, shell: &str) -> Result<LoaderOutcome, AliasError> {
     let config = paths.load_config()?;
+    install_loader_with_config(&config, paths, shell)
+}
+
+/// Same as [`install_loader`] but uses an in-memory configuration, so a setup
+/// action can persist and install in one operation without a second read.
+pub fn install_loader_with_config(
+    config: &AppConfig,
+    paths: &AppPaths,
+    shell: &str,
+) -> Result<LoaderOutcome, AliasError> {
     let name = shell.to_ascii_lowercase();
-    let target = loader_target(&config, paths, &name)?;
+    let target = loader_target(config, paths, &name)?;
     let generated = paths.generated_path(&name);
     let loader = render_loader(&generated, target.powershell);
     let before = profile_content(&target.path)?;

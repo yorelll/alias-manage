@@ -25,6 +25,8 @@ fn preview_and_confirm_agree_when_only_the_environment_config_dir_is_set() {
         no_pass_args: false,
         target_type: None,
         path_mode: None,
+        no_sync: true,
+        allow_missing_loader: true,
     };
     commands::add(None, &add).unwrap();
 

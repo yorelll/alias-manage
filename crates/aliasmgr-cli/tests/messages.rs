@@ -42,13 +42,33 @@ fn lifecycle_success_messages_match_their_commands() {
     std::fs::create_dir_all(&root).unwrap();
 
     assert_message(
-        run(&root, &["add", "gs", "--exec", "tool", "--shell", "bash"]),
+        run(
+            &root,
+            &[
+                "add",
+                "gs",
+                "--allow-missing-loader",
+                "--exec",
+                "tool",
+                "--shell",
+                "bash",
+            ],
+        ),
         "别名已添加。",
     );
     assert_message(run(&root, &["enable", "gs"]), "别名已启用。");
     assert_message(run(&root, &["disable", "gs"]), "别名已禁用。");
     assert_message(
-        run(&root, &["update", "gs", "--description", "changed"]),
+        run(
+            &root,
+            &[
+                "update",
+                "gs",
+                "--allow-missing-loader",
+                "--description",
+                "changed",
+            ],
+        ),
         "别名已更新。",
     );
     assert_message(run(&root, &["rename", "gs", "gs2"]), "别名已改名。");

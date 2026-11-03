@@ -11,12 +11,14 @@ mod import_export;
 mod input;
 mod model;
 mod settings;
+mod shell_setup_ui;
 mod terminal;
 mod text;
 mod theme;
 mod ui;
 
 pub use app::App;
+pub use shell_setup_ui::run_shell_setup;
 pub use theme::Theme;
 
 use aliasmgr_core::{config::AppPaths, error::AliasError};

@@ -15,6 +15,8 @@ SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文
 - 统一跨 Shell 导入/导出：同一份 JSON/TOML 文件（带 `format_version` 信封）可在 Bash、Zsh、PowerShell 5.1 和 PowerShell 7 之间迁移；敏感环境变量过滤，预览与确认分离
 - 保留/清除式卸载；从不删除用户引用的目标文件
 - 统一终端 UI（`aliasmgr tui`）：列表/搜索/标签过滤/排序、创建/编辑/重命名/启用/禁用/删除、结构化参数编辑、生成预览、后台同步、Doctor、导入/导出与共享 `config.toml` 编辑；Bash/Zsh/PowerShell 5.1/PowerShell 7 共用一个 TUI
+- 保存即完成：`add`/`update`/`remove`/`rename`/`enable`/`disable` 成功后自动同步受影响的 Shell；`--no-sync` 关闭单次自动同步，`runtime.auto_sync = false` 全局关闭
+- 首次 Shell 集成：交互式 `aliasmgr doctor` 检测四个 Shell、勾选启用、预览并安装 loader、执行同步并显示 reload 命令；非 TTY 保留文本/JSON 输出
 - Tauri 2 GUI（预发布）
 
 ## 构建要求
@@ -42,18 +44,20 @@ cargo build --release -p aliasmgr-cli
 cargo build --release -p aliasmgr-cli --no-default-features
 ```
 
-该模式下不链接任何 TUI 依赖，`aliasmgr tui` 会明确提示未编译 TUI 支持并以退出码 1 结束。现有非交互命令、参数、输出与退出码不因 TUI 改变。
+该模式下不链接任何 TUI 依赖，`aliasmgr tui` 会明确提示未编译 TUI 支持并以退出码 1 结束。交互式 `aliasmgr doctor` 会回退为逐行提示（仍可完成检测、路径填写、预览、安装与同步），不会链接 crossterm。现有非交互命令、参数、输出与退出码不因 TUI 改变。
 
 ## 快速开始
 
 ```bash
+aliasmgr doctor
 aliasmgr add gs --exec git --arg status --shell bash --tag git
 aliasmgr list
 aliasmgr sync
 aliasmgr reload --print --shell bash
-aliasmgr doctor
 aliasmgr tui
 ```
+
+首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。没有单独的 `setup` 命令。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；`--allow-missing-loader` 可显式保存并警告（该 Shell 暂不生效）。
 
 配置根优先级：
 
@@ -64,6 +68,31 @@ aliasmgr tui
    - Linux：`$XDG_CONFIG_HOME/alias-manager`，其次 `$HOME/.config/alias-manager`
 
 已打开的父 Shell 不会被 CLI 子进程自动更新；执行 `reload --print` 输出的命令（或重新打开 Shell）后生效。
+
+### Shell 集成与保存即完成
+
+`config.toml` 保存用户意图，loader 是否有效每次运行时重新检测：
+
+```toml
+[runtime]
+auto_sync = true
+
+[shells]
+enabled = ["powershell5", "powershell7"]   # 稳定拼写：bash|zsh|powershell5|powershell7
+# 现有 profile 路径覆盖继续有效
+powershell7_profile_path = "C:\\Users\\me\\Documents\\PowerShell\\Microsoft.PowerShell_profile.ps1"
+
+[shells.executables]                       # 可选：非标准安装路径
+powershell7 = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
+bash = "C:\\Program Files\\Git\\bin\\bash.exe"
+```
+
+- `enabled` 默认空；加载旧配置不会自动启用任何 Shell，只有用户在 `doctor`/设置中确认后才写入。
+- `runtime.auto_sync` 默认 `true`。`add`/`update`/`remove`/`rename`/`enable`/`disable` 成功后只同步一次受影响的 Shell；任一 Shell 同步失败时数据库已保存，命令以 `PartialSync`（退出码 10）返回并列出失败 Shell。`--no-sync` 跳过本次自动同步；`runtime.auto_sync = false` 全局关闭。
+- 自动同步不依赖 `enabled`：生成文件内容与 `enabled` 无关；loader 只对已启用 Shell 安装。
+- 检测来源：`PATH`、Windows 已知安装路径（PS5 系统路径、PS7 Program Files/WindowsApps、Git Bash、MSYS2/Cygwin Zsh）、Unix `/bin`、`/usr/bin`、`/usr/local/bin`，以及 `shells.executables` 手动路径（最高优先级）。版本探测有约 2 秒超时；失败只表示版本未知，不表示未安装。
+- 无法保证发现所有安装方式（便携版、Store 别名、启动后安装、WSL、不同 PATH）。`doctor` 始终列出四个 Shell 并允许手动填写路径。
+- Windows `System32\bash.exe`/WindowsApps `bash.exe` 会标记为 WSL；不会向 Windows profile 写入 WSL 的 loader，请在 WSL 发行版内运行 `doctor`。
 
 - Bash/Zsh 使用 `source '<config-root>/generated/bash.sh'`。
 - PowerShell 使用 `. '<config-root>\generated\powershell7.ps1'`；开头的 `.` 是 **点源（dot-source）运算符**，不是逗号，表示在当前会话中运行该文件。

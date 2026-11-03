@@ -3,12 +3,19 @@ use crate::messages::NON_INTERACTIVE;
 use aliasmgr_core::transfer::{ConflictStrategy, ImportReport};
 use aliasmgr_core::{
     config::AppPaths,
+    detection,
     error::AliasError,
-    model::{normalize_restriction, record_checksum, AliasRecord, PathRestriction, ShellKind},
+    integration,
+    model::{
+        normalize_restriction, record_checksum, AliasRecord, PathRestriction, ShellKind,
+        SUPPORTED_SHELLS,
+    },
+    shell_setup,
     storage::Database,
     validation::validate_alias,
 };
 use std::collections::BTreeMap;
+use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 
 pub fn requires_confirmation(command: &Command) -> bool {
@@ -33,6 +40,120 @@ fn database(config_dir: Option<&str>) -> Result<Database, AliasError> {
     let root = AppPaths::discover(config_dir.map(Path::new)).root;
     std::fs::create_dir_all(&root)?;
     Database::open(root.join("aliases.db"))
+}
+
+fn paths_for(config_dir: Option<&str>) -> AppPaths {
+    AppPaths::discover(config_dir.map(Path::new))
+}
+
+fn canonical_supported(shells: &[ShellKind]) -> Vec<ShellKind> {
+    SUPPORTED_SHELLS
+        .iter()
+        .filter(|kind| shells.contains(kind))
+        .cloned()
+        .collect()
+}
+
+/// Refuses to save an alias whose target shells are not ready, unless the
+/// caller explicitly opted out with `--allow-missing-loader`. With
+/// `skip_loader` (the `--no-sync` case) the enabled check still runs but the
+/// loader check is deferred to the user's later sync.
+fn preflight_target_shells(
+    config_dir: Option<&str>,
+    shells: &[ShellKind],
+    allow_missing_loader: bool,
+    skip_loader: bool,
+) -> Result<(), AliasError> {
+    let targets = canonical_supported(shells);
+    if targets.is_empty() {
+        return Ok(());
+    }
+    let paths = paths_for(config_dir);
+    let config = paths.load_config()?;
+    let enabled = shell_setup::enabled_shells(&config);
+    let mut problems = Vec::new();
+    for kind in &targets {
+        if !enabled.contains(kind) {
+            problems.push(format!("{} integration is not enabled", kind.label()));
+            continue;
+        }
+        if skip_loader {
+            continue;
+        }
+        match integration::loader_status(&paths, kind.as_str()) {
+            Ok(outcome) if outcome.installed => {}
+            Ok(_) => problems.push(format!(
+                "{} loader block is not installed at {}",
+                kind.label(),
+                integration::loader_target(&config, &paths, kind.as_str())
+                    .map(|target| target.path.display().to_string())
+                    .unwrap_or_else(|_| "<unresolved profile>".into())
+            )),
+            Err(error) => problems.push(format!(
+                "{} loader cannot be verified ({}: {})",
+                kind.label(),
+                integration::loader_error_code(&error),
+                error
+            )),
+        }
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    let detail = problems.join("; ");
+    if allow_missing_loader {
+        eprintln!(
+            "warning: saving to the database, but the alias will not take effect yet: {detail}. Run `aliasmgr doctor`."
+        );
+        return Ok(());
+    }
+    Err(AliasError::ShellNotReady(format!(
+        "{detail}. Run `aliasmgr doctor` to enable shells and install integration, or pass --allow-missing-loader to save anyway."
+    )))
+}
+
+/// Syncs the shells affected by a successful database write once. A no-op when
+/// `--no-sync` was passed, `runtime.auto_sync = false`, or no supported shell
+/// is affected. Any sync failure after the database commit is surfaced as
+/// `PartialSync` (exit 10) so scripts do not mistake it for a lost write.
+fn sync_after_write(
+    config_dir: Option<&str>,
+    affected: &[ShellKind],
+    no_sync: bool,
+) -> Result<(), AliasError> {
+    if no_sync {
+        return Ok(());
+    }
+    let shells = canonical_supported(affected);
+    if shells.is_empty() {
+        return Ok(());
+    }
+    let paths = paths_for(config_dir);
+    let config = match paths.load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(AliasError::PartialSync(format!(
+                "database changes were saved, but the configuration could not be read: {error}"
+            )))
+        }
+    };
+    if !config.runtime.auto_sync {
+        return Ok(());
+    }
+    let run = aliasmgr_core::sync::sync_shells(&paths.root, &shells).map_err(|error| {
+        AliasError::PartialSync(format!(
+            "database changes were saved, but sync failed: {error}. Run `aliasmgr sync` or `aliasmgr doctor`."
+        ))
+    })?;
+    let failures = run.failure_summary();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AliasError::PartialSync(format!(
+            "database changes were saved, but these shells failed to sync: {}. Run `aliasmgr sync` or `aliasmgr doctor`.",
+            failures.join("; ")
+        )))
+    }
 }
 
 fn shell_kind(value: &str) -> Option<ShellKind> {
@@ -175,8 +296,15 @@ pub fn add(config_dir: Option<&str>, args: &AddArgs) -> Result<AliasRecord, Alia
     }
     normalize_restriction(&mut alias.restriction);
     validate_alias(&alias)?;
+    preflight_target_shells(
+        config_dir,
+        &alias.shells,
+        args.allow_missing_loader,
+        args.no_sync,
+    )?;
     alias.record_checksum = record_checksum(&alias)?;
     database(config_dir)?.insert_alias(&alias)?;
+    sync_after_write(config_dir, &alias.shells, args.no_sync)?;
     Ok(alias)
 }
 pub fn get(config_dir: Option<&str>, name: &str) -> Result<AliasRecord, AliasError> {
@@ -255,24 +383,50 @@ pub fn find_query(
         .map(|result| result.alias)
         .collect())
 }
+#[allow(dead_code)]
 pub fn remove(config_dir: Option<&str>, name: &str) -> Result<bool, AliasError> {
+    remove_with_sync(config_dir, name, false)
+}
+pub fn remove_with_sync(
+    config_dir: Option<&str>,
+    name: &str,
+    no_sync: bool,
+) -> Result<bool, AliasError> {
     let database = database(config_dir)?;
     let alias = database
         .get_alias_by_name(name)?
         .ok_or_else(|| AliasError::NotFound(name.into()))?;
+    let shells = alias.shells.clone();
     for shell in &alias.shells {
         database.retire_name(name, shell, alias.revision.saturating_add(1))?;
     }
-    database.delete_alias(alias.id)
+    let removed = database.delete_alias(alias.id)?;
+    if removed {
+        sync_after_write(config_dir, &shells, no_sync)?;
+    }
+    Ok(removed)
 }
+#[allow(dead_code)]
 pub fn enable(config_dir: Option<&str>, name: &str, enabled: bool) -> Result<bool, AliasError> {
+    enable_with_sync(config_dir, name, enabled, false)
+}
+pub fn enable_with_sync(
+    config_dir: Option<&str>,
+    name: &str,
+    enabled: bool,
+    no_sync: bool,
+) -> Result<bool, AliasError> {
     let database = database(config_dir)?;
     let mut alias = database
         .get_alias_by_name(name)?
         .ok_or_else(|| AliasError::NotFound(name.into()))?;
     alias.enabled = enabled;
     alias.record_checksum = record_checksum(&alias)?;
-    database.update_alias(&alias)
+    let changed = database.update_alias(&alias)?;
+    if changed {
+        sync_after_write(config_dir, &alias.shells, no_sync)?;
+    }
+    Ok(changed)
 }
 pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord, AliasError> {
     let database = database(config_dir)?;
@@ -323,6 +477,18 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
         alias.pass_args = true;
     }
     validate_alias(&alias)?;
+    preflight_target_shells(
+        config_dir,
+        &alias.shells,
+        args.allow_missing_loader,
+        args.no_sync,
+    )?;
+    let mut affected = previous_shells.clone();
+    for shell in &alias.shells {
+        if !affected.contains(shell) {
+            affected.push(shell.clone());
+        }
+    }
     for shell in previous_shells
         .iter()
         .filter(|shell| !alias.shells.contains(shell))
@@ -331,22 +497,37 @@ pub fn update(config_dir: Option<&str>, args: &UpdateArgs) -> Result<AliasRecord
     }
     alias.record_checksum = record_checksum(&alias)?;
     database.update_alias(&alias)?;
+    sync_after_write(config_dir, &affected, args.no_sync)?;
     database
         .get_alias(alias.id)?
         .ok_or_else(|| AliasError::NotFound(args.name.clone()))
 }
+#[allow(dead_code)]
 pub fn rename(config_dir: Option<&str>, old: &str, new: &str) -> Result<bool, AliasError> {
+    rename_with_sync(config_dir, old, new, false)
+}
+pub fn rename_with_sync(
+    config_dir: Option<&str>,
+    old: &str,
+    new: &str,
+    no_sync: bool,
+) -> Result<bool, AliasError> {
     let database = database(config_dir)?;
     let mut alias = database
         .get_alias_by_name(old)?
         .ok_or_else(|| AliasError::NotFound(old.into()))?;
+    let shells = alias.shells.clone();
     for shell in &alias.shells {
         database.retire_name(old, shell, alias.revision.saturating_add(1))?;
     }
     alias.name = new.into();
     validate_alias(&alias)?;
     alias.record_checksum = record_checksum(&alias)?;
-    database.update_alias(&alias)
+    let changed = database.update_alias(&alias)?;
+    if changed {
+        sync_after_write(config_dir, &shells, no_sync)?;
+    }
+    Ok(changed)
 }
 #[allow(dead_code)]
 pub fn find(
@@ -561,16 +742,20 @@ pub fn uninstall(config_dir: Option<&str>, purge: bool) -> Result<(), AliasError
     Ok(())
 }
 
-pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
-    let paths = aliasmgr_core::config::AppPaths::discover(config_dir.map(Path::new));
+fn diagnose_findings(
+    config_dir: Option<&str>,
+) -> Result<Vec<aliasmgr_core::doctor::DoctorFinding>, AliasError> {
+    let paths = AppPaths::discover(config_dir.map(Path::new));
     let database_path_exists = paths.root.join("aliases.db").exists();
     let database = database(config_dir)?;
     let aliases = database.list_aliases()?;
     // Shared with the GUI: probes real loader blocks, uses the same target
     // shells and revision floor as sync, and distinguishes profile errors.
-    let findings =
-        aliasmgr_core::doctor::diagnose(&paths.root, database_path_exists, &database, &aliases)?;
-    Ok(findings
+    aliasmgr_core::doctor::diagnose(&paths.root, database_path_exists, &database, &aliases)
+}
+
+pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
+    Ok(diagnose_findings(config_dir)?
         .into_iter()
         .map(|finding| match finding.detail {
             Some(detail)
@@ -589,6 +774,334 @@ pub fn doctor(config_dir: Option<&str>) -> Result<Vec<String>, AliasError> {
             _ => finding.message,
         })
         .collect())
+}
+
+#[derive(serde::Serialize)]
+struct DoctorFindingJson {
+    shell: Option<String>,
+    severity: &'static str,
+    code: &'static str,
+    message: String,
+    action: Option<String>,
+    detail: Option<String>,
+}
+
+/// Machine-readable Doctor report for non-interactive use. Supplying
+/// `--format` never opens the interactive screen.
+pub fn doctor_json(config_dir: Option<&str>) -> Result<String, AliasError> {
+    let findings = diagnose_findings(config_dir)?
+        .into_iter()
+        .map(|finding| DoctorFindingJson {
+            shell: finding.shell.map(|shell| shell.as_str().to_string()),
+            severity: finding.severity,
+            code: finding.code,
+            message: finding.message,
+            action: finding.action,
+            detail: finding.detail,
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string_pretty(&findings).map_err(AliasError::from)
+}
+
+/// The interactive screen requires both streams to be terminals, so pipes,
+/// CI jobs and scripted `doctor` calls keep the text/JSON contract.
+pub fn doctor_is_interactive(stdin_tty: bool, stdout_tty: bool) -> bool {
+    stdin_tty && stdout_tty
+}
+
+/// Parses a comma/space-separated selection of stable shell names.
+#[allow(dead_code)]
+pub fn parse_shell_selection(value: &str) -> Result<Vec<ShellKind>, String> {
+    let mut selected = Vec::new();
+    for token in value
+        .split(|character: char| character == ',' || character.is_whitespace())
+        .filter(|token| !token.is_empty())
+    {
+        let kind = ShellKind::parse_supported(token).ok_or_else(|| {
+            format!("unknown shell: {token} (expected bash, zsh, powershell5, or powershell7)")
+        })?;
+        if !selected.contains(&kind) {
+            selected.push(kind);
+        }
+    }
+    Ok(selected)
+}
+
+#[allow(dead_code)]
+fn prompt_line(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    label: &str,
+) -> Result<Option<String>, AliasError> {
+    write!(output, "{label}")?;
+    output.flush()?;
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 {
+        return Ok(None);
+    }
+    Ok(Some(line.trim().to_string()))
+}
+
+#[allow(dead_code)]
+fn prompt_path(
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+    label: &str,
+    default: Option<&Path>,
+) -> Result<Option<PathBuf>, AliasError> {
+    let label = match default {
+        Some(default) => format!("{label} [{}]: ", default.display()),
+        None => format!("{label}: "),
+    };
+    match prompt_line(input, output, &label)? {
+        None => Ok(None),
+        Some(value) if value.is_empty() => Ok(default.map(Path::to_path_buf)),
+        Some(value) => Ok(Some(PathBuf::from(value))),
+    }
+}
+
+#[allow(dead_code)]
+fn describe_installation(installation: &detection::ShellInstallation) -> String {
+    if installation.wsl {
+        return "WSL launcher (integrate inside the WSL distribution)".into();
+    }
+    if !installation.detected {
+        return "not detected".into();
+    }
+    let path = installation
+        .executable
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "<unknown>".into());
+    match &installation.version {
+        Some(version) => format!("{path} (version {version})"),
+        None => format!("{path} (version unknown)"),
+    }
+}
+
+/// Line-based fallback used by `--no-default-features` builds. It still
+/// completes the full flow (detect, path entry, preview, apply, sync) without
+/// crossterm or raw mode.
+#[allow(dead_code)]
+pub fn doctor_interactive_line(
+    paths: &AppPaths,
+    input: &mut dyn BufRead,
+    output: &mut dyn Write,
+) -> Result<String, AliasError> {
+    let mut summary = Vec::new();
+    loop {
+        writeln!(
+            output,
+            "Detecting shells... (version probes may take a moment)"
+        )?;
+        output.flush()?;
+        let config = paths.load_config()?;
+        writeln!(output, "Shell integration:")?;
+        for kind in SUPPORTED_SHELLS {
+            let installation = detection::detect_shell(&config, &kind);
+            writeln!(
+                output,
+                "  {}  {}",
+                installation.kind.label(),
+                describe_installation(&installation)
+            )?;
+            output.flush()?;
+        }
+        let selection = match prompt_line(
+            input,
+            output,
+            "Enable shells (bash,zsh,powershell5,powershell7), r=rescan, q=quit: ",
+        )? {
+            Some(selection) => selection,
+            None => break,
+        };
+        if selection.eq_ignore_ascii_case("q") {
+            break;
+        }
+        if selection.eq_ignore_ascii_case("r") {
+            continue;
+        }
+        let shells = match parse_shell_selection(&selection) {
+            Ok(shells) => shells,
+            Err(error) => {
+                writeln!(output, "{error}")?;
+                continue;
+            }
+        };
+        if shells.is_empty() {
+            break;
+        }
+        for kind in shells {
+            let mut plan = shell_setup::plan_shell_setup(&config, paths, &kind, None, None)?;
+            let mut executable_override = None;
+            let mut profile_override = None;
+            match plan.action {
+                shell_setup::SetupAction::WslManual => {
+                    writeln!(
+                        output,
+                        "{}: run `aliasmgr doctor` inside the WSL distribution; Alias Manager will not write a Windows profile for it.",
+                        kind.label()
+                    )?;
+                    continue;
+                }
+                shell_setup::SetupAction::NeedsPath => {
+                    writeln!(output, "{} is not ready:", kind.label())?;
+                    writeln!(
+                        output,
+                        "  1) install it and add it to PATH, then restart aliasmgr"
+                    )?;
+                    writeln!(output, "  2) enter an executable and profile/RC path")?;
+                    writeln!(output, "  3) cancel")?;
+                    let choice = prompt_line(input, output, "Choose [1-3]: ")?.unwrap_or_default();
+                    match choice.as_str() {
+                        "1" => {
+                            writeln!(
+                                output,
+                                "Install {} and add it to PATH, then run `aliasmgr doctor` again.",
+                                kind.label()
+                            )?;
+                            continue;
+                        }
+                        "2" => {
+                            let default_executable =
+                                plan.executable.clone().filter(|path| path.is_file());
+                            let Some(executable) = prompt_path(
+                                input,
+                                output,
+                                "Executable path",
+                                default_executable.as_deref(),
+                            )?
+                            else {
+                                continue;
+                            };
+                            if !executable.is_file() {
+                                writeln!(
+                                    output,
+                                    "{} executable not found: {}",
+                                    kind.label(),
+                                    executable.display()
+                                )?;
+                                continue;
+                            }
+                            let default_profile =
+                                shell_setup::default_profile_path(&config, paths, &kind);
+                            let profile = prompt_path(
+                                input,
+                                output,
+                                "Profile/RC path",
+                                default_profile.as_deref(),
+                            )?;
+                            executable_override = Some(executable);
+                            profile_override = profile;
+                            plan = shell_setup::plan_shell_setup(
+                                &config,
+                                paths,
+                                &kind,
+                                executable_override.as_deref(),
+                                profile_override.as_deref(),
+                            )?;
+                            if !plan.detected {
+                                writeln!(
+                                    output,
+                                    "{} executable was not detected at the supplied path.",
+                                    kind.label()
+                                )?;
+                                continue;
+                            }
+                        }
+                        _ => continue,
+                    }
+                }
+                shell_setup::SetupAction::Enable | shell_setup::SetupAction::InstallLoader => {}
+            }
+
+            if let Some(preview) = shell_setup::preview_loader(
+                &config,
+                paths,
+                &kind,
+                executable_override.as_deref(),
+                profile_override.as_deref(),
+            )? {
+                writeln!(output, "Target: {}", preview.target.display())?;
+                writeln!(output, "{}", preview.block.trim_end())?;
+            } else {
+                writeln!(
+                    output,
+                    "{} has no profile path on this platform; choose option 2 and provide one.",
+                    kind.label()
+                )?;
+                continue;
+            }
+            let answer =
+                prompt_line(input, output, "Apply this setup? [y/N]: ")?.unwrap_or_default();
+            if !matches!(answer.to_ascii_lowercase().as_str(), "y" | "yes") {
+                continue;
+            }
+            let options = shell_setup::ShellSetupOptions {
+                executable: executable_override,
+                profile: profile_override,
+                sync: true,
+            };
+            match shell_setup::apply_shell_setup(paths, &kind, &options) {
+                Ok(outcome) => {
+                    let mut line = format!("{}: enabled", kind.label());
+                    if outcome.loader_changed {
+                        line.push_str(", loader installed");
+                    } else if outcome.loader_installed {
+                        line.push_str(", loader already present");
+                    }
+                    if let Some(error) = &outcome.loader_error {
+                        line.push_str(&format!(", loader error: {error}"));
+                    }
+                    if let Some(error) = &outcome.sync_error {
+                        line.push_str(&format!(", sync error: {error}"));
+                    } else if let Some(run) = &outcome.sync {
+                        if run.failed() {
+                            line.push_str(&format!(
+                                ", sync failed: {}",
+                                run.failure_summary().join("; ")
+                            ));
+                        } else {
+                            line.push_str(", sync ok");
+                        }
+                    }
+                    writeln!(output, "{line}")?;
+                    summary.push(line);
+                    if outcome.loader_installed {
+                        summary.push(format!(
+                            "Reload in a new shell, or run: {}",
+                            aliasmgr_core::sync::reload_command(&paths.root, &kind)
+                        ));
+                    }
+                }
+                Err(error) => {
+                    writeln!(output, "{}: {error}", kind.label())?;
+                    summary.push(format!("{}: {error}", kind.label()));
+                }
+            }
+        }
+        break;
+    }
+    if summary.is_empty() {
+        Ok("doctor: no changes".into())
+    } else {
+        Ok(summary.join("\n"))
+    }
+}
+
+#[cfg(feature = "tui")]
+pub fn doctor_interactive(config_dir: Option<&str>) -> Result<String, AliasError> {
+    aliasmgr_tui::run_shell_setup(config_dir.map(PathBuf::from))
+}
+
+#[cfg(not(feature = "tui"))]
+pub fn doctor_interactive(config_dir: Option<&str>) -> Result<String, AliasError> {
+    let paths = paths_for(config_dir);
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    doctor_interactive_line(&paths, &mut input, &mut output)
 }
 
 #[cfg(test)]
@@ -694,6 +1207,7 @@ mod tests {
         let remove = Command::Remove {
             name: "gs".into(),
             yes: false,
+            no_sync: false,
         };
         assert!(matches!(
             ensure_interactive(&remove, false),
@@ -703,7 +1217,8 @@ mod tests {
         assert!(ensure_interactive(
             &Command::Remove {
                 name: "gs".into(),
-                yes: true
+                yes: true,
+                no_sync: false,
             },
             false
         )

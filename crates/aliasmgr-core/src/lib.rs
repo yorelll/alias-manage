@@ -11,6 +11,7 @@ pub mod model;
 pub mod rotation;
 pub mod search;
 pub mod service;
+pub mod shell_setup;
 pub mod shells;
 pub mod storage;
 pub mod sync;

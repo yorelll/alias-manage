@@ -17,7 +17,12 @@ self-contained definition files for Bash, Zsh, PowerShell 5.1, and PowerShell 7.
 The CLI, GUI, and TUI share the same config root and database. Generated files are \
 derived data: `sync` rebuilds them, and a marked loader block in each shell profile sources the \
 file when a new shell starts. An already-open shell must reload the file explicitly.",
-    after_help = "EXAMPLES:\n  \
+    after_help = "FIRST RUN:\n  \
+aliasmgr doctor\n\n\
+Doctor detects all supported shells, lets you enable them, installs the marked loader block, and \
+syncs. There is no separate setup command. After that, add/update/remove/enable/disable/rename sync \
+affected shells automatically; use --no-sync to skip that.\n\n\
+EXAMPLES:\n  \
 aliasmgr add gs --exec git --arg status --shell bash --tag git\n  \
 aliasmgr list\n  \
 aliasmgr sync\n  \
@@ -189,19 +194,24 @@ pub enum Command {
 separately and executed as a structured argv array; the generated shell wrapper never evaluates a \
 single command string.\n\n\
 User arguments are forwarded by default. Use --no-pass-args to drop them, or place {{args}} in a \
-fixed argument to choose the insertion point. `{{{{args}}}}` renders the literal text {{args}}.",
+fixed argument to choose the insertion point. `{{{{args}}}}` renders the literal text {{args}}.\n\n\
+Before saving, every target shell must be enabled with a valid loader block. Run `aliasmgr doctor` \
+to enable shells and install integration. Use --allow-missing-loader to save anyway (with a warning) \
+or --no-sync to skip the automatic post-save sync.",
         after_help = "EXAMPLES:\n  \
 aliasmgr add gs --exec git --arg status --shell bash --tag git\n  \
 aliasmgr add py --exec python3 --arg script.py --shell zsh --description \"Run script\"\n  \
 aliasmgr add rmwork --exec rm --restrict whitelist --restrict-path /tmp/work\n\n\
 Target type is classification metadata. To run `python test.py`, pass --exec python and \
---arg test.py; do not put `python test.py` in --exec."
+--arg test.py; do not put `python test.py` in --exec.\n\n\
+New users: run `aliasmgr doctor` first to enable the shells you use."
     )]
     Add(AddArgs),
     #[command(
         about = "Delete an alias and retire its generated names",
         long_about = "Delete an alias record. A tombstone is recorded for every shell the alias \
-targeted so the next sync removes the managed definition from those shells.",
+targeted so the next sync removes the managed definition from those shells. Those shells are synced \
+automatically unless --no-sync is given.",
         after_help = "EXAMPLES:\n  aliasmgr remove gs --yes\n  aliasmgr remove gs"
     )]
     Remove {
@@ -211,13 +221,22 @@ targeted so the next sync removes the managed definition from those shells.",
         /// Skip the interactive confirmation.
         #[arg(long, help = "Skip the interactive confirmation prompt.")]
         yes: bool,
+        /// Do not sync the affected shells after deleting.
+        #[arg(
+            long,
+            help = "Delete without syncing affected shells (overrides runtime.auto_sync)."
+        )]
+        no_sync: bool,
     },
     #[command(
         about = "Update fields on an existing alias",
         long_about = "Update an existing alias. Only supplied fields change; omitted fields keep \
 their stored values. Supplying --arg, --shell, or --tag replaces that whole collection. --env merges \
 keys into the existing environment map.\n\n\
-Removing a shell from the record retires the alias name for that shell so the next sync cleans it up.",
+Removing a shell from the record retires the alias name for that shell so the next sync cleans it up.\n\n\
+Every resulting target shell must be enabled with a valid loader block; run `aliasmgr doctor` to fix \
+integration, or pass --allow-missing-loader to save anyway. Affected shells are synced automatically \
+unless --no-sync is given.",
         after_help = "EXAMPLES:\n  \
 aliasmgr update gs --arg status --arg --short\n  \
 aliasmgr update gs --shell bash --shell zsh\n  \
@@ -228,7 +247,8 @@ aliasmgr update gs --restrict blacklist --restrict-path /tmp/work"
     #[command(
         about = "Rename an alias",
         long_about = "Rename an alias and retire the old name for every bound shell. The next sync \
-removes the old managed definition and writes the new one.",
+removes the old managed definition and writes the new one; bound shells are synced automatically \
+unless --no-sync is given.",
         after_help = "EXAMPLES:\n  aliasmgr rename gs git-status"
     )]
     Rename {
@@ -238,6 +258,12 @@ removes the old managed definition and writes the new one.",
         /// New alias name.
         #[arg(value_name = "NEW", help = "New alias name.")]
         new: String,
+        /// Do not sync the affected shells after renaming.
+        #[arg(
+            long,
+            help = "Rename without syncing affected shells (overrides runtime.auto_sync)."
+        )]
+        no_sync: bool,
     },
     #[command(
         about = "Print one stored alias record",
@@ -336,24 +362,37 @@ aliasmgr list --tag git --format json"
     #[command(
         about = "Enable an alias",
         long_about = "Re-enable a disabled alias. Disabled aliases stay in the database but are \
-omitted from generated definition files.",
+omitted from generated definition files. Bound shells are synced automatically unless --no-sync is given.",
         after_help = "EXAMPLES:\n  aliasmgr enable gs"
     )]
     Enable {
         /// Alias name to enable.
         #[arg(value_name = "NAME", help = "Alias name to enable.")]
         name: String,
+        /// Do not sync the affected shells after enabling.
+        #[arg(
+            long,
+            help = "Enable without syncing affected shells (overrides runtime.auto_sync)."
+        )]
+        no_sync: bool,
     },
     #[command(
         about = "Disable an alias",
         long_about = "Disable an alias without deleting it. It remains in the database and exports \
-but is omitted from generated definition files until re-enabled and synced.",
+but is omitted from generated definition files until re-enabled and synced. Bound shells are synced \
+automatically unless --no-sync is given.",
         after_help = "EXAMPLES:\n  aliasmgr disable gs"
     )]
     Disable {
         /// Alias name to disable.
         #[arg(value_name = "NAME", help = "Alias name to disable.")]
         name: String,
+        /// Do not sync the affected shells after disabling.
+        #[arg(
+            long,
+            help = "Disable without syncing affected shells (overrides runtime.auto_sync)."
+        )]
+        no_sync: bool,
     },
     #[command(
         about = "Generate shell definition files",
@@ -412,10 +451,25 @@ In PowerShell the leading `.` is the dot-source operator:\n  \
         about = "Inspect configuration, generated files, and loaders",
         long_about = "Report missing database, missing generated files, stale generated files, sync \
 errors, missing loader blocks, checksum mismatches, and filesystem-reliability warnings. Doctor is \
-read-only: it does not repair anything. Use `sync` and `shell install` to act on findings.",
-        after_help = "EXAMPLES:\n  aliasmgr doctor"
+read-only by default: it does not repair anything. Use `sync` and `shell install` to act on findings.\n\n\
+When stdin and stdout are both TTYs, doctor opens the interactive Shell integration screen: it lists \
+all four supported shells, detects install paths, and lets you enable shells and install loader blocks \
+after an explicit preview. Press Space to select, Enter to preview/apply, `r` to rescan, and `q` to \
+quit. Non-interactive sessions keep the text report; `--format json` forces machine-readable output and \
+never enters the interactive screen. There is no separate setup command.",
+        after_help = "EXAMPLES:\n  aliasmgr doctor\n  aliasmgr doctor --format json\n\n\
+Then add an alias for an enabled shell; affected shells are synced automatically."
     )]
-    Doctor,
+    Doctor {
+        /// Output format; supplying this disables the interactive screen.
+        #[arg(
+            long,
+            value_enum,
+            value_name = "FORMAT",
+            help = "Output format: table (text report) or json; supplying this disables the interactive screen."
+        )]
+        format: Option<OutputFormat>,
+    },
     #[command(
         about = "Detect or manage shell integration",
         long_about = "Inspect the detected shell and install or remove the marked Alias Manager loader \
@@ -574,6 +628,18 @@ pub struct AddArgs {
         help = "Path mode: absolute (default) or relative_to_working_directory."
     )]
     pub path_mode: Option<PathModeArg>,
+    /// Do not sync the affected shells after saving.
+    #[arg(
+        long,
+        help = "Save without syncing affected shells (overrides runtime.auto_sync)."
+    )]
+    pub no_sync: bool,
+    /// Save even when a target shell is not enabled or its loader is missing.
+    #[arg(
+        long,
+        help = "Save even when a target shell is not enabled or its loader is not installed; run `aliasmgr doctor` afterwards. The alias will not take effect in that shell until integration is repaired."
+    )]
+    pub allow_missing_loader: bool,
 }
 
 #[derive(Debug, Args)]
@@ -679,6 +745,18 @@ pub struct UpdateArgs {
         help = "Replace the path mode: absolute or relative_to_working_directory."
     )]
     pub path_mode: Option<PathModeArg>,
+    /// Do not sync the affected shells after saving.
+    #[arg(
+        long,
+        help = "Save without syncing affected shells (overrides runtime.auto_sync)."
+    )]
+    pub no_sync: bool,
+    /// Save even when a target shell is not enabled or its loader is missing.
+    #[arg(
+        long,
+        help = "Save even when a target shell is not enabled or its loader is not installed; run `aliasmgr doctor` afterwards. The alias will not take effect in that shell until integration is repaired."
+    )]
+    pub allow_missing_loader: bool,
 }
 
 #[derive(Debug, Subcommand)]
