@@ -285,6 +285,12 @@ pub fn preview_alias(alias: &AliasRecord, shell: &ShellKind) -> Result<String, A
     shells::render_alias(&redacted, shell)
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileFingerprint {
+    pub len: u64,
+    pub modified_nanos: Option<u128>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportReportSummary {
     pub imported: Vec<String>,
@@ -294,6 +300,13 @@ pub struct ImportReportSummary {
     pub strategy: ConflictStrategy,
     pub path: PathBuf,
     pub format: &'static str,
+    /// Exact-name -> id snapshot from the preview database. Carried to
+    /// confirmation so only rows the user actually previewed as overwrites can
+    /// be updated; rows created/replaced in between become conflicts.
+    pub overwrite_existing: BTreeMap<String, uuid::Uuid>,
+    /// Size and modification time of the previewed file; confirmation refuses
+    /// to import if it changed after the preview.
+    pub file_fingerprint: FileFingerprint,
 }
 
 impl ImportReportSummary {
@@ -302,6 +315,8 @@ impl ImportReportSummary {
         strategy: ConflictStrategy,
         path: PathBuf,
         format: &'static str,
+        overwrite_existing: BTreeMap<String, uuid::Uuid>,
+        file_fingerprint: FileFingerprint,
     ) -> Self {
         Self {
             imported: report.imported,
@@ -311,6 +326,8 @@ impl ImportReportSummary {
             strategy,
             path,
             format,
+            overwrite_existing,
+            file_fingerprint,
         }
     }
 }
@@ -421,6 +438,20 @@ fn export_error(error: &AliasError, path: &Path) -> String {
     }
 }
 
+pub fn file_fingerprint(path: &Path) -> Result<FileFingerprint, String> {
+    let metadata =
+        std::fs::metadata(path).map_err(|error| import_error(&AliasError::Io(error), path))?;
+    let modified_nanos = metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos());
+    Ok(FileFingerprint {
+        len: metadata.len(),
+        modified_nanos,
+    })
+}
+
 /// Read-only preview: parses and evaluates conflicts without creating the
 /// database or writing any file. `ImportReport::accepted_records` is dropped.
 pub fn import_preview(
@@ -428,19 +459,31 @@ pub fn import_preview(
     path: &Path,
     strategy: ConflictStrategy,
 ) -> Result<ImportReportSummary, String> {
+    let fingerprint = file_fingerprint(path)?;
     let records = read_import_records(path).map_err(|error| import_error(&error, path))?;
+    if file_fingerprint(path)? != fingerprint {
+        return Err("import file changed while it was being previewed; try again".to_string());
+    }
     let existing =
         existing_aliases_for_preview(root).map_err(|error| import_error(&error, path))?;
     transfer::import_records(records, &existing, strategy)
         .map(|mut report| {
-            if strategy == ConflictStrategy::Overwrite {
+            let overwrite_existing = if strategy == ConflictStrategy::Overwrite {
                 filter_overwrite_casefold(&mut report, &existing);
-            }
+                existing
+                    .iter()
+                    .map(|(name, alias)| (name.clone(), alias.id))
+                    .collect::<BTreeMap<_, _>>()
+            } else {
+                BTreeMap::new()
+            };
             ImportReportSummary::from_report(
                 report.into_public(),
                 strategy,
                 path.to_path_buf(),
                 transfer_format(path),
+                overwrite_existing,
+                fingerprint,
             )
         })
         .map_err(|error| import_error(&error, path))
@@ -452,7 +495,14 @@ pub fn import_confirm(
     root: &Path,
     path: &Path,
     strategy: ConflictStrategy,
+    preview_existing: &BTreeMap<String, uuid::Uuid>,
+    preview_fingerprint: &FileFingerprint,
 ) -> Result<ImportReportSummary, String> {
+    if file_fingerprint(path)? != *preview_fingerprint {
+        return Err(
+            "import file changed since the preview; preview it again before importing".to_string(),
+        );
+    }
     let records = read_import_records(path).map_err(|error| import_error(&error, path))?;
     let database =
         Database::open(root.join("aliases.db")).map_err(|error| import_error(&error, path))?;
@@ -471,12 +521,35 @@ pub fn import_confirm(
         // PowerShell case-fold conflicts before writing instead of failing the
         // whole transaction on a unique/case-fold constraint.
         filter_overwrite_casefold(&mut report, &existing);
+        // Only rows that existed at preview time (same id) may be updated.
+        // A row created or replaced in between is a conflict, not an overwrite.
+        let mut accepted = Vec::new();
+        let mut imported = Vec::new();
+        for record in report.accepted_records.drain(..) {
+            let current_id = existing.get(&record.name).map(|alias| alias.id);
+            let previewed_id = preview_existing.get(&record.name).copied();
+            let safe = match (previewed_id, current_id) {
+                (Some(preview), Some(current)) => preview == current,
+                (Some(_), None) => true, // row was deleted; insert the imported record
+                (None, Some(_)) => false,
+                (None, None) => true,
+            };
+            if safe {
+                imported.push(record.name.clone());
+                accepted.push(record);
+            } else {
+                report.skipped.push(record.name.clone());
+                report.warnings.push(format!(
+                    "name was created or replaced after preview; skipped: {}",
+                    record.name
+                ));
+            }
+        }
+        report.accepted_records = accepted;
+        report.imported = imported;
     }
     let overwrite_existing = if overwrite {
-        existing
-            .iter()
-            .map(|(name, alias)| (name.clone(), alias.id))
-            .collect::<BTreeMap<String, uuid::Uuid>>()
+        preview_existing.clone()
     } else {
         BTreeMap::new()
     };
@@ -488,6 +561,8 @@ pub fn import_confirm(
         strategy,
         path.to_path_buf(),
         transfer_format(path),
+        overwrite_existing,
+        preview_fingerprint.clone(),
     ))
 }
 
@@ -549,6 +624,8 @@ pub enum JobKind {
     ImportConfirm {
         path: PathBuf,
         strategy: ConflictStrategy,
+        overwrite_existing: BTreeMap<String, uuid::Uuid>,
+        file_fingerprint: FileFingerprint,
     },
     Export {
         path: PathBuf,
@@ -715,9 +792,18 @@ fn run_job(kind: &JobKind, root: &Path) -> JobResult {
         JobKind::ImportPreview { path, strategy } => {
             JobResult::ImportPreview(import_preview(root, path, *strategy))
         }
-        JobKind::ImportConfirm { path, strategy } => {
-            JobResult::ImportConfirm(import_confirm(root, path, *strategy))
-        }
+        JobKind::ImportConfirm {
+            path,
+            strategy,
+            overwrite_existing,
+            file_fingerprint,
+        } => JobResult::ImportConfirm(import_confirm(
+            root,
+            path,
+            *strategy,
+            overwrite_existing,
+            file_fingerprint,
+        )),
         JobKind::Export { path, overwrite } => {
             JobResult::Export(export_aliases(root, path, *overwrite))
         }
@@ -1125,7 +1211,14 @@ mod tests {
         let database = Database::open(root.join("aliases.db")).unwrap();
         assert_eq!(database.list_aliases().unwrap().len(), 1);
 
-        let report = import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        let report = import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Ask,
+            &BTreeMap::new(),
+            &file_fingerprint(&file).unwrap(),
+        )
+        .unwrap();
         assert_eq!(report.imported, vec!["one"]);
         let database = Database::open(root.join("aliases.db")).unwrap();
         let names = database
@@ -1135,6 +1228,36 @@ mod tests {
             .map(|alias| alias.name)
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["existing", "one"]);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_confirm_rejects_a_file_changed_after_preview() {
+        let root = temp_root("import-file-change");
+        let file = root.join("input.json");
+        export_file(
+            &file,
+            &[AliasRecord {
+                name: "gs".into(),
+                executable: "first".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        );
+        let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        let mut changed = std::fs::read_to_string(&file).unwrap();
+        changed.push_str("   ");
+        std::fs::write(&file, changed).unwrap();
+        let error = import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Ask,
+            &BTreeMap::new(),
+            &preview.file_fingerprint,
+        )
+        .unwrap_err();
+        assert!(error.contains("changed since the preview"), "{error}");
+        assert!(!root.join("aliases.db").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -1165,7 +1288,14 @@ mod tests {
             },
         );
         drop(database);
-        let report = import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        let report = import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Ask,
+            &BTreeMap::new(),
+            &file_fingerprint(&file).unwrap(),
+        )
+        .unwrap();
         assert!(report.imported.is_empty());
         assert_eq!(report.skipped, vec!["gs"]);
         let database = Database::open(root.join("aliases.db")).unwrap();
@@ -1217,14 +1347,28 @@ mod tests {
         let renamed = import_preview(&root, &file, ConflictStrategy::Rename).unwrap();
         assert_eq!(renamed.imported, vec!["gs_imported"]);
 
-        import_confirm(&root, &file, ConflictStrategy::Overwrite).unwrap();
+        import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Overwrite,
+            &overwrite.overwrite_existing,
+            &overwrite.file_fingerprint,
+        )
+        .unwrap();
         let database = Database::open(root.join("aliases.db")).unwrap();
         let alias = database.get_alias_by_name("gs").unwrap().unwrap();
         assert_eq!(alias.executable, "new");
         assert_eq!(alias.description, "imported");
 
         // Rename confirm inserts the renamed record and keeps the original.
-        import_confirm(&root, &file, ConflictStrategy::Rename).unwrap();
+        import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Rename,
+            &BTreeMap::new(),
+            &file_fingerprint(&file).unwrap(),
+        )
+        .unwrap();
         let database = Database::open(root.join("aliases.db")).unwrap();
         assert!(database.get_alias_by_name("gs_imported").unwrap().is_some());
         assert!(database.get_alias_by_name("gs").unwrap().is_some());
@@ -1264,7 +1408,14 @@ mod tests {
             .warnings
             .iter()
             .any(|warning| warning.contains("case-fold conflict")));
-        let report = import_confirm(&root, &file, ConflictStrategy::Overwrite).unwrap();
+        let report = import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Overwrite,
+            &preview.overwrite_existing,
+            &preview.file_fingerprint,
+        )
+        .unwrap();
         assert!(report.imported.is_empty());
         assert_eq!(report.skipped, vec!["build"]);
         assert!(report
@@ -1294,7 +1445,14 @@ mod tests {
         let preview = import_preview(&root, &bash_file, ConflictStrategy::Overwrite).unwrap();
         assert_eq!(preview.imported, vec!["build"]);
         assert!(preview.warnings.is_empty());
-        let report = import_confirm(&root, &bash_file, ConflictStrategy::Overwrite).unwrap();
+        let report = import_confirm(
+            &root,
+            &bash_file,
+            ConflictStrategy::Overwrite,
+            &preview.overwrite_existing,
+            &preview.file_fingerprint,
+        )
+        .unwrap();
         assert_eq!(report.imported, vec!["build"]);
         let database = Database::open(root.join("aliases.db")).unwrap();
         assert_eq!(
@@ -1328,7 +1486,14 @@ mod tests {
             .iter()
             .any(|warning| warning.contains("sensitive environment variable omitted")));
         assert!(!preview.warnings.join("\n").contains("hunter2"));
-        import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Ask,
+            &BTreeMap::new(),
+            &file_fingerprint(&file).unwrap(),
+        )
+        .unwrap();
         let database = Database::open(root.join("aliases.db")).unwrap();
         let saved = database.get_alias_by_name("secret").unwrap().unwrap();
         assert!(!saved.environment.contains_key("TOKEN"));
@@ -1457,6 +1622,12 @@ mod tests {
         let error = export_aliases(&root, &readonly, true).unwrap_err();
         assert!(error.contains("permission denied"), "{error}");
         assert_eq!(std::fs::read_to_string(&readonly).unwrap(), "previous");
+        let leftovers = std::fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp."))
+            .count();
+        assert_eq!(leftovers, 0);
         permissions.set_readonly(false);
         let _ = std::fs::set_permissions(&readonly, permissions);
         let _ = std::fs::remove_dir_all(root);
@@ -1477,7 +1648,14 @@ mod tests {
         write_raw_export(&file, aliases, 1);
         let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
         assert_eq!(preview.imported.len(), 300);
-        import_confirm(&root, &file, ConflictStrategy::Ask).unwrap();
+        import_confirm(
+            &root,
+            &file,
+            ConflictStrategy::Ask,
+            &BTreeMap::new(),
+            &file_fingerprint(&file).unwrap(),
+        )
+        .unwrap();
         let database = Database::open(root.join("aliases.db")).unwrap();
         assert_eq!(database.list_aliases().unwrap().len(), 300);
         let _ = std::fs::remove_dir_all(root);

@@ -123,10 +123,13 @@ second submit.
 matching the CLI. The preview reports imported/skipped/unsupported/warnings
 without opening for writes or creating the database. `c` cycles the core
 conflict strategy (Ask default, Skip, Overwrite, Rename). Ask and Skip skip
-conflicts; Overwrite updates exact-name rows in place, while PowerShell
-case-fold conflicts that need manual resolution are skipped with a warning.
-On confirmation the file is re-read and re-evaluated against the current
-database, then accepted records are persisted in one transaction
+conflicts; Overwrite updates exact-name rows in place only when the same id
+existed at preview time (rows created or replaced in between are skipped),
+while PowerShell case-fold conflicts that need manual resolution are skipped
+with a warning.
+On confirmation the file's size/mtime is checked against the preview (a changed
+file must be previewed again), the file is re-read and re-evaluated against the
+current database, and accepted records are persisted in one transaction
 (`import_aliases_atomic` / `insert_aliases_atomic`). Sensitive environment
 keys are removed by core before preview, persistence or display.
 

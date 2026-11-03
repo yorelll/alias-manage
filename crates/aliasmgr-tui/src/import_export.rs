@@ -505,6 +505,8 @@ mod tests {
             strategy: ConflictStrategy::Ask,
             path: PathBuf::from("in.json"),
             format: "JSON",
+            overwrite_existing: Default::default(),
+            file_fingerprint: Default::default(),
         });
         assert_eq!(state.phase, ImportPhase::Result);
         assert!(!state.busy);

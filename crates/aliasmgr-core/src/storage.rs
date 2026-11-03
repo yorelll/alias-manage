@@ -144,7 +144,7 @@ impl Database {
         if self.get_alias_by_name(&alias.name)?.is_some() {
             return Err(AliasError::ExactNameConflict(alias.name.clone()));
         }
-        if has_powershell_shell(&alias.shells)
+        if crate::model::contains_powershell(&alias.shells)
             && self.has_powershell_case_conflict(&alias.name, None)?
         {
             return Err(AliasError::CaseFoldConflict(alias.name.clone()));
@@ -256,6 +256,10 @@ impl Database {
         self.fetch("name", name)
     }
 
+    /// SQL-backed mirror of `transfer::powershell_casefold_conflict` and the
+    /// model's PowerShell rule. It queries the `name_folded` index, decodes
+    /// each candidate's shells, and delegates the adapter check to
+    /// `model::contains_powershell`.
     pub fn has_powershell_case_conflict(
         &self,
         name: &str,
@@ -274,7 +278,7 @@ impl Database {
                 continue;
             }
             let shells: Vec<crate::model::ShellKind> = serde_json::from_str(&shells)?;
-            if has_powershell_shell(&shells) {
+            if crate::model::contains_powershell(&shells) {
                 return Ok(true);
             }
         }
@@ -563,7 +567,7 @@ impl Database {
         {
             return Err(AliasError::ExactNameConflict(alias.name.clone()));
         }
-        if has_powershell_shell(&alias.shells)
+        if crate::model::contains_powershell(&alias.shells)
             && self.has_powershell_case_conflict(&alias.name, Some(alias.id))?
         {
             return Err(AliasError::CaseFoldConflict(alias.name.clone()));
@@ -759,15 +763,6 @@ fn rotate_database_backups(directory: &Path, newest: &Path, config_root: Option<
         older_slots,
         std::slice::from_ref(&newest.to_path_buf()),
     );
-}
-
-fn has_powershell_shell(shells: &[crate::model::ShellKind]) -> bool {
-    shells.iter().any(|shell| {
-        matches!(
-            shell,
-            crate::model::ShellKind::PowerShell5 | crate::model::ShellKind::PowerShell7
-        )
-    })
 }
 
 fn checked_checksum(alias: &AliasRecord) -> Result<String, AliasError> {

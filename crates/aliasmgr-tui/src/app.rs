@@ -941,10 +941,28 @@ impl App {
             self.set_status(StatusKind::Warning, "a background job is already running");
             return;
         }
-        if self
-            .jobs
-            .start(JobKind::ImportConfirm { path, strategy }, self.root.clone())
-        {
+        let (overwrite_existing, file_fingerprint) = match &self.screen {
+            Screen::Import(state) => state
+                .report
+                .as_ref()
+                .map(|report| {
+                    (
+                        report.overwrite_existing.clone(),
+                        report.file_fingerprint.clone(),
+                    )
+                })
+                .unwrap_or_default(),
+            _ => (BTreeMap::new(), data::FileFingerprint::default()),
+        };
+        if self.jobs.start(
+            JobKind::ImportConfirm {
+                path,
+                strategy,
+                overwrite_existing,
+                file_fingerprint,
+            },
+            self.root.clone(),
+        ) {
             if let Screen::Import(state) = &mut self.screen {
                 state.begin_confirm();
             }
@@ -2803,6 +2821,72 @@ mod tests {
     }
 
     #[test]
+    fn overwrite_import_does_not_replace_a_row_created_after_preview() {
+        let root = temp_root("import-overwrite-race");
+        let mut app = App::new(root.clone()).unwrap();
+        let file = root.join("input.json");
+        aliasmgr_core::transfer::export_json(
+            &file,
+            &[AliasRecord {
+                name: "gs".into(),
+                executable: "imported".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        // Ask -> Skip -> Overwrite; each change refreshes the preview.
+        app.handle_key(key(KeyCode::Char('c')));
+        wait_for_jobs(&mut app);
+        app.handle_key(key(KeyCode::Char('c')));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import preview");
+        };
+        assert_eq!(
+            state.strategy,
+            aliasmgr_core::transfer::ConflictStrategy::Overwrite
+        );
+        assert!(state.report.as_ref().unwrap().overwrite_existing.is_empty());
+
+        // Another front end creates the same name after preview.
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        AliasService::new(&other)
+            .create(AliasRecord {
+                name: "gs".into(),
+                executable: "external".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        app.handle_key(key(KeyCode::Char('y')));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import result");
+        };
+        let report = state.report.as_ref().unwrap();
+        assert!(report.imported.is_empty());
+        assert_eq!(report.skipped, vec!["gs"]);
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("created or replaced after preview")));
+        let saved = AliasService::new(&other)
+            .get_by_name("gs")
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.executable, "external");
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn import_preview_then_confirm_persists_and_cancel_does_not() {
         let root = temp_root("import-flow");
         let mut app = App::new(root.clone()).unwrap();
@@ -2867,6 +2951,44 @@ mod tests {
             .unwrap()
             .iter()
             .any(|alias| alias.name == "not_imported"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn confirming_after_the_import_file_changes_requires_a_new_preview() {
+        let root = temp_root("import-changed");
+        let mut app = App::new(root.clone()).unwrap();
+        let file = root.join("input.json");
+        aliasmgr_core::transfer::export_json(
+            &file,
+            &[AliasRecord {
+                name: "changed".into(),
+                executable: "first".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        )
+        .unwrap();
+        app.handle_key(key(KeyCode::Char('I')));
+        type_path(&mut app, &file);
+        app.handle_key(key(KeyCode::Enter));
+        wait_for_jobs(&mut app);
+        let mut content = std::fs::read_to_string(&file).unwrap();
+        content.push_str("   ");
+        std::fs::write(&file, content).unwrap();
+        app.handle_key(key(KeyCode::Char('y')));
+        wait_for_jobs(&mut app);
+        let Screen::Import(state) = &app.screen else {
+            panic!("import screen");
+        };
+        assert_eq!(state.phase, ImportPhase::Input);
+        assert!(state
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("changed since the preview"));
+        assert!(app.database.list_aliases().unwrap().is_empty());
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

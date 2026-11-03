@@ -1831,6 +1831,10 @@ fn footer_keys(app: &App) -> String {
         Screen::SyncReport(_) => {
             "j/k scroll  PgUp/PgDn  r retry failed  Esc back  q quit".to_string()
         }
+        Screen::Import(state) if state.busy => match state.phase {
+            ImportPhase::Confirming => "import in progress...".to_string(),
+            _ => "preview in progress...".to_string(),
+        },
         Screen::Import(state) => match state.phase {
             ImportPhase::Input => "type a file path   Enter preview   Esc cancel".to_string(),
             ImportPhase::Preview => {
@@ -1839,6 +1843,7 @@ fn footer_keys(app: &App) -> String {
             ImportPhase::Confirming => "import in progress...".to_string(),
             ImportPhase::Result => "j/k scroll   Esc back".to_string(),
         },
+        Screen::Export(state) if state.busy => "export in progress...".to_string(),
         Screen::Export(state) => match state.phase {
             ExportPhase::Input => "type a file path   Enter export   Esc cancel".to_string(),
             ExportPhase::ConfirmOverwrite => "y overwrite   n/Esc back".to_string(),
@@ -2298,6 +2303,40 @@ mod tests {
     }
 
     #[test]
+    fn busy_import_and_export_footers_hide_ignored_actions() {
+        let (root, mut app) = test_app("busy-footer");
+        app.screen = Screen::Import(crate::import_export::ImportState {
+            path_input: crate::input::TextInput::new("in.json"),
+            path: Some(PathBuf::from("in.json")),
+            strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+            phase: crate::import_export::ImportPhase::Preview,
+            report: None,
+            error: None,
+            busy: true,
+            scroll: 0,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("preview in progress"), "{rendered}");
+        assert!(!rendered.contains("y import"), "{rendered}");
+        assert!(!rendered.contains("c conflict strategy"), "{rendered}");
+
+        app.screen = Screen::Export(crate::import_export::ExportState {
+            path_input: crate::input::TextInput::new("out.json"),
+            path: Some(PathBuf::from("out.json")),
+            phase: crate::import_export::ExportPhase::Input,
+            summary: None,
+            error: None,
+            busy: true,
+            scroll: 0,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("export in progress"), "{rendered}");
+        assert!(!rendered.contains("Enter export"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn import_confirming_phase_renders_write_specific_title_and_footer() {
         let (root, mut app) = test_app("import-confirming");
         app.screen = Screen::Import(crate::import_export::ImportState {
@@ -2343,6 +2382,8 @@ mod tests {
                 strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
                 path: PathBuf::from("in.json"),
                 format: "JSON",
+                overwrite_existing: Default::default(),
+                file_fingerprint: Default::default(),
             }),
             error: None,
             busy: false,
