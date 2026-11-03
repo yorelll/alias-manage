@@ -304,7 +304,10 @@ impl SetupApp {
         // keeps an explicit deselect (or a persisted disable) from being
         // undone by a rescan, a config reload or a refresh after applying.
         for (row, plan) in self.rows.iter().zip(self.plans.iter()) {
-            if row.wsl {
+            // Use the effective plan: a WSL launcher row with a native
+            // executable override is no longer a WSL integration target.
+            let effective_wsl = plan.as_ref().map(|plan| plan.wsl).unwrap_or(row.wsl);
+            if effective_wsl {
                 self.checked.remove(&row.kind);
                 continue;
             }
@@ -589,6 +592,15 @@ impl SetupApp {
             self.status = format!("{} executable was not detected.", kind.label());
             self.dirty = true;
             return;
+        }
+        // A native executable supplied for a WSL launcher row changes what the
+        // row represents. Update the cached installation so rendering, Space
+        // and selection rebuilds see a native row instead of the launcher.
+        if let Some(row) = self.rows.iter_mut().find(|row| row.kind == kind) {
+            row.executable = plan.executable.clone();
+            row.detected = plan.detected;
+            row.source = plan.source;
+            row.wsl = plan.wsl;
         }
         self.pending_overrides
             .insert(kind.clone(), (Some(executable_path), profile_override));
@@ -1059,20 +1071,11 @@ pub(crate) fn render_in(frame: &mut Frame, area: Rect, app: &SetupApp) {
                 let loader = plan
                     .map(|plan| plan.loader_status.as_str())
                     .unwrap_or("...");
-                let target = plan
-                    .and_then(|plan| plan.loader_target.as_ref())
-                    .map(|path| {
-                        format!(
-                            "  loader: {}",
-                            crate::text::truncate_display(&path.display().to_string(), 56, false)
-                        )
-                    })
-                    .unwrap_or_default();
                 let detail = if row.wsl {
                     "WSL launcher (Enter: enter a native Windows path)".to_string()
                 } else if row.detected {
                     format!(
-                        "{} [{}]{}{}",
+                        "{} [{}]{}",
                         row.executable
                             .as_ref()
                             .map(|path| path.display().to_string())
@@ -1081,16 +1084,31 @@ pub(crate) fn render_in(frame: &mut Frame, area: Rect, app: &SetupApp) {
                         row.version
                             .as_ref()
                             .map(|version| format!(" v{version}"))
-                            .unwrap_or_default(),
-                        target
+                            .unwrap_or_default()
                     )
                 } else {
-                    format!("not found [{loader}]{target}")
+                    format!("not found [{loader}]")
                 };
-                ListItem::new(Line::from(format!(
+                let mut lines = vec![Line::from(format!(
                     "[{marker}] {:<16} {detail}",
                     row.kind.label()
-                )))
+                ))];
+                // Put the target on its own line so a long executable/status
+                // cannot push it off an 80-column frame.
+                if !row.wsl {
+                    if let Some(target) = plan.and_then(|plan| plan.loader_target.as_ref()) {
+                        let width = (area.width as usize).saturating_sub(14).max(8);
+                        lines.push(Line::from(format!(
+                            "    loader: {}",
+                            crate::text::truncate_display(
+                                &target.display().to_string(),
+                                width,
+                                false
+                            )
+                        )));
+                    }
+                }
+                ListItem::new(lines)
             })
             .collect::<Vec<_>>();
         let list = List::new(items)
@@ -2015,6 +2033,121 @@ mod tests {
         app.handle_key(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE));
         assert!(matches!(app.mode, Mode::List));
         assert!(app.pending_overrides.contains_key(&ShellKind::Zsh));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wsl_row_native_path_reaches_confirm_and_applies_in_first_run() {
+        let root = ui_root("wsl-first-run-native");
+        let paths = AppPaths { root: root.clone() };
+        aliasmgr_core::config::AppConfig::default()
+            .save(&paths)
+            .unwrap();
+        let native = root.join(if cfg!(windows) {
+            "git-bash.exe"
+        } else {
+            "git-bash"
+        });
+        std::fs::write(&native, b"").unwrap();
+        let profile = root.join("bashrc");
+        let mut app = SetupApp::new_with_origin(paths, SetupOrigin::FirstRun, &[]).unwrap();
+        app.inject_rows_for_test(vec![ShellInstallation {
+            kind: ShellKind::Bash,
+            executable: Some(PathBuf::from(r"C:\Windows\System32\bash.exe")),
+            detected: true,
+            source: detection::ShellDetectionSource::Wsl,
+            version: None,
+            wsl: true,
+        }]);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::PathInput { .. }));
+        app.mode = Mode::PathInput {
+            kind: ShellKind::Bash,
+            executable: native.display().to_string(),
+            profile: profile.display().to_string(),
+            focus: PathFocus::Profile,
+        };
+        app.finish_path_input();
+        let Mode::Confirm { previews, .. } = &app.mode else {
+            panic!(
+                "native WSL override must reach preview, got {:?}: {}",
+                app.mode, app.status
+            );
+        };
+        assert_eq!(previews.len(), 1);
+        assert_eq!(previews[0].preview.target, profile);
+        assert!(
+            !app.rows[0].wsl,
+            "the overridden row must no longer be treated as WSL"
+        );
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::Result));
+        assert!(app.has_success(), "{}", app.summary_text());
+        let config = app.paths.load_config().unwrap();
+        assert_eq!(config.shells.enabled, vec!["bash"]);
+        assert_eq!(
+            config
+                .shells
+                .executables
+                .get("bash")
+                .map(|path| path.as_path()),
+            Some(native.as_path())
+        );
+        assert!(std::fs::read_to_string(&profile)
+            .unwrap()
+            .contains(aliasmgr_core::shells::common::START_MARKER));
+        assert!(!app.rows[0].wsl);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wsl_row_native_path_reaches_confirm_and_applies_from_settings() {
+        let root = ui_root("wsl-settings-native");
+        let paths = AppPaths { root: root.clone() };
+        let profile = root.join("bashrc");
+        let mut config = aliasmgr_core::config::AppConfig::default();
+        config.shells.enabled = vec!["bash".into()];
+        config.shells.bash_rc_path = Some(profile.clone());
+        config.save(&paths).unwrap();
+        let native = root.join(if cfg!(windows) {
+            "git-bash.exe"
+        } else {
+            "git-bash"
+        });
+        std::fs::write(&native, b"").unwrap();
+        let mut app = SetupApp::new_with_origin(paths, SetupOrigin::Settings, &[]).unwrap();
+        app.inject_rows_for_test(vec![ShellInstallation {
+            kind: ShellKind::Bash,
+            executable: Some(PathBuf::from(r"C:\Windows\System32\bash.exe")),
+            detected: true,
+            source: detection::ShellDetectionSource::Wsl,
+            version: None,
+            wsl: true,
+        }]);
+        // A bare WSL launcher is never preselected, even though it is enabled.
+        assert!(!app.checked.contains(&ShellKind::Bash));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::PathInput { .. }));
+        app.mode = Mode::PathInput {
+            kind: ShellKind::Bash,
+            executable: native.display().to_string(),
+            profile: profile.display().to_string(),
+            focus: PathFocus::Profile,
+        };
+        app.finish_path_input();
+        assert!(
+            matches!(app.mode, Mode::Confirm { .. }),
+            "expected confirm, got {:?}: {}",
+            app.mode,
+            app.status
+        );
+        assert!(app.checked.contains(&ShellKind::Bash));
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(app.has_success(), "{}", app.summary_text());
+        assert!(std::fs::read_to_string(&profile)
+            .unwrap()
+            .contains(aliasmgr_core::shells::common::START_MARKER));
+        assert!(!app.rows[0].wsl);
         let _ = std::fs::remove_dir_all(root);
     }
 

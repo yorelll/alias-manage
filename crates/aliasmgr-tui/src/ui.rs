@@ -3812,6 +3812,13 @@ mod tests {
         assert!(rendered.contains("loader:"), "{rendered}");
         assert!(rendered.contains("e paths"), "{rendered}");
         assert!(rendered.contains("c defaults"), "{rendered}");
+        // The target has its own line, so an 80-column frame still shows it.
+        let rendered_80 = render_string(&mut app, 80, 24);
+        assert!(
+            rendered_80.contains("loader:"),
+            "loader target is clipped at 80x24: {rendered_80}"
+        );
+        assert!(rendered_80.contains("Bash"), "{rendered_80}");
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }
