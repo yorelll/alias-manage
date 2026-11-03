@@ -32,7 +32,7 @@ Current `AliasError` mappings in `crates/aliasmgr-cli/src/exit_code.rs`:
 - Code 9: `SyntaxCheck`. The core maps it to 9, but the current CLI `sync` path collects per-Shell failures and returns `PartialSync`, so users observe exit 10 rather than 9.
 - Code 10: `PartialSync`, returned by `sync` when at least one Shell fails.
 - Code 12: `SchemaTooNew` and `ShellNotInstalled`.
-- Code 13: `ChecksumMismatch`, `Database`, `Serialization`, `Io`, and `UnreliableFilesystem`.
+- Code 13: `ChecksumMismatch`, `Database`, `Serialization`, `Io`, and `UnreliableFilesystem`. An atomic write that refuses a cyclic or over-deep symlink chain reports `Io` (`InvalidInput`), so it also exits 13.
 - Code 14: `ConfirmationRequired`, returned by `remove` without `--yes` and by `uninstall --purge-aliases` without `--yes` when stdin is not a TTY.
 
 Code 2 is produced by clap before `AliasError` handling. Code 11 has no `AliasError` variant and remains reserved. Meanings are stable after publication.

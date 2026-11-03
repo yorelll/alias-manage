@@ -44,6 +44,13 @@ mod tests {
         assert_eq!(exit_code(&AliasError::InvalidArgTemplate), 5);
         assert_eq!(exit_code(&AliasError::ChecksumMismatch), 13);
         assert_eq!(exit_code(&AliasError::UnreliableFilesystem), 13);
+        assert_eq!(
+            exit_code(&AliasError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "symlink chain is cyclic or too deep",
+            ))),
+            13
+        );
         assert_eq!(exit_code(&AliasError::PermissionDenied), 7);
         assert_eq!(exit_code(&AliasError::LockTimeout), 8);
         assert_eq!(exit_code(&AliasError::SyntaxCheck("bad".into())), 9);

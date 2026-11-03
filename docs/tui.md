@@ -127,12 +127,14 @@ conflicts; Overwrite updates exact-name rows in place only when the same id
 existed at preview time (rows created or replaced in between are skipped),
 while PowerShell case-fold conflicts that need manual resolution are skipped
 with a warning.
-On confirmation the file's SHA-256, size and mtime are checked against the
-preview (before and after reading, and again before the write; a changed file
-must be previewed again), the file is re-read and re-evaluated against the
-current database, and accepted records are persisted in one transaction
-(`import_aliases_atomic` / `insert_aliases_atomic`). Sensitive environment
-keys are removed by core before preview, persistence or display.
+On confirmation the file is read once and its SHA-256 is computed over the
+same bytes that are parsed; the fingerprint is checked against the preview
+before reading, against the read bytes, and again before the database is
+opened for the transaction (a changed file must be previewed again, and is
+refused without creating an empty database). The records are re-evaluated
+against the current database, and accepted records are persisted in one
+transaction (`import_aliases_atomic` / `insert_aliases_atomic`). Sensitive
+environment keys are removed by core before preview, persistence or display.
 
 `X` exports all aliases in the shared database. The format is chosen by
 extension, a path that already exists requires `y` overwrite confirmation, and

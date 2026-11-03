@@ -351,17 +351,11 @@ pub fn transfer_format(path: &Path) -> &'static str {
     }
 }
 
-fn read_import_records(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
-    if path.is_dir() {
-        return Err(AliasError::Config(format!(
-            "path is a directory: {}",
-            path.display()
-        )));
-    }
+fn parse_import_records(path: &Path, content: &str) -> Result<Vec<AliasRecord>, AliasError> {
     if transfer_format(path) == "TOML" {
-        transfer::read_toml(path)
+        transfer::read_toml_str(content)
     } else {
-        transfer::read_json(path)
+        transfer::read_json_str(content)
     }
 }
 
@@ -442,44 +436,80 @@ fn export_error(error: &AliasError, path: &Path) -> String {
     }
 }
 
+fn modified_nanos(metadata: &std::fs::Metadata) -> Option<u128> {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_nanos())
+}
+
 pub fn file_fingerprint(path: &Path) -> Result<FileFingerprint, String> {
     if path.is_dir() {
         return Err(format!("path is a directory: {}", path.display()));
     }
     let metadata =
         std::fs::metadata(path).map_err(|error| import_error(&AliasError::Io(error), path))?;
-    let modified_nanos = metadata
-        .modified()
-        .ok()
-        .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|duration| duration.as_nanos());
     let sha256 = fsutil::file_sha256(path).map_err(|error| import_error(&error, path))?;
     Ok(FileFingerprint {
         len: metadata.len(),
-        modified_nanos,
+        modified_nanos: modified_nanos(&metadata),
         sha256,
     })
 }
 
+/// Reads and hashes the import file exactly once: the SHA-256 is computed over
+/// the same bytes that are parsed. Windows callers pass the preview fingerprint
+/// (checked before the read and against the read bytes); preview passes `None`
+/// and receives the fingerprint to carry forward.
 fn read_checked_import_records(
     path: &Path,
-    expected: &FileFingerprint,
+    expected: Option<&FileFingerprint>,
     before_read: impl FnOnce(),
-) -> Result<Vec<AliasRecord>, String> {
-    if file_fingerprint(path)? != *expected {
-        return Err(
-            "import file changed since the preview; preview it again before importing".to_string(),
-        );
+) -> Result<(Vec<AliasRecord>, FileFingerprint), String> {
+    if path.is_dir() {
+        return Err(format!("path is a directory: {}", path.display()));
+    }
+    if let Some(expected) = expected {
+        if file_fingerprint(path)? != *expected {
+            return Err(
+                "import file changed since the preview; preview it again before importing"
+                    .to_string(),
+            );
+        }
     }
     before_read();
-    let records = read_import_records(path).map_err(|error| import_error(&error, path))?;
-    if file_fingerprint(path)? != *expected {
-        return Err(
-            "import file changed while it was being read; preview it again before importing"
-                .to_string(),
-        );
+    let read_error = |error| import_error(&AliasError::Io(error), path);
+    let before = std::fs::metadata(path).map_err(read_error)?;
+    let bytes = std::fs::read(path).map_err(read_error)?;
+    let after = std::fs::metadata(path).map_err(read_error)?;
+    let fingerprint = FileFingerprint {
+        len: bytes.len() as u64,
+        modified_nanos: modified_nanos(&after),
+        sha256: fsutil::sha256_hex(&bytes),
+    };
+    let changed = match expected {
+        Some(expected) => fingerprint != *expected,
+        // Preview has no expected fingerprint, so compare the metadata captured
+        // around the read to detect a concurrent edit while it was read.
+        None => {
+            before.len() != fingerprint.len || modified_nanos(&before) != fingerprint.modified_nanos
+        }
+    };
+    if changed {
+        return Err(match expected {
+            Some(_) => {
+                "import file changed while it was being read; preview it again before importing"
+                    .to_string()
+            }
+            None => "import file changed while it was being previewed; try again".to_string(),
+        });
     }
-    Ok(records)
+    let content = String::from_utf8(bytes)
+        .map_err(|error| read_error(std::io::Error::new(std::io::ErrorKind::InvalidData, error)))?;
+    let records =
+        parse_import_records(path, &content).map_err(|error| import_error(&error, path))?;
+    Ok((records, fingerprint))
 }
 
 /// Read-only preview: parses and evaluates conflicts without creating the
@@ -489,8 +519,7 @@ pub fn import_preview(
     path: &Path,
     strategy: ConflictStrategy,
 ) -> Result<ImportReportSummary, String> {
-    let fingerprint = file_fingerprint(path)?;
-    let records = read_checked_import_records(path, &fingerprint, || {})?;
+    let (records, fingerprint) = read_checked_import_records(path, None, || {})?;
     let existing =
         existing_aliases_for_preview(root).map_err(|error| import_error(&error, path))?;
     transfer::import_records(records, &existing, strategy)
@@ -525,7 +554,33 @@ pub fn import_confirm(
     preview_existing: &BTreeMap<String, uuid::Uuid>,
     preview_fingerprint: &FileFingerprint,
 ) -> Result<ImportReportSummary, String> {
-    let records = read_checked_import_records(path, preview_fingerprint, || {})?;
+    import_confirm_after_read(
+        root,
+        path,
+        strategy,
+        preview_existing,
+        preview_fingerprint,
+        || {},
+    )
+}
+
+fn import_confirm_after_read(
+    root: &Path,
+    path: &Path,
+    strategy: ConflictStrategy,
+    preview_existing: &BTreeMap<String, uuid::Uuid>,
+    preview_fingerprint: &FileFingerprint,
+    after_read: impl FnOnce(),
+) -> Result<ImportReportSummary, String> {
+    let (records, verified) = read_checked_import_records(path, Some(preview_fingerprint), || {})?;
+    after_read();
+    // Check before any writable open: a changed file must not create an empty
+    // database (or its backup) merely because confirmation was attempted.
+    if file_fingerprint(path)? != *preview_fingerprint {
+        return Err(
+            "import file changed before the import transaction; preview it again".to_string(),
+        );
+    }
     let database =
         Database::open(root.join("aliases.db")).map_err(|error| import_error(&error, path))?;
     let existing = database
@@ -575,11 +630,6 @@ pub fn import_confirm(
     } else {
         BTreeMap::new()
     };
-    if file_fingerprint(path)? != *preview_fingerprint {
-        return Err(
-            "import file changed before the import transaction; preview it again".to_string(),
-        );
-    }
     database
         .import_aliases_atomic(&report.accepted_records, &overwrite_existing)
         .map_err(|error| import_error(&error, path))?;
@@ -589,7 +639,7 @@ pub fn import_confirm(
         path.to_path_buf(),
         transfer_format(path),
         overwrite_existing,
-        preview_fingerprint.clone(),
+        verified,
     ))
 }
 
@@ -1316,11 +1366,43 @@ mod tests {
         );
         let expected = file_fingerprint(&file).unwrap();
         let swap_path = file.clone();
-        let error = read_checked_import_records(&file, &expected, move || {
+        let error = read_checked_import_records(&file, Some(&expected), move || {
             std::fs::write(&swap_path, "[]").unwrap();
         })
         .unwrap_err();
         assert!(error.contains("changed while it was being read"), "{error}");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn file_changed_before_transaction_is_refused_without_creating_the_database() {
+        let root = temp_root("import-before-transaction");
+        let file = root.join("input.json");
+        export_file(
+            &file,
+            &[AliasRecord {
+                name: "gs".into(),
+                executable: "first".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }],
+        );
+        let preview = import_preview(&root, &file, ConflictStrategy::Ask).unwrap();
+        assert!(!root.join("aliases.db").exists());
+        let swap_path = file.clone();
+        let error = import_confirm_after_read(
+            &root,
+            &file,
+            ConflictStrategy::Ask,
+            &BTreeMap::new(),
+            &preview.file_fingerprint,
+            move || {
+                std::fs::write(&swap_path, "[]").unwrap();
+            },
+        )
+        .unwrap_err();
+        assert!(error.contains("before the import transaction"), "{error}");
+        assert!(!root.join("aliases.db").exists());
         let _ = std::fs::remove_dir_all(root);
     }
 
