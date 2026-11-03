@@ -2197,8 +2197,10 @@ mod tests {
         };
         // C3 reproduced WAL-reset corruption on SQLite 3.46 in exactly this
         // shape: the TUI connection stays open while the retry worker opens
-        // another connection and checkpoints. On 3.46 the integrity_check below
-        // could report "wrong # of entries in index sqlite_autoindex_shell_state_1".
+        // another connection and checkpoints. The in-loop check below documents
+        // the pre-exit "ok" C3 also saw; the corruption is produced at the final
+        // connection close/WAL reset, so the post-close check after `drop(app)`
+        // is the regression assertion.
         for _ in 0..3 {
             app.screen = Screen::SyncReport(SyncReportState {
                 run: SyncRun {
@@ -2229,16 +2231,27 @@ mod tests {
                 assert!(Instant::now() < deadline, "retry did not finish");
                 std::thread::sleep(Duration::from_millis(20));
             }
-            let integrity: String = app
+            let pre_exit_integrity: String = app
                 .database
                 .conn
                 .query_row("PRAGMA integrity_check", [], |row| row.get(0))
                 .unwrap();
-            assert_eq!(integrity, "ok");
+            assert_eq!(pre_exit_integrity, "ok");
         }
         assert!(!root.join("generated/bash.sh").exists());
         assert!(root.join("generated/zsh.sh").exists());
+
+        // Close the TUI connection (and every retry connection) before
+        // inspecting the database. This is the shape C3 saw fail on 3.46:
+        // integrity was ok before exit and malformed afterwards.
         drop(app);
+        let reopened = Database::open_read_only(root.join("aliases.db")).unwrap();
+        let post_close_integrity: String = reopened
+            .conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(post_close_integrity, "ok");
+        drop(reopened);
         let _ = std::fs::remove_dir_all(root);
     }
 

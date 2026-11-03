@@ -2037,7 +2037,9 @@ mod tests {
         let worker = std::thread::spawn(move || {
             // Repeated subset retries open their own connection and checkpoint
             // while the main connection above stays open. On SQLite 3.46 this
-            // is the multi-connection WAL-reset window reported by C3.
+            // is the multi-connection WAL-reset window reported by C3. The
+            // pre-close check documents the "ok" seen before exit; the
+            // post-close read-only check below is the regression assertion.
             for _ in 0..5 {
                 sync_shells(&worker_root, &[ShellKind::Zsh]).unwrap();
             }
@@ -2047,12 +2049,22 @@ mod tests {
             std::thread::yield_now();
         }
         worker.join().unwrap();
-        let integrity: String = database
+        let pre_exit_integrity: String = database
             .conn
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .unwrap();
-        assert_eq!(integrity, "ok");
+        assert_eq!(pre_exit_integrity, "ok");
+
+        // Final connection close/WAL reset is where C3 observed the corruption;
+        // reopen read-only and check only after every writer is gone.
         drop(database);
+        let reopened = crate::storage::Database::open_read_only(root.join("aliases.db")).unwrap();
+        let post_close_integrity: String = reopened
+            .conn
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(post_close_integrity, "ok");
+        drop(reopened);
         let _ = fs::remove_dir_all(root);
     }
 }

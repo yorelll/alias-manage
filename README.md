@@ -26,7 +26,7 @@ SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文
   ```
 - Node.js 18+：仅构建 GUI 前端时需要
 - Linux GUI 构建还需要 `webkit2gtk-4.1`、`libgtk-3-dev` 等 Tauri 原生依赖；仅构建 CLI 不需要
-- SQLite 由 `rusqlite` 的 `bundled` feature 提供（当前 3.54.1），不依赖系统 SQLite；低于 3.51.3 的内置 SQLite 存在 WAL reset 多连接损坏缺陷，不受支持
+- SQLite 由 `rusqlite` 的 `bundled` feature 提供（当前 3.54.1），不依赖系统 SQLite；SQLite 3.7.0–3.51.2（不含 3.44.6/3.50.7 backport）存在 WAL reset 多连接损坏缺陷；本项目要求/内置 >=3.51.3（当前 3.54.1）
 
 ## 构建 CLI
 
