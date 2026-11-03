@@ -346,3 +346,18 @@
 - [ ] 更新 `docs/tui.md`、README、architecture/limitations；记录未实现项。
 
 验收：B3 无 blocking/confirmed 问题；C3 四终端真实 PTY + CLI/TUI 数据同步验证，输出通过/失败/阻塞与改进建议。
+
+## 11. Round 2 执行顺序（已授权）
+
+按以下顺序逐项实施；每一项都走完整的 A3 → B3 → C3 循环，C3 无 FAIL 后进入下一项：
+
+1. **R2.1 导入/导出 + 设置编辑**（复用 `transfer` / `AppConfig`，低风险）
+2. **R2.2 loader 安装/移除**（复用 `integration`，解决“别名为什么不生效”）
+3. **R2.3 标签/排序增强 + 批量操作**
+4. **R2.4 retain/purge 卸载**（破坏性最强，最后单独确认）
+
+每一项的验收：
+- 复用 core，不在 TUI 复制业务规则；一个 SQLite 数据库；CLI 行为/退出码不变。
+- 慢操作后台线程 + mpsc；写操作一次一个，复用锁；revision 冲突不静默覆盖。
+- 正常/边界/错误/回归测试；B3 无 blocking/confirmed；C3 四终端真实 PTY 通过。
+- 敏感环境变量不泄露；不自动 reload/重启/改环境变量/注册表。
