@@ -553,3 +553,19 @@
 | 非交互卸载误删数据 | 默认 retain；purge 必须显式选择；日志/提示 |
 | 畸形 profile | 中止、备份、不写坏 |
 | 备份/目标文件被误删 | purge 白名单仅 DB/generated/journal；测试目标保护 |
+
+## 15. R2.0 里程碑验收与发布门禁（已确认）
+
+R2.0 是重要版本节点，必须严格走完整循环：
+
+1. A3 实现（可拆多个 commit）→ B3 只 review，循环到 `NO FINDINGS`。
+2. C3 四终端真实 PTY 测试（Windows PS5.1/pwsh7、Linux Bash/Zsh）+ TUI/CLI/GUI 数据一致性；循环修复到无 FAIL。
+3. 通过后：
+   - push 到 `origin/feature/alias-manager-mvp`；
+   - 用 `gh.exe` 监控 CI 到全绿；
+   - 触发 `prerelease.yml`，以 R2.0 最终 commit 的**完整 SHA** 作为 `source_ref`，`create_prerelease=true`，`confirmation=CREATE-PRERELEASE`；
+   - 确认 GitHub prerelease 与 artifacts（CLI/GUI/installer）真正创建，记录 tag/URL/SHA256；
+   - 若 security scan 等门禁失败，回到 A3/B3 修复后重跑，不得跳过。
+4. 发布完成后，按本文档继续 R2.1b → R2.2 → R2.3 → R2.4 → R2.5（最后优先级）。
+
+R2.0 的验收标准见 §13 与 [tui-r2.0-handoff.md](tui-r2.0-handoff.md)；版本号使用 `0.1.0-ci.YYYYMMDD-N` 形式，避免与旧 prerelease 混淆。
