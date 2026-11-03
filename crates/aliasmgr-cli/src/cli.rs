@@ -501,6 +501,12 @@ aliasmgr import aliases.toml --yes"
         /// Persist the accepted records.
         #[arg(long, help = "Persist accepted records instead of only previewing.")]
         yes: bool,
+        /// Do not sync after a confirmed import.
+        #[arg(
+            long,
+            help = "With --yes, save without syncing (overrides runtime.auto_sync). Preview never syncs."
+        )]
+        no_sync: bool,
     },
     #[command(
         about = "Export aliases to JSON or TOML",

@@ -67,8 +67,14 @@ drift:
   `plan_shell_setup` (read-only plan with loader target/status and next action),
   `preview_loader` (block and path without writing), and
   `apply_shell_setup` (persist intent/overrides, install via `integration`,
-  sync via `sync`). It reuses the existing loader marker, backup, lock,
-  journal and revision code instead of duplicating it.
+  sync via `sync`). Bash/Zsh loader defaults come from the user home
+  (`$HOME/.bashrc` / `.zshrc`), not the config root; the old config-root RC is
+  retained only as an uninstall candidate. Override paths are expanded from a
+  leading `~` and must be absolute. It reuses the existing loader marker,
+  backup, lock, journal and revision code instead of duplicating it.
+- The interactive doctor previews every shell that will be applied and applies
+  exactly that previewed set; a checked shell that still needs a path blocks
+  the confirmation instead of being written un-previewed.
 - The CLI `add`/`update` preflight uses the same helpers and refuses to save
   when a target shell is not enabled or its loader is not verifiable
   (`ShellNotReady`, exit 12), unless `--allow-missing-loader` is supplied.
@@ -78,9 +84,10 @@ drift:
 After a successful CLI alias write, `commands::sync_after_write` computes the
 affected shells (old ∪ new for `add`/`update`, bound shells for
 `remove`/`rename`/`enable`/`disable`) and calls `sync::sync_shells` once when
-`runtime.auto_sync` is true. A per-shell failure is reported as `PartialSync`
-(exit 10) after the database commit; the generated file and `shell_state`
-remain the source of truth for diagnostics.
+`runtime.auto_sync` is true. A confirmed import syncs all referenced shells once
+through `sync::sync_config_dir`. A per-shell or orchestration failure is
+reported as `PartialSync` (exit 10) after the database commit; the generated
+file and `shell_state` remain the source of truth for diagnostics.
 
 ## Data model and storage
 

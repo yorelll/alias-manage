@@ -25,7 +25,7 @@ use ratatui::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     io::IsTerminal,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::mpsc::{self, Receiver, TryRecvError},
     time::Duration,
 };
@@ -34,6 +34,12 @@ use std::{
 enum PathFocus {
     Executable,
     Profile,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PreviewEntry {
+    kind: ShellKind,
+    preview: LoaderPreview,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,8 +52,8 @@ enum Mode {
         focus: PathFocus,
     },
     Confirm {
-        preview: LoaderPreview,
-        apply_kinds: Vec<ShellKind>,
+        previews: Vec<PreviewEntry>,
+        scroll: u16,
     },
     NeedsPathChoice {
         kind: ShellKind,
@@ -229,12 +235,17 @@ impl SetupApp {
             return;
         };
         let kind = row.kind.clone();
-        let executable = self
-            .current_plan()
-            .and_then(|plan| plan.executable.clone())
-            .filter(|path| path.is_file())
-            .map(|path| path.display().to_string())
-            .unwrap_or_default();
+        let is_wsl = row.wsl;
+        let executable = if is_wsl {
+            // Never offer the WSL launcher as the integration executable.
+            String::new()
+        } else {
+            self.current_plan()
+                .and_then(|plan| plan.executable.clone())
+                .filter(|path| path.is_file())
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        };
         let profile = shell_setup::default_profile_path(&self.config, &self.paths, &kind)
             .map(|path| path.display().to_string())
             .unwrap_or_default();
@@ -244,37 +255,105 @@ impl SetupApp {
             profile,
             focus: PathFocus::Executable,
         };
-        self.status = "Enter an executable path, then a profile/RC path. Esc cancels.".into();
+        self.status = if is_wsl {
+            "WSL launcher detected. Enter a native Windows executable (for example Git Bash) and an absolute profile/RC path, or Esc and run doctor inside the distribution.".into()
+        } else {
+            "Enter an absolute executable path, then a profile/RC path. Leading ~/ expands. Esc cancels.".into()
+        };
         self.dirty = true;
     }
 
     fn confirm_ready_row(&mut self) {
-        let Some(plan) = self.current_plan().cloned() else {
-            return;
-        };
-        let kind = plan.kind.clone();
-        let preview =
-            match shell_setup::preview_loader(&self.config, &self.paths, &kind, None, None) {
+        let kinds = self.apply_kinds();
+        self.build_confirm(kinds);
+    }
+
+    /// Builds a preview for every shell that will be applied. Nothing is
+    /// written until the user confirms this exact set; a shell that cannot be
+    /// previewed blocks the action instead of being silently applied.
+    fn build_confirm(&mut self, kinds: Vec<ShellKind>) {
+        let mut previews = Vec::new();
+        let mut seen = Vec::new();
+        for kind in kinds {
+            if seen.contains(&kind) {
+                continue;
+            }
+            seen.push(kind.clone());
+            let Some(plan) = self.plan_for(&kind) else {
+                self.status = format!("{}: no setup plan", kind.label());
+                self.mode = Mode::List;
+                self.dirty = true;
+                return;
+            };
+            match plan.action {
+                SetupAction::WslManual if !self.pending_overrides.contains_key(&kind) => {
+                    self.status = format!(
+                        "{} is the WSL launcher; press Enter to enter a native Windows executable, or run doctor inside WSL.",
+                        kind.label()
+                    );
+                    self.mode = Mode::List;
+                    self.dirty = true;
+                    return;
+                }
+                SetupAction::NeedsPath if !self.pending_overrides.contains_key(&kind) => {
+                    self.status = format!(
+                        "{} still needs an executable and profile path; press Enter on it first.",
+                        kind.label()
+                    );
+                    self.mode = Mode::List;
+                    self.dirty = true;
+                    return;
+                }
+                SetupAction::WslManual
+                | SetupAction::NeedsPath
+                | SetupAction::Enable
+                | SetupAction::InstallLoader => {}
+            }
+            let (executable, profile) = self
+                .pending_overrides
+                .get(&kind)
+                .cloned()
+                .unwrap_or((None, None));
+            let preview = match shell_setup::preview_loader(
+                &self.config,
+                &self.paths,
+                &kind,
+                executable.as_deref(),
+                profile.as_deref(),
+            ) {
                 Ok(Some(preview)) => preview,
                 Ok(None) => {
                     self.status = format!(
-                        "{} has no profile path on this platform; enter a path first.",
+                        "{} has no usable profile target; enter a path first.",
                         kind.label()
                     );
+                    self.mode = Mode::List;
                     self.dirty = true;
                     return;
                 }
                 Err(error) => {
                     self.status = format!("{}: {error}", kind.label());
+                    self.mode = Mode::List;
                     self.dirty = true;
                     return;
                 }
             };
+            previews.push(PreviewEntry {
+                kind: kind.clone(),
+                preview,
+            });
+        }
+        if previews.is_empty() {
+            self.status = "Select at least one shell first.".into();
+            self.mode = Mode::List;
+            self.dirty = true;
+            return;
+        }
         self.mode = Mode::Confirm {
-            preview,
-            apply_kinds: self.apply_kinds(),
+            previews,
+            scroll: 0,
         };
-        self.status = "Review the target and block. y applies, n cancels.".into();
+        self.status = "Review every target and block. y applies exactly these, n cancels.".into();
         self.dirty = true;
     }
 
@@ -288,14 +367,35 @@ impl SetupApp {
         else {
             return;
         };
-        let executable_path = PathBuf::from(executable.trim());
+        let executable_path = aliasmgr_core::config::expand_home_path(Path::new(executable.trim()));
+        if !executable_path.is_absolute() {
+            self.status = format!(
+                "Executable path must be absolute; use ~/... to expand the home directory (got {}).",
+                executable_path.display()
+            );
+            self.dirty = true;
+            return;
+        }
         if !executable_path.is_file() {
             self.status = format!("Executable not found: {}", executable_path.display());
             self.dirty = true;
             return;
         }
         let profile_path = profile.trim();
-        let profile_override = (!profile_path.is_empty()).then(|| PathBuf::from(profile_path));
+        let profile_override = if profile_path.is_empty() {
+            None
+        } else {
+            let path = aliasmgr_core::config::expand_home_path(Path::new(profile_path));
+            if !path.is_absolute() {
+                self.status = format!(
+                    "Profile/RC path must be absolute; use ~/... to expand the home directory (got {}).",
+                    path.display()
+                );
+                self.dirty = true;
+                return;
+            }
+            Some(path)
+        };
         let plan = match shell_setup::plan_shell_setup(
             &self.config,
             &self.paths,
@@ -315,66 +415,22 @@ impl SetupApp {
             self.dirty = true;
             return;
         }
-        let preview = match shell_setup::preview_loader(
-            &self.config,
-            &self.paths,
-            &kind,
-            Some(&executable_path),
-            profile_override.as_deref(),
-        ) {
-            Ok(Some(preview)) => preview,
-            Ok(None) => {
-                self.status = format!("{} has no usable profile target.", kind.label());
-                self.dirty = true;
-                return;
-            }
-            Err(error) => {
-                self.status = format!("{}: {error}", kind.label());
-                self.dirty = true;
-                return;
-            }
-        };
         self.pending_overrides
             .insert(kind.clone(), (Some(executable_path), profile_override));
         self.checked.insert(kind);
-        self.mode = Mode::Confirm {
-            preview,
-            apply_kinds: self.apply_kinds(),
-        };
-        self.status = "Review the target and block. y applies, n cancels.".into();
-        self.dirty = true;
+        let kinds = self.apply_kinds();
+        self.build_confirm(kinds);
     }
 
     fn apply_confirmed(&mut self) {
-        let Mode::Confirm { apply_kinds, .. } = self.mode.clone() else {
+        let Mode::Confirm { previews, .. } = self.mode.clone() else {
             return;
         };
         let mut summary = Vec::new();
-        for kind in apply_kinds {
-            let action = self.plan_for(&kind).map(|plan| plan.action);
-            let has_override = self.pending_overrides.contains_key(&kind);
-            match action {
-                Some(SetupAction::WslManual) => {
-                    summary.push(format!(
-                        "{}: WSL launcher; run doctor inside the WSL distribution",
-                        kind.label()
-                    ));
-                    continue;
-                }
-                // The plan is read-only and does not include the paths just
-                // typed in the prompt, so an override satisfies NeedsPath here.
-                Some(SetupAction::NeedsPath) if !has_override => {
-                    summary.push(format!("{}: a path is still required", kind.label()));
-                    continue;
-                }
-                None => {
-                    summary.push(format!("{}: no setup plan", kind.label()));
-                    continue;
-                }
-                Some(SetupAction::Enable)
-                | Some(SetupAction::InstallLoader)
-                | Some(SetupAction::NeedsPath) => {}
-            }
+        // Apply exactly the previewed set: build_confirm refuses to produce a
+        // confirmation screen that omits any shell about to be written.
+        for entry in previews {
+            let kind = entry.kind;
             let (executable, profile) = self
                 .pending_overrides
                 .get(&kind)
@@ -459,7 +515,8 @@ impl SetupApp {
                         let wsl = row.wsl;
                         if wsl {
                             self.status =
-                                "WSL bash must be integrated inside the distribution.".into();
+                                "WSL launcher: press Enter to enter a native Windows executable, or run doctor inside the distribution."
+                                    .into();
                         } else if !self.checked.remove(&kind) {
                             self.checked.insert(kind);
                         }
@@ -484,9 +541,7 @@ impl SetupApp {
                                 }
                             }
                             SetupAction::WslManual => {
-                                self.status =
-                                    "WSL bash: run doctor inside the WSL distribution.".into();
-                                self.dirty = true;
+                                self.begin_path_input();
                             }
                             SetupAction::Enable | SetupAction::InstallLoader => {
                                 self.confirm_ready_row()
@@ -592,7 +647,27 @@ impl SetupApp {
                 }
                 _ => {}
             },
-            Mode::Confirm { .. } => match key.code {
+            Mode::Confirm { mut scroll, .. } => match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    scroll = scroll.saturating_sub(1);
+                    if let Mode::Confirm {
+                        scroll: current, ..
+                    } = &mut self.mode
+                    {
+                        *current = scroll;
+                    }
+                    self.dirty = true;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    scroll = scroll.saturating_add(1);
+                    if let Mode::Confirm {
+                        scroll: current, ..
+                    } = &mut self.mode
+                    {
+                        *current = scroll;
+                    }
+                    self.dirty = true;
+                }
                 KeyCode::Char('y' | 'Y') => self.apply_confirmed(),
                 KeyCode::Char('n' | 'N') | KeyCode::Esc => {
                     self.mode = Mode::List;
@@ -613,19 +688,29 @@ impl SetupApp {
 }
 
 fn render(frame: &mut Frame, app: &SetupApp) {
-    let panel_height = match app.mode {
-        Mode::List => 3,
-        _ => 14,
+    let list_mode = matches!(app.mode, Mode::List);
+    let chunks = if list_mode {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(6),
+                Constraint::Length(3),
+                Constraint::Length(4),
+            ])
+            .split(frame.area())
+    } else {
+        // Give previews/path prompts the full body so every applied target and
+        // block is reachable (the confirm screen scrolls).
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(6),
+                Constraint::Length(4),
+            ])
+            .split(frame.area())
     };
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(6),
-            Constraint::Length(panel_height),
-            Constraint::Length(4),
-        ])
-        .split(frame.area());
 
     let title = if app.detecting {
         "Alias Manager — Shell integration (detecting...)"
@@ -637,62 +722,70 @@ fn render(frame: &mut Frame, app: &SetupApp) {
         chunks[0],
     );
 
-    let items = app
-        .rows
-        .iter()
-        .enumerate()
-        .map(|(index, row)| {
-            let checked = app.checked.contains(&row.kind);
-            let marker = if row.wsl {
-                "-"
-            } else if checked {
-                "x"
-            } else {
-                " "
-            };
-            let plan = app.plans.get(index).and_then(|plan| plan.as_ref());
-            let loader = plan
-                .map(|plan| plan.loader_status.as_str())
-                .unwrap_or("...");
-            let detail = if row.wsl {
-                "WSL launcher (integrate inside the distribution)".to_string()
-            } else if row.detected {
-                format!(
-                    "{} [{}]{}",
-                    row.executable
-                        .as_ref()
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "<unknown>".into()),
-                    loader,
-                    row.version
-                        .as_ref()
-                        .map(|version| format!(" v{version}"))
-                        .unwrap_or_default()
-                )
-            } else {
-                format!("not found [{loader}]")
-            };
-            ListItem::new(Line::from(format!(
-                "[{marker}] {:<16} {detail}",
-                row.kind.label()
-            )))
-        })
-        .collect::<Vec<_>>();
-    let list = List::new(items)
-        .block(Block::default().borders(Borders::ALL).title("Shells"))
-        .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
-    let mut state = ListState::default();
-    if !app.rows.is_empty() {
-        state.select(Some(app.selected.min(app.rows.len() - 1)));
+    if list_mode {
+        let items = app
+            .rows
+            .iter()
+            .enumerate()
+            .map(|(index, row)| {
+                let checked = app.checked.contains(&row.kind);
+                let marker = if row.wsl {
+                    "-"
+                } else if checked {
+                    "x"
+                } else {
+                    " "
+                };
+                let plan = app.plans.get(index).and_then(|plan| plan.as_ref());
+                let loader = plan
+                    .map(|plan| plan.loader_status.as_str())
+                    .unwrap_or("...");
+                let detail = if row.wsl {
+                    "WSL launcher (Enter: enter a native Windows path)".to_string()
+                } else if row.detected {
+                    format!(
+                        "{} [{}]{}",
+                        row.executable
+                            .as_ref()
+                            .map(|path| path.display().to_string())
+                            .unwrap_or_else(|| "<unknown>".into()),
+                        loader,
+                        row.version
+                            .as_ref()
+                            .map(|version| format!(" v{version}"))
+                            .unwrap_or_default()
+                    )
+                } else {
+                    format!("not found [{loader}]")
+                };
+                ListItem::new(Line::from(format!(
+                    "[{marker}] {:<16} {detail}",
+                    row.kind.label()
+                )))
+            })
+            .collect::<Vec<_>>();
+        let list = List::new(items)
+            .block(Block::default().borders(Borders::ALL).title("Shells"))
+            .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+        let mut state = ListState::default();
+        if !app.rows.is_empty() {
+            state.select(Some(app.selected.min(app.rows.len() - 1)));
+        }
+        frame.render_stateful_widget(list, chunks[1], &mut state);
+        frame.render_widget(
+            Paragraph::new(
+                "↑/↓ or j/k move   Space enable   Enter preview/apply   r rescan   q quit",
+            )
+            .block(Block::default().borders(Borders::ALL).title("Keys"))
+            .wrap(Wrap { trim: true }),
+            chunks[2],
+        );
+        frame.render_widget(status_widget(app), chunks[3]);
+        return;
     }
-    frame.render_stateful_widget(list, chunks[1], &mut state);
 
     let panel = match &app.mode {
-        Mode::List => Paragraph::new(
-            "↑/↓ or j/k move   Space enable   Enter preview/apply   r rescan   q quit",
-        )
-        .block(Block::default().borders(Borders::ALL).title("Keys"))
-        .wrap(Wrap { trim: true }),
+        Mode::List => Paragraph::new(""),
         Mode::PathInput {
             kind,
             executable,
@@ -701,10 +794,11 @@ fn render(frame: &mut Frame, app: &SetupApp) {
         } => {
             let marker = |is_focus: bool| if is_focus { ">" } else { " " };
             Paragraph::new(format!(
-                "{} is not ready. Enter executable and profile/RC paths.\n\
+                "{} is not ready. Enter an absolute executable and profile/RC path.\n\
                  {} Executable: {}\n\
                  {} Profile/RC: {}\n\n\
-                 Tab switches fields, Enter accepts, Esc cancels.",
+                 Leading ~/ (or ~\\) expands to the home directory. Tab switches fields, \
+                 Enter accepts, Esc cancels.",
                 kind.label(),
                 marker(*focus == PathFocus::Executable),
                 executable,
@@ -724,30 +818,39 @@ fn render(frame: &mut Frame, app: &SetupApp) {
         ))
         .block(Block::default().borders(Borders::ALL).title("Options"))
         .wrap(Wrap { trim: false }),
-        Mode::Confirm { preview, .. } => Paragraph::new(format!(
-            "Target: {}\n\n{}\n\ny = apply, n = cancel",
-            preview.target.display(),
-            preview.block.trim_end()
-        ))
-        .block(Block::default().borders(Borders::ALL).title("Preview"))
-        .wrap(Wrap { trim: false }),
+        Mode::Confirm { previews, scroll } => {
+            let mut text = String::new();
+            for entry in previews {
+                text.push_str(&format!(
+                    "{} — {}\n{}\n\n",
+                    entry.kind.label(),
+                    entry.preview.target.display(),
+                    entry.preview.block.trim_end()
+                ));
+            }
+            text.push_str("↑/↓ scroll   y = apply this exact set   n = cancel");
+            Paragraph::new(text)
+                .block(Block::default().borders(Borders::ALL).title("Preview"))
+                .wrap(Wrap { trim: false })
+                .scroll((*scroll, 0))
+        }
         Mode::Result => Paragraph::new(app.status.clone())
             .block(Block::default().borders(Borders::ALL).title("Result"))
             .wrap(Wrap { trim: false }),
     };
-    frame.render_widget(panel, chunks[2]);
+    frame.render_widget(panel, chunks[1]);
+    frame.render_widget(status_widget(app), chunks[2]);
+}
 
+fn status_widget(app: &SetupApp) -> Paragraph<'_> {
     let status = if app.mode == Mode::Result {
         "Press any key to rescan, q to quit.".to_string()
     } else {
         app.status.clone()
     };
-    frame.render_widget(
-        Paragraph::new(status)
-            .block(Block::default().borders(Borders::ALL).title("Status"))
-            .wrap(Wrap { trim: true }),
-        chunks[3],
-    );
+    Paragraph::new(status)
+        .block(Block::default().borders(Borders::ALL).title("Status"))
+        .wrap(Wrap { trim: true })
 }
 
 fn event_loop(
@@ -883,12 +986,15 @@ mod tests {
             checked: [ShellKind::Bash].into_iter().collect(),
             selected: 0,
             mode: Mode::Confirm {
-                preview: LoaderPreview {
-                    target: profile.clone(),
-                    powershell: false,
-                    block: String::new(),
-                },
-                apply_kinds: vec![ShellKind::Bash],
+                previews: vec![PreviewEntry {
+                    kind: ShellKind::Bash,
+                    preview: LoaderPreview {
+                        target: profile.clone(),
+                        powershell: false,
+                        block: String::new(),
+                    },
+                }],
+                scroll: 0,
             },
             detecting: false,
             receiver: None,
@@ -909,5 +1015,237 @@ mod tests {
             .unwrap()
             .contains(aliasmgr_core::shells::common::START_MARKER));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn confirm_previews_exactly_the_checked_set_not_only_the_cursor_row() {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-shell-setup-ui-set-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        let ps5_profile = root.join("ps5-profile.ps1");
+        let ps7_profile = root.join("ps7-profile.ps1");
+        let bash_profile = root.join("bashrc");
+        let ps5_exe = root.join(if cfg!(windows) {
+            "powershell.exe"
+        } else {
+            "powershell"
+        });
+        let ps7_exe = root.join(if cfg!(windows) { "pwsh.exe" } else { "pwsh" });
+        std::fs::write(&ps5_exe, b"").unwrap();
+        std::fs::write(&ps7_exe, b"").unwrap();
+        let mut config = aliasmgr_core::config::AppConfig::default();
+        config.shells.powershell5_profile_path = Some(ps5_profile.clone());
+        config.shells.powershell7_profile_path = Some(ps7_profile.clone());
+        config.shells.bash_rc_path = Some(bash_profile.clone());
+        config
+            .shells
+            .executables
+            .insert("powershell5".into(), ps5_exe.clone());
+        config
+            .shells
+            .executables
+            .insert("powershell7".into(), ps7_exe.clone());
+        config.save(&paths).unwrap();
+
+        let make_plan = |kind: ShellKind, executable: PathBuf, profile: PathBuf| ShellSetupPlan {
+            kind,
+            detected: true,
+            executable: Some(executable),
+            source: detection::ShellDetectionSource::Manual,
+            wsl: false,
+            enabled: false,
+            loader_target: Some(profile),
+            loader_status: shell_setup::LoaderStatus::Missing,
+            action: SetupAction::InstallLoader,
+        };
+        let rows = vec![
+            ShellInstallation {
+                kind: ShellKind::PowerShell5,
+                executable: Some(ps5_exe.clone()),
+                detected: true,
+                source: detection::ShellDetectionSource::Manual,
+                version: None,
+                wsl: false,
+            },
+            ShellInstallation {
+                kind: ShellKind::PowerShell7,
+                executable: Some(ps7_exe.clone()),
+                detected: true,
+                source: detection::ShellDetectionSource::Manual,
+                version: None,
+                wsl: false,
+            },
+            ShellInstallation {
+                kind: ShellKind::Bash,
+                executable: None,
+                detected: false,
+                source: detection::ShellDetectionSource::NotFound,
+                version: None,
+                wsl: false,
+            },
+        ];
+        let plans = vec![
+            Some(make_plan(
+                ShellKind::PowerShell5,
+                ps5_exe,
+                ps5_profile.clone(),
+            )),
+            Some(make_plan(
+                ShellKind::PowerShell7,
+                ps7_exe,
+                ps7_profile.clone(),
+            )),
+            Some(make_plan(
+                ShellKind::Bash,
+                root.join("missing-bash"),
+                bash_profile.clone(),
+            )),
+        ];
+        let mut app = SetupApp {
+            paths,
+            config,
+            rows,
+            plans,
+            checked: [ShellKind::PowerShell5, ShellKind::PowerShell7]
+                .into_iter()
+                .collect(),
+            // Cursor is on the unchecked Bash row; Enter must still preview and
+            // apply only the checked PowerShell shells.
+            selected: 2,
+            mode: Mode::List,
+            detecting: false,
+            receiver: None,
+            pending_overrides: BTreeMap::new(),
+            status: String::new(),
+            summary: Vec::new(),
+            quit: false,
+            dirty: false,
+        };
+        app.confirm_ready_row();
+        let preview_kinds = match &app.mode {
+            Mode::Confirm { previews, .. } => previews
+                .iter()
+                .map(|entry| entry.kind.clone())
+                .collect::<Vec<_>>(),
+            other => panic!("expected confirm, got {other:?}"),
+        };
+        assert_eq!(
+            preview_kinds,
+            vec![ShellKind::PowerShell5, ShellKind::PowerShell7]
+        );
+        app.apply_confirmed();
+        let summary = app.summary.join("\n");
+        assert!(summary.contains("PowerShell 5.1: enabled"), "{summary}");
+        assert!(summary.contains("PowerShell 7: enabled"), "{summary}");
+        assert!(!summary.contains("Bash: enabled"), "{summary}");
+        let config = app.paths.load_config().unwrap();
+        assert_eq!(config.shells.enabled, vec!["powershell5", "powershell7"]);
+        assert!(ps5_profile.exists());
+        assert!(ps7_profile.exists());
+        assert!(!bash_profile.exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn wsl_row_enter_opens_manual_path_input_without_prefilling_the_launcher() {
+        let plan = ShellSetupPlan {
+            kind: ShellKind::Bash,
+            detected: true,
+            executable: Some(PathBuf::from(r"C:\Windows\System32\bash.exe")),
+            source: detection::ShellDetectionSource::Wsl,
+            wsl: true,
+            enabled: false,
+            loader_target: None,
+            loader_status: shell_setup::LoaderStatus::Unavailable,
+            action: SetupAction::WslManual,
+        };
+        let mut app = SetupApp {
+            paths: AppPaths {
+                root: PathBuf::from("config"),
+            },
+            config: aliasmgr_core::config::AppConfig::default(),
+            rows: vec![ShellInstallation {
+                kind: ShellKind::Bash,
+                executable: Some(PathBuf::from(r"C:\Windows\System32\bash.exe")),
+                detected: true,
+                source: detection::ShellDetectionSource::Wsl,
+                version: None,
+                wsl: true,
+            }],
+            plans: vec![Some(plan)],
+            checked: BTreeSet::new(),
+            selected: 0,
+            mode: Mode::List,
+            detecting: false,
+            receiver: None,
+            pending_overrides: BTreeMap::new(),
+            status: String::new(),
+            summary: Vec::new(),
+            quit: false,
+            dirty: false,
+        };
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        match app.mode {
+            Mode::PathInput {
+                executable, kind, ..
+            } => {
+                assert_eq!(kind, ShellKind::Bash);
+                assert!(
+                    executable.is_empty(),
+                    "the WSL launcher must not be prefilled as the executable"
+                );
+            }
+            other => panic!("expected path input, got {other:?}"),
+        }
+        assert!(app.status.contains("WSL launcher"), "{}", app.status);
+    }
+
+    #[test]
+    fn confirm_refuses_a_checked_shell_that_still_needs_a_path() {
+        let mut app = SetupApp {
+            paths: AppPaths {
+                root: PathBuf::from("config"),
+            },
+            config: aliasmgr_core::config::AppConfig::default(),
+            rows: vec![ShellInstallation {
+                kind: ShellKind::Bash,
+                executable: None,
+                detected: false,
+                source: detection::ShellDetectionSource::NotFound,
+                version: None,
+                wsl: false,
+            }],
+            plans: vec![Some(ShellSetupPlan {
+                kind: ShellKind::Bash,
+                detected: false,
+                executable: None,
+                source: detection::ShellDetectionSource::NotFound,
+                wsl: false,
+                enabled: false,
+                loader_target: None,
+                loader_status: shell_setup::LoaderStatus::Unavailable,
+                action: SetupAction::NeedsPath,
+            })],
+            checked: [ShellKind::Bash].into_iter().collect(),
+            selected: 0,
+            mode: Mode::List,
+            detecting: false,
+            receiver: None,
+            pending_overrides: BTreeMap::new(),
+            status: String::new(),
+            summary: Vec::new(),
+            quit: false,
+            dirty: false,
+        };
+        app.confirm_ready_row();
+        assert!(matches!(app.mode, Mode::List));
+        assert!(app.status.contains("needs an executable"), "{}", app.status);
     }
 }

@@ -443,25 +443,53 @@ fn detect_one(
         );
     }
 
+    // A WSL launcher earlier on PATH must not hide a native Git Bash/MSYS2
+    // installation found in a known directory. Keep it as a fallback and keep
+    // scanning for a non-WSL candidate.
+    let mut wsl_fallback: Option<PathBuf> = None;
     if let Some(executable) = command_path_in(environment.path.as_ref(), executable_name(&kind)) {
-        let wsl = is_wsl_bash(&executable, environment);
-        let source = if wsl {
-            ShellDetectionSource::Wsl
+        if is_wsl_bash(&executable, environment) {
+            wsl_fallback = Some(executable);
         } else {
-            ShellDetectionSource::Path
-        };
-        return installation(kind, Some(executable), true, source, wsl, timeout);
+            return installation(
+                kind,
+                Some(executable),
+                true,
+                ShellDetectionSource::Path,
+                false,
+                timeout,
+            );
+        }
     }
 
     for (executable, wsl) in known_candidates(&kind, environment) {
         if executable.is_file() {
-            let source = if wsl {
-                ShellDetectionSource::Wsl
-            } else {
-                ShellDetectionSource::KnownPath
-            };
-            return installation(kind, Some(executable), true, source, wsl, timeout);
+            if wsl {
+                if wsl_fallback.is_none() {
+                    wsl_fallback = Some(executable);
+                }
+                continue;
+            }
+            return installation(
+                kind,
+                Some(executable),
+                true,
+                ShellDetectionSource::KnownPath,
+                false,
+                timeout,
+            );
         }
+    }
+
+    if let Some(executable) = wsl_fallback {
+        return installation(
+            kind,
+            Some(executable),
+            true,
+            ShellDetectionSource::Wsl,
+            true,
+            timeout,
+        );
     }
 
     installation(
@@ -626,7 +654,12 @@ fn normalize_for_comparison(path: &Path) -> String {
 }
 
 fn is_wsl_bash(path: &Path, environment: &DetectionEnvironment) -> bool {
-    if !cfg!(windows) || path.file_name().and_then(|name| name.to_str()) != Some("bash.exe") {
+    if !cfg!(windows)
+        || !path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case("bash.exe"))
+    {
         return false;
     }
     let system_root = environment
@@ -677,6 +710,15 @@ pub(crate) fn probe_version(
         command.creation_flags(0x0800_0000);
     }
     let mut child = command.spawn().ok()?;
+    // Reading is done on a worker thread so a grandchild that inherited the
+    // stdout pipe cannot block the deadline after the direct child exits.
+    let stdout = child.stdout.take()?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut output = String::new();
+        let result = std::io::BufReader::new(stdout).read_to_string(&mut output);
+        let _ = sender.send(result.map(|_| output));
+    });
     let deadline = Instant::now() + timeout;
     loop {
         match child.try_wait() {
@@ -696,11 +738,11 @@ pub(crate) fn probe_version(
             }
         }
     }
-    let stdout = child.stdout.take()?;
-    let mut output = String::new();
-    std::io::BufReader::new(stdout)
-        .read_to_string(&mut output)
-        .ok()?;
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    let output = match receiver.recv_timeout(remaining.max(Duration::from_millis(50))) {
+        Ok(Ok(output)) => output,
+        _ => return None,
+    };
     let value = output.lines().next().unwrap_or_default().trim().to_string();
     (!value.is_empty()).then_some(value)
 }
@@ -1096,6 +1138,164 @@ mod tests {
         let bash = rows.iter().find(|row| row.kind == ShellKind::Bash).unwrap();
         assert!(bash.detected);
         assert_eq!(bash.version, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_known_git_bash_and_msys_cygwin_zsh_are_detected() {
+        let root = temp_detection_root("known-shells");
+        let program_files = root.join("Program Files");
+        let system_drive = root.join("C");
+        let git_bash = program_files.join("Git/bin/bash.exe");
+        write_fake_executable(&git_bash, "");
+        let environment = DetectionEnvironment {
+            path: None,
+            system_root: Some(root.join("Windows")),
+            program_files: Some(program_files),
+            program_files_x86: Some(root.join("Program Files (x86)")),
+            local_app_data: Some(root.join("LocalAppData")),
+            system_drive: Some(system_drive.clone()),
+        };
+        let rows = detect_shells_in(
+            &AppConfig::default(),
+            &environment,
+            Duration::from_millis(50),
+        );
+        let bash = rows.iter().find(|row| row.kind == ShellKind::Bash).unwrap();
+        assert!(bash.detected);
+        assert_eq!(bash.source, ShellDetectionSource::KnownPath);
+        assert_eq!(bash.executable.as_deref(), Some(git_bash.as_path()));
+        assert!(!bash.wsl);
+
+        let msys_zsh = system_drive.join("msys64/usr/bin/zsh.exe");
+        write_fake_executable(&msys_zsh, "");
+        let rows = detect_shells_in(
+            &AppConfig::default(),
+            &environment,
+            Duration::from_millis(50),
+        );
+        let zsh = rows.iter().find(|row| row.kind == ShellKind::Zsh).unwrap();
+        assert!(zsh.detected);
+        assert_eq!(zsh.source, ShellDetectionSource::KnownPath);
+        assert_eq!(zsh.executable.as_deref(), Some(msys_zsh.as_path()));
+
+        fs::remove_file(&msys_zsh).unwrap();
+        let cygwin_zsh = system_drive.join("cygwin64/bin/zsh.exe");
+        write_fake_executable(&cygwin_zsh, "");
+        let rows = detect_shells_in(
+            &AppConfig::default(),
+            &environment,
+            Duration::from_millis(50),
+        );
+        let zsh = rows.iter().find(|row| row.kind == ShellKind::Zsh).unwrap();
+        assert_eq!(zsh.executable.as_deref(), Some(cygwin_zsh.as_path()));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wsl_on_path_does_not_shadow_a_known_native_git_bash() {
+        let root = temp_detection_root("wsl-shadow");
+        let system_root = root.join("Windows");
+        let system32 = system_root.join("System32");
+        let wsl = system32.join("bash.exe");
+        write_fake_executable(&wsl, "");
+        let program_files = root.join("Program Files");
+        let git_bash = program_files.join("Git/bin/bash.exe");
+        write_fake_executable(&git_bash, "");
+        let mut environment = DetectionEnvironment {
+            path: Some(system32.into_os_string()),
+            system_root: Some(system_root),
+            program_files: Some(program_files),
+            program_files_x86: Some(root.join("Program Files (x86)")),
+            local_app_data: Some(root.join("LocalAppData")),
+            system_drive: Some(root.join("C")),
+        };
+        let rows = detect_shells_in(
+            &AppConfig::default(),
+            &environment,
+            Duration::from_millis(50),
+        );
+        let bash = rows.iter().find(|row| row.kind == ShellKind::Bash).unwrap();
+        assert!(!bash.wsl);
+        assert_eq!(bash.source, ShellDetectionSource::KnownPath);
+        assert_eq!(bash.executable.as_deref(), Some(git_bash.as_path()));
+
+        fs::remove_file(&git_bash).unwrap();
+        environment.path = Some(root.join("Windows/System32").into_os_string());
+        let rows = detect_shells_in(
+            &AppConfig::default(),
+            &environment,
+            Duration::from_millis(50),
+        );
+        let bash = rows.iter().find(|row| row.kind == ShellKind::Bash).unwrap();
+        assert!(bash.wsl);
+        assert_eq!(bash.source, ShellDetectionSource::Wsl);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn wsl_launcher_name_comparison_is_case_insensitive() {
+        let root = temp_detection_root("wsl-case");
+        let system_root = root.join("Windows");
+        let upper = system_root.join("System32/BASH.EXE");
+        write_fake_executable(&upper, "");
+        let environment = DetectionEnvironment {
+            path: Some(system_root.join("System32").into_os_string()),
+            system_root: Some(system_root),
+            program_files: Some(root.join("Program Files")),
+            program_files_x86: Some(root.join("Program Files (x86)")),
+            local_app_data: Some(root.join("LocalAppData")),
+            system_drive: Some(root.join("C")),
+        };
+        let rows = detect_shells_in(
+            &AppConfig::default(),
+            &environment,
+            Duration::from_millis(50),
+        );
+        let bash = rows.iter().find(|row| row.kind == ShellKind::Bash).unwrap();
+        assert!(bash.wsl, "BASH.EXE must be recognized as the WSL launcher");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn version_probe_timeout_covers_a_grandchild_holding_stdout() {
+        let root = temp_detection_root("probe-grandchild-unix");
+        let wrapper = root.join("wrapper-sh");
+        write_fake_executable(&wrapper, "#!/bin/sh\nsleep 2 &\nexit 0\n");
+        let started = Instant::now();
+        assert_eq!(
+            probe_version(&wrapper, &ShellKind::Bash, Duration::from_millis(200)),
+            None
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "probe must not wait for the grandchild's pipe to close"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_version_probe_timeout_covers_a_grandchild_holding_stdout() {
+        let root = temp_detection_root("probe-grandchild-win");
+        let wrapper = root.join("wrapper.cmd");
+        write_fake_executable(
+            &wrapper,
+            "@echo off\r\nstart /b ping -n 3 127.0.0.1\r\nexit /b 0\r\n",
+        );
+        let started = Instant::now();
+        assert_eq!(
+            probe_version(&wrapper, &ShellKind::Bash, Duration::from_millis(200)),
+            None
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "probe must not wait for the grandchild's pipe to close"
+        );
         let _ = fs::remove_dir_all(root);
     }
 

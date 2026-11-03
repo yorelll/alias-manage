@@ -3,8 +3,9 @@ use aliasmgr_cli::commands;
 use aliasmgr_cli::exit_code;
 use aliasmgr_core::config::{AppConfig, AppPaths};
 use aliasmgr_core::error::AliasError;
-use aliasmgr_core::model::ShellKind;
+use aliasmgr_core::model::{AliasRecord, ShellKind};
 use aliasmgr_core::shell_setup;
+use aliasmgr_core::transfer::export_json;
 use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -496,6 +497,160 @@ fn parse_shell_selection_is_strict_about_supported_spellings() {
     assert!(commands::parse_shell_selection("fish").is_err());
     assert!(commands::parse_shell_selection("power_shell5").is_err());
     assert!(commands::parse_shell_selection("  ").unwrap().is_empty());
+}
+
+#[test]
+fn update_auto_syncs_the_union_of_old_and_new_shells() {
+    let root = temp_root("update-union");
+    let paths = AppPaths { root: root.clone() };
+    let mut config = AppConfig::default();
+    config.shells.enabled = vec!["bash".into(), "zsh".into()];
+    config.shells.bash_rc_path = Some(root.join("bashrc"));
+    config.shells.zsh_rc_path = Some(root.join("zshrc"));
+    config.save(&paths).unwrap();
+    aliasmgr_core::integration::install_loader(&paths, "bash").unwrap();
+    aliasmgr_core::integration::install_loader(&paths, "zsh").unwrap();
+    let config_dir = root.to_string_lossy().to_string();
+
+    commands::add(Some(&config_dir), &add_args("gs", "bash")).unwrap();
+    assert!(std::fs::read_to_string(generated(&root))
+        .unwrap()
+        .contains("gs() { command 'git' 'status'"));
+
+    let mut change = update_args("gs");
+    change.shell = Some(vec!["zsh".into()]);
+    commands::update(Some(&config_dir), &change).unwrap();
+
+    let bash = std::fs::read_to_string(generated(&root)).unwrap();
+    assert!(
+        !bash.contains("gs() { command 'git' 'status'"),
+        "old shell must be cleaned: {bash}"
+    );
+    let zsh = std::fs::read_to_string(root.join("generated/zsh.sh")).unwrap();
+    assert!(zsh.contains("gs() { command 'git' 'status'"), "{zsh}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn no_sync_keeps_generated_files_unchanged_for_remove_rename_enable_disable() {
+    let root = temp_root("no-sync-lifecycle");
+    configure_bash(&root);
+    let config_dir = root.to_string_lossy().to_string();
+    commands::add(Some(&config_dir), &add_args("gs", "bash")).unwrap();
+    let baseline = std::fs::read_to_string(generated(&root)).unwrap();
+    assert!(baseline.contains("gs() { command 'git' 'status'"));
+
+    commands::enable_with_sync(Some(&config_dir), "gs", false, true).unwrap();
+    assert_eq!(std::fs::read_to_string(generated(&root)).unwrap(), baseline);
+    commands::enable_with_sync(Some(&config_dir), "gs", true, true).unwrap();
+    assert_eq!(std::fs::read_to_string(generated(&root)).unwrap(), baseline);
+    commands::rename_with_sync(Some(&config_dir), "gs", "gd", true).unwrap();
+    assert_eq!(std::fs::read_to_string(generated(&root)).unwrap(), baseline);
+    commands::remove_with_sync(Some(&config_dir), "gd", true).unwrap();
+    assert_eq!(std::fs::read_to_string(generated(&root)).unwrap(), baseline);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn import_confirm_auto_syncs_once_and_honours_no_sync_and_auto_sync_false() {
+    let alias = AliasRecord {
+        name: "imported".into(),
+        executable: "git".into(),
+        shells: vec![ShellKind::Bash],
+        ..Default::default()
+    };
+
+    let synced = temp_root("import-sync");
+    configure_bash(&synced);
+    let file = synced.join("aliases.json");
+    export_json(&file, std::slice::from_ref(&alias)).unwrap();
+    let preview = commands::import_file_with_sync(
+        Some(synced.to_str().unwrap()),
+        file.to_str().unwrap(),
+        false,
+        false,
+    )
+    .unwrap();
+    assert_eq!(preview.imported, vec!["imported"]);
+    assert!(!generated(&synced).exists(), "preview must not sync");
+    commands::import_file_with_sync(
+        Some(synced.to_str().unwrap()),
+        file.to_str().unwrap(),
+        true,
+        false,
+    )
+    .unwrap();
+    assert!(std::fs::read_to_string(generated(&synced))
+        .unwrap()
+        .contains("imported"));
+    let _ = std::fs::remove_dir_all(synced);
+
+    let no_sync = temp_root("import-no-sync");
+    configure_bash(&no_sync);
+    let file = no_sync.join("aliases.json");
+    export_json(&file, std::slice::from_ref(&alias)).unwrap();
+    commands::import_file_with_sync(
+        Some(no_sync.to_str().unwrap()),
+        file.to_str().unwrap(),
+        true,
+        true,
+    )
+    .unwrap();
+    assert!(
+        !generated(&no_sync).exists(),
+        "--no-sync must not generate files"
+    );
+    let _ = std::fs::remove_dir_all(no_sync);
+
+    let globally_off = temp_root("import-auto-off");
+    let paths = configure_bash(&globally_off);
+    let mut config = paths.load_config().unwrap();
+    config.runtime.auto_sync = false;
+    config.save(&paths).unwrap();
+    let file = globally_off.join("aliases.json");
+    export_json(&file, std::slice::from_ref(&alias)).unwrap();
+    commands::import_file_with_sync(
+        Some(globally_off.to_str().unwrap()),
+        file.to_str().unwrap(),
+        true,
+        false,
+    )
+    .unwrap();
+    assert!(!generated(&globally_off).exists());
+    let _ = std::fs::remove_dir_all(globally_off);
+}
+
+#[test]
+fn import_confirm_sync_failure_reports_partial_sync_after_saving() {
+    let root = temp_root("import-partial");
+    std::fs::write(root.join("generated"), b"not a directory").unwrap();
+    let alias = AliasRecord {
+        name: "imported".into(),
+        executable: "git".into(),
+        shells: vec![ShellKind::Bash],
+        ..Default::default()
+    };
+    let file = root.join("aliases.json");
+    export_json(&file, std::slice::from_ref(&alias)).unwrap();
+    let error = commands::import_file_with_sync(
+        Some(root.to_str().unwrap()),
+        file.to_str().unwrap(),
+        true,
+        false,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(&error, AliasError::PartialSync(message) if message.contains("imported records were saved")),
+        "{error}"
+    );
+    assert_eq!(exit_code::exit_code(&error), 10);
+    assert_eq!(
+        commands::get(Some(root.to_str().unwrap()), "imported")
+            .unwrap()
+            .name,
+        "imported"
+    );
+    let _ = std::fs::remove_dir_all(root);
 }
 
 #[test]

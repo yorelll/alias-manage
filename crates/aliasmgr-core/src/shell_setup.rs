@@ -177,6 +177,20 @@ impl ShellSetupOutcome {
     }
 }
 
+fn normalize_override(label: &str, path: &Path) -> Result<PathBuf, AliasError> {
+    if path.as_os_str().is_empty() {
+        return Err(AliasError::Config(format!("{label} must not be empty")));
+    }
+    let expanded = crate::config::expand_home_path(path);
+    if !expanded.is_absolute() {
+        return Err(AliasError::Config(format!(
+            "{label} must be absolute; use ~/... to expand the home directory (got {})",
+            path.display()
+        )));
+    }
+    Ok(expanded)
+}
+
 fn apply_overrides(
     config: &mut AppConfig,
     kind: &ShellKind,
@@ -184,24 +198,14 @@ fn apply_overrides(
     profile: Option<&Path>,
 ) -> Result<(), AliasError> {
     if let Some(path) = executable {
-        if path.as_os_str().is_empty() {
-            return Err(AliasError::Config(format!(
-                "executable path for {} must not be empty",
-                kind.as_str()
-            )));
-        }
+        let path = normalize_override(&format!("executable path for {}", kind.as_str()), path)?;
         config
             .shells
             .executables
-            .insert(kind.as_str().to_string(), path.to_path_buf());
+            .insert(kind.as_str().to_string(), path);
     }
     if let Some(path) = profile {
-        if path.as_os_str().is_empty() {
-            return Err(AliasError::Config(format!(
-                "profile path for {} must not be empty",
-                kind.as_str()
-            )));
-        }
+        let path = normalize_override(&format!("profile path for {}", kind.as_str()), path)?;
         let slot = match kind {
             ShellKind::Bash => &mut config.shells.bash_rc_path,
             ShellKind::Zsh => &mut config.shells.zsh_rc_path,
@@ -214,7 +218,7 @@ fn apply_overrides(
                 )))
             }
         };
-        *slot = Some(path.to_path_buf());
+        *slot = Some(path);
     }
     Ok(())
 }
@@ -693,6 +697,60 @@ mod tests {
         ));
         assert!(paths.load_config().unwrap().shells.enabled.is_empty());
         assert!(!root.join("bashrc").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_rejects_relative_paths_without_enabling_the_shell() {
+        let root = temp_root("apply-relative");
+        let paths = AppPaths { root: root.clone() };
+        AppConfig::default().save(&paths).unwrap();
+        let executable = fake_executable(&root);
+        let options = ShellSetupOptions {
+            executable: Some(executable),
+            profile: Some(PathBuf::from("relative/.bashrc")),
+            sync: false,
+        };
+        assert!(matches!(
+            apply_shell_setup(&paths, &ShellKind::Bash, &options),
+            Err(AliasError::Config(message))
+                if message.contains("must be absolute") && message.contains("~/")
+        ));
+        assert!(paths.load_config().unwrap().shells.enabled.is_empty());
+        assert!(!root.join("relative").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn apply_reports_loader_failure_after_persisting_enabled_intent() {
+        let root = temp_root("apply-loader-failure");
+        let paths = AppPaths { root: root.clone() };
+        let profile = root.join("bashrc");
+        fs::write(
+            &profile,
+            format!("{}\n", crate::shells::common::START_MARKER),
+        )
+        .unwrap();
+        let mut config = AppConfig::default();
+        config.shells.bash_rc_path = Some(profile.clone());
+        config
+            .shells
+            .executables
+            .insert("bash".into(), fake_executable(&root));
+        config.save(&paths).unwrap();
+
+        let outcome =
+            apply_shell_setup(&paths, &ShellKind::Bash, &ShellSetupOptions::syncing()).unwrap();
+        assert!(outcome.enabled);
+        assert!(outcome.loader_error.is_some());
+        assert_eq!(outcome.loader_error_code.as_deref(), Some("loader_unsafe"));
+        assert!(!outcome.loader_installed);
+        assert!(paths
+            .load_config()
+            .unwrap()
+            .shells
+            .enabled
+            .contains(&"bash".to_string()));
         let _ = fs::remove_dir_all(root);
     }
 

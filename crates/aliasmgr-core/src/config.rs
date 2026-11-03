@@ -2,7 +2,7 @@ use crate::{error::AliasError, model::ShellKind};
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -173,6 +173,39 @@ impl AppConfig {
                     "shell executable path for {name} must not be empty"
                 )));
             }
+            if !path.is_absolute() {
+                return Err(AliasError::Config(format!(
+                    "shell executable path for {name} must be absolute (got {})",
+                    path.display()
+                )));
+            }
+        }
+        for (name, path) in [
+            ("bash_rc_path", self.shells.bash_rc_path.as_deref()),
+            ("zsh_rc_path", self.shells.zsh_rc_path.as_deref()),
+            (
+                "powershell5_profile_path",
+                self.shells.powershell5_profile_path.as_deref(),
+            ),
+            (
+                "powershell7_profile_path",
+                self.shells.powershell7_profile_path.as_deref(),
+            ),
+        ] {
+            let Some(path) = path else {
+                continue;
+            };
+            if path.as_os_str().is_empty() {
+                return Err(AliasError::Config(format!(
+                    "shell profile path {name} must not be empty"
+                )));
+            }
+            if !path.is_absolute() {
+                return Err(AliasError::Config(format!(
+                    "shell profile path {name} must be absolute (got {})",
+                    path.display()
+                )));
+            }
         }
         for (name, value) in [
             ("backups.rc_keep", self.backups.rc_keep),
@@ -188,6 +221,27 @@ impl AppConfig {
         }
         Ok(())
     }
+
+    /// Expands a leading `~` in every persisted shell path. `load_config` calls
+    /// this so a hand-edited `bash_rc_path = "~/.bashrc"` becomes an absolute
+    /// path before validation and use; the expanded value is written back on
+    /// the next save.
+    pub fn expand_shell_paths(&mut self) {
+        for path in [
+            &mut self.shells.bash_rc_path,
+            &mut self.shells.zsh_rc_path,
+            &mut self.shells.powershell5_profile_path,
+            &mut self.shells.powershell7_profile_path,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            *path = expand_home_path(path);
+        }
+        for path in self.shells.executables.values_mut() {
+            *path = expand_home_path(path);
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +251,37 @@ pub struct AppPaths {
 
 fn non_empty_env(key: &str) -> Option<std::ffi::OsString> {
     env::var_os(key).filter(|value| !value.is_empty())
+}
+
+/// The user's home directory as used for default shell profiles. Windows uses
+/// `USERPROFILE` first (the shell's `~`) and falls back to `HOME`; Unix uses
+/// `HOME`. Returns `None` in environments that do not provide one.
+pub fn home_dir() -> Option<PathBuf> {
+    if cfg!(windows) {
+        non_empty_env("USERPROFILE")
+            .or_else(|| non_empty_env("HOME"))
+            .map(PathBuf::from)
+    } else {
+        non_empty_env("HOME").map(PathBuf::from)
+    }
+}
+
+fn expand_home_path_with(path: &Path, home: Option<&Path>) -> PathBuf {
+    let mut components = path.components();
+    match components.next() {
+        Some(Component::Normal(first)) if first == "~" => match home {
+            Some(home) => home.join(components.as_path()),
+            None => path.to_path_buf(),
+        },
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Expands a leading `~` (or `~/...` / `~\...`) using [`home_dir`]. Other
+/// components are left untouched; `~user` is not expanded. Callers that accept
+/// user-entered paths must also require the result to be absolute.
+pub fn expand_home_path(path: &Path) -> PathBuf {
+    expand_home_path_with(path, home_dir().as_deref())
 }
 
 fn platform_default_root() -> PathBuf {
@@ -277,6 +362,7 @@ impl AppPaths {
             .clone()
             .try_into()
             .map_err(|error: toml::de::Error| AliasError::Config(error.to_string()))?;
+        config.expand_shell_paths();
         let mut extra = table.clone();
         for key in ["backups", "logs", "retired_names", "shells", "runtime"] {
             extra.remove(key);
@@ -849,7 +935,67 @@ server:/data /data nfs4 rw 0 0
         config
             .shells
             .executables
-            .insert("bash".into(), PathBuf::from("/bin/bash"));
+            .insert("bash".into(), absolute_test_path());
         assert!(config.validate().is_ok());
+    }
+
+    fn absolute_test_path() -> PathBuf {
+        std::env::temp_dir().join("aliasmgr-absolute-test")
+    }
+
+    #[test]
+    fn validation_requires_absolute_executable_and_profile_overrides() {
+        let mut config = AppConfig::default();
+        config
+            .shells
+            .executables
+            .insert("bash".into(), PathBuf::from("relative/bash"));
+        assert!(matches!(
+            config.validate(),
+            Err(AliasError::Config(message)) if message.contains("must be absolute")
+        ));
+        config
+            .shells
+            .executables
+            .insert("bash".into(), absolute_test_path());
+        config.shells.bash_rc_path = Some(PathBuf::from("relative/bashrc"));
+        assert!(matches!(
+            config.validate(),
+            Err(AliasError::Config(message)) if message.contains("must be absolute")
+        ));
+        config.shells.bash_rc_path = Some(absolute_test_path().join(".bashrc"));
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn leading_tilde_expands_from_the_provided_home_directory() {
+        let home = if cfg!(windows) {
+            PathBuf::from(r"C:\Users\tester")
+        } else {
+            PathBuf::from("/home/tester")
+        };
+        assert_eq!(
+            expand_home_path_with(Path::new("~/.bashrc"), Some(&home)),
+            home.join(".bashrc")
+        );
+        assert_eq!(
+            expand_home_path_with(Path::new("~/nested/profile.ps1"), Some(&home)),
+            home.join("nested/profile.ps1")
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            expand_home_path_with(Path::new(r"~\.zshrc"), Some(&home)),
+            home.join(".zshrc")
+        );
+        assert_eq!(expand_home_path_with(Path::new("~"), Some(&home)), home);
+        let absent = Path::new("~/.bashrc");
+        assert_eq!(expand_home_path_with(absent, None), absent);
+        let ordinary = absolute_test_path();
+        assert_eq!(expand_home_path_with(&ordinary, Some(&home)), ordinary);
+        let user_home = Path::new("~other/.bashrc");
+        assert_eq!(
+            expand_home_path_with(user_home, Some(&home)),
+            PathBuf::from("~other/.bashrc")
+        );
     }
 }

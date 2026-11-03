@@ -660,13 +660,23 @@ fn existing_aliases(config_dir: Option<&str>) -> Result<BTreeMap<String, AliasRe
         .collect())
 }
 
+#[allow(dead_code)]
 pub fn import_file(
     config_dir: Option<&str>,
     file: &str,
     confirm: bool,
 ) -> Result<ImportReport, AliasError> {
+    import_file_with_sync(config_dir, file, confirm, false)
+}
+
+pub fn import_file_with_sync(
+    config_dir: Option<&str>,
+    file: &str,
+    confirm: bool,
+    no_sync: bool,
+) -> Result<ImportReport, AliasError> {
     if confirm {
-        import_confirm(config_dir, file)
+        import_confirm_with_sync(config_dir, file, no_sync)
     } else {
         import_preview(config_dir, file)
     }
@@ -682,7 +692,16 @@ pub fn import_preview(config_dir: Option<&str>, file: &str) -> Result<ImportRepo
     .map(|report| report.into_public())
 }
 
+#[allow(dead_code)]
 pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<ImportReport, AliasError> {
+    import_confirm_with_sync(config_dir, file, false)
+}
+
+pub fn import_confirm_with_sync(
+    config_dir: Option<&str>,
+    file: &str,
+    no_sync: bool,
+) -> Result<ImportReport, AliasError> {
     let existing = list(config_dir)?
         .into_iter()
         .map(|alias| (alias.name.clone(), alias))
@@ -693,7 +712,47 @@ pub fn import_confirm(config_dir: Option<&str>, file: &str) -> Result<ImportRepo
         ConflictStrategy::Ask,
     )?;
     database(config_dir)?.insert_aliases_atomic(&report.accepted_records)?;
+    sync_after_import(config_dir, &report.accepted_records, no_sync)?;
     Ok(report.into_public())
+}
+
+/// A confirmed import is a batch write: sync all referenced shells once,
+/// honoring `runtime.auto_sync` and the CLI `--no-sync` escape. Preview never
+/// reaches this function.
+fn sync_after_import(
+    config_dir: Option<&str>,
+    accepted: &[AliasRecord],
+    no_sync: bool,
+) -> Result<(), AliasError> {
+    if no_sync || accepted.is_empty() {
+        return Ok(());
+    }
+    let paths = paths_for(config_dir);
+    let config = match paths.load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            return Err(AliasError::PartialSync(format!(
+                "imported records were saved, but the configuration could not be read: {error}"
+            )))
+        }
+    };
+    if !config.runtime.auto_sync {
+        return Ok(());
+    }
+    let run = aliasmgr_core::sync::sync_config_dir(&paths.root).map_err(|error| {
+        AliasError::PartialSync(format!(
+            "imported records were saved, but sync failed: {error}. Run `aliasmgr sync` or `aliasmgr doctor`."
+        ))
+    })?;
+    let failures = run.failure_summary();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(AliasError::PartialSync(format!(
+            "imported records were saved, but these shells failed to sync: {}. Run `aliasmgr sync` or `aliasmgr doctor`.",
+            failures.join("; ")
+        )))
+    }
 }
 
 /// Renders the CLI summary for an import preview or confirmation. Warnings are
@@ -853,11 +912,24 @@ fn prompt_path(
         Some(default) => format!("{label} [{}]: ", default.display()),
         None => format!("{label}: "),
     };
-    match prompt_line(input, output, &label)? {
-        None => Ok(None),
-        Some(value) if value.is_empty() => Ok(default.map(Path::to_path_buf)),
-        Some(value) => Ok(Some(PathBuf::from(value))),
+    let value = match prompt_line(input, output, &label)? {
+        None => return Ok(None),
+        Some(value) if value.is_empty() => default.map(Path::to_path_buf),
+        Some(value) => Some(PathBuf::from(value)),
+    };
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let expanded = aliasmgr_core::config::expand_home_path(&value);
+    if !expanded.is_absolute() {
+        writeln!(
+            output,
+            "Path must be absolute; use ~/... to expand the home directory (got {}).",
+            value.display()
+        )?;
+        return Ok(None);
     }
+    Ok(Some(expanded))
 }
 
 #[allow(dead_code)]
@@ -935,84 +1007,107 @@ pub fn doctor_interactive_line(
             let mut plan = shell_setup::plan_shell_setup(&config, paths, &kind, None, None)?;
             let mut executable_override = None;
             let mut profile_override = None;
+            let mut needs_path = false;
             match plan.action {
                 shell_setup::SetupAction::WslManual => {
                     writeln!(
                         output,
-                        "{}: run `aliasmgr doctor` inside the WSL distribution; Alias Manager will not write a Windows profile for it.",
+                        "{} resolves to the WSL launcher. Alias Manager will not write a Windows profile for it, but you can enter a native Windows executable (for example Git Bash) and its profile/RC path.",
                         kind.label()
                     )?;
-                    continue;
+                    needs_path = true;
                 }
-                shell_setup::SetupAction::NeedsPath => {
-                    writeln!(output, "{} is not ready:", kind.label())?;
+                shell_setup::SetupAction::NeedsPath => needs_path = true,
+                shell_setup::SetupAction::Enable | shell_setup::SetupAction::InstallLoader => {}
+            }
+            if needs_path {
+                writeln!(output, "{} is not ready:", kind.label())?;
+                if plan.wsl {
+                    writeln!(
+                        output,
+                        "  1) integrate inside the WSL distribution (run `aliasmgr doctor` there), then restart"
+                    )?;
+                } else {
                     writeln!(
                         output,
                         "  1) install it and add it to PATH, then restart aliasmgr"
                     )?;
-                    writeln!(output, "  2) enter an executable and profile/RC path")?;
-                    writeln!(output, "  3) cancel")?;
-                    let choice = prompt_line(input, output, "Choose [1-3]: ")?.unwrap_or_default();
-                    match choice.as_str() {
-                        "1" => {
+                }
+                writeln!(
+                    output,
+                    "  2) enter an absolute executable and profile/RC path (leading ~/ expands)"
+                )?;
+                writeln!(output, "  3) cancel")?;
+                let choice = prompt_line(input, output, "Choose [1-3]: ")?.unwrap_or_default();
+                match choice.as_str() {
+                    "1" => {
+                        if plan.wsl {
+                            writeln!(
+                                output,
+                                "Run `aliasmgr doctor` inside the WSL distribution to integrate {}.",
+                                kind.label()
+                            )?;
+                        } else {
                             writeln!(
                                 output,
                                 "Install {} and add it to PATH, then run `aliasmgr doctor` again.",
                                 kind.label()
                             )?;
+                        }
+                        continue;
+                    }
+                    "2" => {
+                        let default_executable = if plan.wsl {
+                            None
+                        } else {
+                            plan.executable.clone().filter(|path| path.is_file())
+                        };
+                        let Some(executable) = prompt_path(
+                            input,
+                            output,
+                            "Executable path",
+                            default_executable.as_deref(),
+                        )?
+                        else {
+                            continue;
+                        };
+                        if !executable.is_file() {
+                            writeln!(
+                                output,
+                                "{} executable not found: {}",
+                                kind.label(),
+                                executable.display()
+                            )?;
                             continue;
                         }
-                        "2" => {
-                            let default_executable =
-                                plan.executable.clone().filter(|path| path.is_file());
-                            let Some(executable) = prompt_path(
-                                input,
+                        let default_profile =
+                            shell_setup::default_profile_path(&config, paths, &kind);
+                        let profile = prompt_path(
+                            input,
+                            output,
+                            "Profile/RC path",
+                            default_profile.as_deref(),
+                        )?;
+                        executable_override = Some(executable);
+                        profile_override = profile;
+                        plan = shell_setup::plan_shell_setup(
+                            &config,
+                            paths,
+                            &kind,
+                            executable_override.as_deref(),
+                            profile_override.as_deref(),
+                        )?;
+                        if !plan.detected {
+                            writeln!(
                                 output,
-                                "Executable path",
-                                default_executable.as_deref(),
-                            )?
-                            else {
-                                continue;
-                            };
-                            if !executable.is_file() {
-                                writeln!(
-                                    output,
-                                    "{} executable not found: {}",
-                                    kind.label(),
-                                    executable.display()
-                                )?;
-                                continue;
-                            }
-                            let default_profile =
-                                shell_setup::default_profile_path(&config, paths, &kind);
-                            let profile = prompt_path(
-                                input,
-                                output,
-                                "Profile/RC path",
-                                default_profile.as_deref(),
+                                "{} executable was not detected at the supplied path.",
+                                kind.label()
                             )?;
-                            executable_override = Some(executable);
-                            profile_override = profile;
-                            plan = shell_setup::plan_shell_setup(
-                                &config,
-                                paths,
-                                &kind,
-                                executable_override.as_deref(),
-                                profile_override.as_deref(),
-                            )?;
-                            if !plan.detected {
-                                writeln!(
-                                    output,
-                                    "{} executable was not detected at the supplied path.",
-                                    kind.label()
-                                )?;
-                                continue;
-                            }
+                            continue;
                         }
-                        _ => continue,
                     }
+                    _ => continue,
                 }
-                shell_setup::SetupAction::Enable | shell_setup::SetupAction::InstallLoader => {}
             }
 
             if let Some(preview) = shell_setup::preview_loader(

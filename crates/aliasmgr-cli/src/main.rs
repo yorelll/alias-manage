@@ -119,13 +119,15 @@ fn main() {
                 format!("{shell} loader 不存在")
             }
         }),
-        cli::Command::Import { file, yes } => {
-            commands::import_file(cli.config_dir.as_deref(), file, *yes).map(|report| {
-                for warning in &report.warnings {
-                    eprintln!("warning: {warning}");
-                }
-                commands::import_summary(&report)
-            })
+        cli::Command::Import { file, yes, no_sync } => {
+            commands::import_file_with_sync(cli.config_dir.as_deref(), file, *yes, *no_sync).map(
+                |report| {
+                    for warning in &report.warnings {
+                        eprintln!("warning: {warning}");
+                    }
+                    commands::import_summary(&report)
+                },
+            )
         }
         cli::Command::Export { file } => commands::export_file(cli.config_dir.as_deref(), file)
             .map(|_| format!("exported to {file}")),

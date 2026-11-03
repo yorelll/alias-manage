@@ -87,12 +87,13 @@ powershell7 = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
 bash = "C:\\Program Files\\Git\\bin\\bash.exe"
 ```
 
-- `enabled` 默认空；加载旧配置不会自动启用任何 Shell，只有用户在 `doctor`/设置中确认后才写入。
-- `runtime.auto_sync` 默认 `true`。`add`/`update`/`remove`/`rename`/`enable`/`disable` 成功后只同步一次受影响的 Shell；任一 Shell 同步失败时数据库已保存，命令以 `PartialSync`（退出码 10）返回并列出失败 Shell。`--no-sync` 跳过本次自动同步；`runtime.auto_sync = false` 全局关闭。
-- 自动同步不依赖 `enabled`：生成文件内容与 `enabled` 无关；loader 只对已启用 Shell 安装。
+- `enabled` 默认空；加载旧配置不会自动启用任何 Shell，只有用户在 `doctor`/设置中确认后才写入。**升级提示**：已有安装的 `shells.enabled` 为空，`add`/`update` 会以 `ShellNotReady`（退出码 12）拒绝保存，直到运行一次 `aliasmgr doctor` 完成启用；这是有意为之，不会自动启用。
+- `runtime.auto_sync` 默认 `true`。`add`/`update`/`remove`/`rename`/`enable`/`disable` 成功后只同步一次受影响的 Shell；`import --yes` 成功后也同步一次（`import --no-sync` 关闭）。任一 Shell 同步失败时数据库已保存，命令以 `PartialSync`（退出码 10）返回并列出失败 Shell。`--no-sync` 跳过本次自动同步；`runtime.auto_sync = false` 全局关闭。
+- Bash/Zsh 的默认 profile 是用户主目录的 `~/.bashrc` / `~/.zshrc`（Windows 为 `%USERPROFILE%\.bashrc` / `.zshrc`），不是配置根目录；旧版本写在配置根目录的 loader 仍会被 `uninstall` 清理。
+- 手动填写的 executable/profile 覆盖必须是绝对路径；交互提示中前导 `~/`（Windows 也支持 `~\`）会展开为主目录，相对路径会被拒绝并给出错误。`config.toml` 中的前导 `~` 在加载时展开。
 - 检测来源：`PATH`、Windows 已知安装路径（PS5 系统路径、PS7 Program Files/WindowsApps、Git Bash、MSYS2/Cygwin Zsh）、Unix `/bin`、`/usr/bin`、`/usr/local/bin`，以及 `shells.executables` 手动路径（最高优先级）。版本探测有约 2 秒超时；失败只表示版本未知，不表示未安装。
 - 无法保证发现所有安装方式（便携版、Store 别名、启动后安装、WSL、不同 PATH）。`doctor` 始终列出四个 Shell 并允许手动填写路径。
-- Windows `System32\bash.exe`/WindowsApps `bash.exe` 会标记为 WSL；不会向 Windows profile 写入 WSL 的 loader，请在 WSL 发行版内运行 `doctor`。
+- Windows `System32\bash.exe`/WindowsApps `bash.exe` 会标记为 WSL；不会向 Windows profile 写入 WSL 的 loader。若同一机器还有 Git Bash，检测会优先选择非 WSL 的已知安装；WSL 行也可在 `doctor` 中手动输入原生 Windows executable/profile，或在 WSL 发行版内运行 `doctor`。
 
 - Bash/Zsh 使用 `source '<config-root>/generated/bash.sh'`。
 - PowerShell 使用 `. '<config-root>\generated\powershell7.ps1'`；开头的 `.` 是 **点源（dot-source）运算符**，不是逗号，表示在当前会话中运行该文件。

@@ -62,12 +62,24 @@ pub fn default_powershell_profile_path(shell: &str) -> Option<PathBuf> {
     }
 }
 
+/// Default Bash RC path. This is the user's real home (`$HOME/.bashrc`, or
+/// `%USERPROFILE%\.bashrc` on Windows), not the config root, so a first-run
+/// integration is actually loaded by a new shell.
+pub fn default_bash_rc_path() -> Option<PathBuf> {
+    crate::config::home_dir().map(|home| home.join(".bashrc"))
+}
+
+/// Default Zsh RC path (`$HOME/.zshrc`).
+pub fn default_zsh_rc_path() -> Option<PathBuf> {
+    crate::config::home_dir().map(|home| home.join(".zshrc"))
+}
+
 /// Resolves the profile/RC file for a Shell and whether the loader block must
 /// use PowerShell syntax. A configured path always wins over the platform
 /// default, which keeps tests and custom setups away from real profiles.
 pub fn loader_target(
     config: &AppConfig,
-    paths: &AppPaths,
+    _paths: &AppPaths,
     shell: &str,
 ) -> Result<LoaderTarget, AliasError> {
     let name = shell.to_ascii_lowercase();
@@ -77,7 +89,8 @@ pub fn loader_target(
                 .shells
                 .bash_rc_path
                 .clone()
-                .unwrap_or_else(|| paths.root.join(".bashrc")),
+                .or_else(default_bash_rc_path)
+                .ok_or(AliasError::ShellNotInstalled)?,
             false,
         ),
         "zsh" => (
@@ -85,7 +98,8 @@ pub fn loader_target(
                 .shells
                 .zsh_rc_path
                 .clone()
-                .unwrap_or_else(|| paths.root.join(".zshrc")),
+                .or_else(default_zsh_rc_path)
+                .ok_or(AliasError::ShellNotInstalled)?,
             false,
         ),
         "powershell5" => config
@@ -143,10 +157,14 @@ pub fn loader_candidates(config: &AppConfig, paths: &AppPaths, shell: &str) -> V
     match name.as_str() {
         "bash" => {
             push(config.shells.bash_rc_path.clone(), false);
+            push(default_bash_rc_path(), false);
+            // Older releases wrote the fallback loader inside the config root.
+            // It is no longer a default target, but uninstall must still find it.
             push(Some(paths.root.join(".bashrc")), false);
         }
         "zsh" => {
             push(config.shells.zsh_rc_path.clone(), false);
+            push(default_zsh_rc_path(), false);
             push(Some(paths.root.join(".zshrc")), false);
         }
         "powershell5" => {
@@ -482,6 +500,50 @@ mod tests {
                 .into_owned()
         ));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn bash_and_zsh_default_to_the_home_rc_not_the_config_root() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let keys = ["HOME", "USERPROFILE"];
+        let saved = keys.map(|key| (key, std::env::var_os(key)));
+        let home = temp_root("home-default");
+        let config_root = temp_root("config-root-default");
+        std::env::set_var("HOME", &home);
+        #[cfg(windows)]
+        std::env::set_var("USERPROFILE", &home);
+
+        let paths = AppPaths {
+            root: config_root.clone(),
+        };
+        let config = AppConfig::default();
+        let bash = loader_target(&config, &paths, "bash").unwrap();
+        assert_eq!(bash.path, home.join(".bashrc"));
+        assert_ne!(bash.path, config_root.join(".bashrc"));
+        let zsh = loader_target(&config, &paths, "zsh").unwrap();
+        assert_eq!(zsh.path, home.join(".zshrc"));
+
+        // The old config-root fallback remains an uninstall candidate only.
+        let bash_candidates = loader_candidates(&config, &paths, "bash");
+        assert!(bash_candidates
+            .iter()
+            .any(|target| target.path == home.join(".bashrc")));
+        assert!(bash_candidates
+            .iter()
+            .any(|target| target.path == config_root.join(".bashrc")));
+        let zsh_candidates = loader_candidates(&config, &paths, "zsh");
+        assert!(zsh_candidates
+            .iter()
+            .any(|target| target.path == config_root.join(".zshrc")));
+
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let _ = fs::remove_dir_all(home);
+        let _ = fs::remove_dir_all(config_root);
     }
 
     #[test]

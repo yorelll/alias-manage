@@ -490,7 +490,7 @@ mod tests {
         let paths = AppPaths { root: root.clone() };
         let config = AppConfig {
             shells: ShellPathOverrides {
-                bash_rc_path: Some(PathBuf::from("/tmp/custom-bashrc")),
+                bash_rc_path: Some(root.join("custom-bashrc")),
                 ..Default::default()
             },
             ..AppConfig::default()
@@ -525,7 +525,7 @@ mod tests {
         assert_eq!(loaded.logs.keep_files, 6);
         assert_eq!(
             loaded.shells.bash_rc_path.as_deref(),
-            Some(Path::new("/tmp/custom-bashrc"))
+            Some(root.join("custom-bashrc").as_path())
         );
         assert_eq!(
             loaded
@@ -551,7 +551,7 @@ mod tests {
         // Another front end changes fields the TUI does not edit and adds an
         // unknown top-level key after the screen was opened.
         let mut external = paths.load_config().unwrap();
-        external.shells.bash_rc_path = Some(PathBuf::from("/tmp/external-bashrc"));
+        external.shells.bash_rc_path = Some(root.join("external-bashrc"));
         external.logs.max_file_bytes = 12345;
         external.save(&paths).unwrap();
         let saved = fs::read_to_string(paths.config_file()).unwrap();
@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(loaded.runtime.language, "en");
         assert_eq!(
             loaded.shells.bash_rc_path.as_deref(),
-            Some(Path::new("/tmp/external-bashrc"))
+            Some(root.join("external-bashrc").as_path())
         );
         assert_eq!(loaded.logs.max_file_bytes, 12345);
         assert_eq!(

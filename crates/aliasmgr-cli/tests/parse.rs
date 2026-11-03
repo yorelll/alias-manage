@@ -120,7 +120,7 @@ fn parses_reload_shell_and_import_confirmation() {
 
     let cli = Cli::try_parse_from(["aliasmgr", "import", "file.json", "--yes"]).unwrap();
     match cli.command {
-        Command::Import { file, yes } => {
+        Command::Import { file, yes, .. } => {
             assert_eq!(file, "file.json");
             assert!(yes);
         }
