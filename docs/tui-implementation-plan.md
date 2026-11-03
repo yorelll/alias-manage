@@ -472,3 +472,84 @@
 - CLI doctor TTY/非 TTY、路径填写、rescan、安装后 sync、reload 展示。
 - 检测覆盖 PS5/PS7 常见路径、Git Bash/WSL 标记、后装 Shell。
 - 真实 PTY 四终端 + 证据；无环境变量/注册表/真实 profile 的测试污染。
+
+## 14. R2.5（最后优先级）：MSI / setup.exe 自定义卸载
+
+> 目标：包管理器卸载时不再只删除应用文件，而是由安装器调用同一套核心卸载逻辑；默认 **retain（保留数据）**，用户可选择 **purge（清除数据）**。
+> 优先级：最低，排在 R2.4 之后；不影响 TUI 日常功能。
+
+### 14.1 现有边界（必须先读）
+
+- `docs/uninstall.md` 明确：当前包管理器 `postrm`/MSI 钩子**未实现**；包管理器卸载只删应用，不动 loader/DB/generated。
+- CLI/GUI 的 `aliasmgr uninstall` 是唯一事实来源：
+  - 默认 retain：移除 loader 标记块，保留 `aliases.db`/`generated`/journal/备份/config；
+  - `--purge-aliases --yes`：额外删除 `generated/*`、`aliases.db`、`operation.journal`；
+  - 从不删除用户目标 EXE/BAT/CMD/PY/PS1/SH/JAR；备份/config 保留。
+- Windows 打包由 Tauri 生成 MSI（WiX）与 NSIS `setup.exe`；当前 `prerelease.yml` 只收集 artifact，未注入卸载钩子。
+
+### 14.2 统一卸载入口（先做）
+
+- 为安装器提供稳定、非交互的 CLI 契约：
+  ```text
+  aliasmgr uninstall --retain --yes
+  aliasmgr uninstall --purge-aliases --yes
+  ```
+- 建议显式增加 `--retain`（与 `--purge-aliases` 互斥），默认仍是 retain；`--yes` 必须存在，安装器不得触发交互提示。
+- 退出码：
+  - 0 成功（包括“没有需要清理的内容”）；
+  - 非 0 仅用于真实错误；安装器应记录日志但不应因此静默保留 loader 而不提示。
+- 安装器只调用该入口，不复制 remove_loader/purge 逻辑。
+- 支持 `--config-dir <path>`；安装器需解析“原用户”的配置根，而不是提权后的管理员目录。
+
+### 14.3 NSIS（setup.exe）自定义卸载
+
+- 使用 Tauri NSIS 的 installer hook（如 `NSIS_HOOK_PREUNINSTALL`）或自定义卸载页：
+  - 弹出选择：**保留数据（默认）** / **清除数据（purge）**；
+  - 说明：保留数据会移除 Shell loader，但保留别名数据库/生成文件；清除会删除数据库/生成文件/journal，但保留备份且不删除目标文件；
+  - 默认选中 retain；取消卸载则不清理。
+- 在删除应用文件之前调用已安装的 `aliasmgr.exe uninstall --retain|--purge-aliases --yes`。
+- 若 `aliasmgr.exe` 不存在/损坏：回退为明确的提示（列出数据库/generated/loader 位置），不要假装已清理；必要时提供一个独立的轻量 uninstall helper。
+- 正确处理 per-user 安装：卸载器可能以当前用户运行；使用原用户 `%LOCALAPPDATA%`/`%USERPROFILE%`，不要用提权后的环境覆盖。
+- 记录日志到安装器日志；不要把敏感环境变量写入日志。
+
+### 14.4 MSI（WiX）自定义卸载
+
+- MSI 的卸载 UI 默认没有“保留/清除”对话框；需要：
+  - WiX 自定义 Action（在 RemoveFiles 之前运行，`Impersonate="yes"` 或等效的“以原用户”方式）；
+  - 自定义 UI 对话框/属性（如 `ALIASMGR_PURGE=1`），默认 retain；
+  - 或提供命令行属性：`msiexec /x <msi> ALIASMGR_PURGE=1`，并在文档中说明默认 retain。
+- Tauri 的 WiX 配置是否支持 fragment/custom action/UI 需先验证；若不支持：
+  - 优先实现 NSIS setup.exe 的完整交互；
+  - MSI 至少支持属性/命令行选择，默认 retain，并在文档中明确其 UI 限制；
+  - 不要伪造“已提示用户”的行为。
+- 提权风险：MSI 卸载可能以 SYSTEM/管理员运行；必须定位**原安装用户**的配置根/Profile，不能清理错用户的数据。需要真机/VM 验证 per-user 与 per-machine 两种安装。
+- 失败处理：记录 exit code/日志；若清理失败，卸载仍可继续删除应用文件，但必须提示残留位置，不能静默。
+
+### 14.5 安全与数据边界
+
+- retain：只移除 loader；DB/generated/journal/备份/config 保留。
+- purge：移除 loader + `generated/*` + `aliases.db` + `operation.journal`；**不删除**备份、config、用户目标文件。
+- 畸形/不成对 marker：中止并提示，不写坏 profile；正常清理前备份。
+- 不修改环境变量/注册表（安装器自身的标准注册信息除外）；不绕过 ExecutionPolicy；不自动重启 Shell。
+- 不把用户目标路径、环境变量值、token 写入安装器日志。
+
+### 14.6 测试与验收
+
+- CLI 契约：`--retain`/`--purge-aliases`/`--yes`/`--config-dir` 组合、退出码、无内容时成功、畸形 marker、只读 profile、默认 retain。
+- 脚本级模拟：用临时 HOME/USERPROFILE/config 调用安装器钩子脚本，验证 retain/purge 行为与目标文件保护。
+- NSIS 真机/VM：安装 → 使用 → 卸载选 retain/purge → 验证 loader/DB/generated/备份/目标文件；取消卸载不清理；app 缺失时的回退提示。
+- MSI 真机/VM：per-user 与 per-machine；默认 retain；属性/命令行 purge；提权下原用户路径正确；失败提示。
+- 卸载后新开 Shell 不报错（loader 移除或 guard 生效）。
+- 文档：更新 `docs/uninstall.md`，删除“installer integration is not implemented”的旧声明（仅当真正实现并通过验收）；README/release checklist 同步。
+- 已知限制：deb/AppImage 的 `postrm` 非交互，无法可靠弹窗；应保持“提示用户先运行 aliasmgr uninstall”的边界，或只支持非交互默认 retain。
+
+### 14.7 风险
+
+| 风险 | 缓解 |
+|---|---|
+| 提权后清理错用户数据 | 定位原用户配置根/Profile；per-user/per-machine 真机测试 |
+| MSI UI 不支持选择 | 默认 retain + 属性/命令行 purge；文档明确限制；优先 NSIS 交互 |
+| 安装器在 app 删除后运行 | 在删除文件前调用；helper 回退 |
+| 非交互卸载误删数据 | 默认 retain；purge 必须显式选择；日志/提示 |
+| 畸形 profile | 中止、备份、不写坏 |
+| 备份/目标文件被误删 | purge 白名单仅 DB/generated/journal；测试目标保护 |
