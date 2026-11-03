@@ -387,3 +387,83 @@
 - GUI：沿用现有 zh/en 语言包，默认改 en；切换写共享配置；获得焦点/刷新时重读 CLI/TUI 的修改。
 - 一致性测试：CLI 设置→TUI/GUI 读取；TUI 设置→CLI/GUI；GUI 设置→CLI/TUI；同一配置根；无效值；默认 en；旧配置迁移；外部变更刷新。
 - 文档：README、docs/tui.md、docs/cli-commands.md、architecture/limitations 更新；说明语言包可以不同但模式共享。
+
+## 13. R2.0：保存即完成（auto-sync）与首次 Shell 集成（待最终确认后实施）
+
+目标：用户只关心“在哪些 Shell 里使用别名”。保存/删除/启停/重命名后自动同步；Shell 集成首次引导、后续只做失效检测。**不新增 `setup` 命令**；GUI/TUI 首次向导，CLI 用交互式 `doctor`。
+
+### 13.1 共享状态与配置
+
+- `config.toml` 增加用户意图：
+  ```toml
+  [runtime]
+  auto_sync = true
+
+  [shells]
+  enabled = ["powershell5", "powershell7"]
+
+  [shells.paths.powershell7]
+  executable = "C:\Program Files\PowerShell\7\pwsh.exe"
+  profile = "C:\Users\<user>\Documents\PowerShell\Microsoft.PowerShell_profile.ps1"
+  ```
+- `enabled` 是用户意图；loader 有效性每次启动/doctor 重新检测，不持久化为事实。
+- 保留现有 profile 路径覆盖；补充可选 `executable` 用于非标准路径检测。
+- 已有 loader 的 Shell 迁移为 enabled；其余空，首次引导提示。
+- 所有入口共享同一配置，原子写；启动/刷新重读。
+
+### 13.2 auto-sync
+
+- CLI `add/update/remove/enable/disable/rename` 成功后自动同步受影响的 Shell；`--no-sync` 逃生。
+- TUI/GUI 保存/删除/启停后台自动 sync；`s` 保留为手动修复/重试。
+- 只同步目标 Shell，不为未 enabled 的 Shell 生成文件。
+- loader 缺失不阻止 sync，但提示“新终端不会自动加载”。
+- 失败语义：明确显示“已保存到数据库；以下 Shell 同步失败：…”；默认返回 `PartialSync`（exit 10）以便脚本感知，或提供 `--sync=strict|auto|off`（默认 strict）。不得吞掉失败只显示绿色成功。
+- 批量/导入后只 sync 一次；导入预览不 sync。
+
+### 13.3 GUI/TUI 首次引导与后续检测
+
+- 首次打开列出全部 4 个 Shell（不是只列检测到的），状态：detected / not detected / enabled / loader valid。
+- detected + 勾选：显示 profile/RC 路径与标记块预览；确认后安装 loader + auto-sync。用户无感。
+- not detected + 勾选：三选项：
+  1. 安装该 Shell 并加入 PATH，重启软件；
+  2. 已安装但路径非标准：填写 executable 与 profile/RC 路径，无需重启；
+  3. 取消该 Shell enable。
+- 未勾选：写入 enabled=false，后续不主动骚扰；设置页可重新启用。
+- 后续每次启动只检查 enabled Shell：loader 无效时提示“X 集成已失效，请在设置中重新启用”，提供 重新启用 / 暂时忽略 / 禁用；不每次弹全屏向导。
+- 新检测到未 enabled 的 Shell 可提示一次，不强制。
+- 添加/编辑别名选择 Shell：显示 enabled/disabled/not installed；选择未 enabled 的 Shell 时保存拦截，进入同一 enable 流程；拒绝启用则保留草稿、不静默保存无效别名。
+
+### 13.4 CLI doctor / add 预检
+
+- `aliasmgr doctor`：stdin/stdout 均为 TTY 时进入交互式 Shell 集成界面；非 TTY 保持现有文本输出（可加 `--format json`），不进入 raw mode、不等待输入。
+- 交互界面：spinner + 每个 Shell 的真实检测状态（不伪造百分比）；↑/↓ 选择，Space enable，Enter 应用，r rescan，q 退出。
+- detected：安装 loader + sync + 显示 reload 命令。
+- not detected：同样三选项；填写路径时分别输入 executable 与 profile/RC（给出默认值/“使用默认路径”），安装前预览。
+- `help`/`doctor` 文本指导用户完成启用。
+- `add/update` 写库前检查目标 Shell 的 enabled + loader valid；无效则拒绝保存并提示 `aliasmgr doctor`；提供 `--allow-missing-loader` 显式逃生（文档说明该 Shell 暂不生效）。
+- 退出码沿用现有映射（如 ShellNotInstalled=12）；不得破坏脚本/CI。
+
+### 13.5 检测边界
+
+- 增强检测：PATH + 已知路径（PS5 系统路径、PS7 常见安装路径、Git Bash、MSYS2/Cygwin Zsh）；PS7/WSL 单独标记。
+- 始终列出全部 4 个 Shell；允许手动 executable/profile；Rescan。
+- 无法保证 100% 自动发现；目标 Shell 未 enabled/loader 无效时明确警告，不假装可用。
+- WSL 的 bash 不自动写 Windows profile，提示在对应发行版内安装。
+- 后装 Bash/Zsh：下次启动检测/提示，或 `doctor`/设置页启用；无需 setup。
+
+### 13.6 风险
+
+- 启动弹窗骚扰 → 持久化 enabled/disabled；失效只提示一次，可忽略/禁用。
+- 用户填错 profile → 安装前预览、备份/保留、只改标记块。
+- CLI 脚本被交互破坏 → 严格 TTY 判定；非 TTY 保持文本/JSON。
+- auto-sync 失败被吞 → 明确状态与退出码；`--no-sync`/`--sync` 选项。
+- 多入口并发改配置 → 共享配置 + 原子写 + 启动/刷新重读；不引入第二事实来源。
+
+### 13.7 测试与验收
+
+- 配置迁移/enabled 持久化/未知字段保留/原子写。
+- auto-sync 成功、部分失败、锁占用、`--no-sync`/`--sync` 语义、CLI 退出码。
+- GUI/TUI 首次引导（detected/not detected/三选项/取消）、后续失效提示、添加别名预检、拒绝保存保留草稿。
+- CLI doctor TTY/非 TTY、路径填写、rescan、安装后 sync、reload 展示。
+- 检测覆盖 PS5/PS7 常见路径、Git Bash/WSL 标记、后装 Shell。
+- 真实 PTY 四终端 + 证据；无环境变量/注册表/真实 profile 的测试污染。
