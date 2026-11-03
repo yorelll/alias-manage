@@ -565,48 +565,79 @@ impl App {
             self.dirty = true;
             return;
         }
-        let (origin, changed, summary) = match &self.screen {
-            Screen::ShellSetup(state) => {
-                (state.origin(), state.has_changes(), state.summary_text())
-            }
-            _ => (SetupOrigin::Doctor, false, String::new()),
+        let (origin, success, attempted, failed, summary) = match &self.screen {
+            Screen::ShellSetup(state) => (
+                state.origin(),
+                state.has_success(),
+                state.attempted_apply(),
+                state.has_failures(),
+                state.summary_text(),
+            ),
+            _ => (SetupOrigin::Doctor, false, false, false, String::new()),
         };
         self.close_shell_setup();
         match origin {
-            SetupOrigin::FirstRun if !changed => {
-                // Skipping is a real choice: persist an empty enabled list so
-                // the full wizard is not shown on every launch. A configuration
-                // that already existed is never modified.
-                let paths = AppPaths {
-                    root: self.root.clone(),
-                };
-                if !paths.config_file().exists() {
-                    let _ = shell_setup::set_enabled_shells(&paths, &[]);
-                }
-                self.set_status(
-                    StatusKind::Warning,
-                    "shell integration skipped; add/edit is blocked until a shell is enabled in Settings (S)",
-                );
-            }
-            SetupOrigin::FirstRun => self.set_status(
+            SetupOrigin::FirstRun if success && !failed => self.set_status(
                 StatusKind::Success,
                 format!("shell integration ready; reload is still manual\n{summary}"),
             ),
+            SetupOrigin::FirstRun if success => self.set_status(
+                StatusKind::Warning,
+                format!(
+                    "shell integration partially updated; some shells failed and may still not load aliases\n{summary}"
+                ),
+            ),
+            SetupOrigin::FirstRun if attempted => self.set_status(
+                StatusKind::Error,
+                format!(
+                    "shell setup did not complete; nothing was reported as ready\n{summary}"
+                ),
+            ),
+            SetupOrigin::FirstRun => {
+                // Skipping is a real choice: persist an empty enabled list so
+                // the full wizard is not shown on every launch. A configuration
+                // that already existed is never modified.
+                match self.persist_first_run_skip() {
+                    Ok(()) => self.set_status(
+                        StatusKind::Warning,
+                        "shell integration skipped; add/edit is blocked until a shell is enabled in Settings (S)",
+                    ),
+                    Err(error) => self.set_status(
+                        StatusKind::Error,
+                        format!(
+                            "shell integration skipped, but config.toml could not be saved: {error}; the wizard may appear again"
+                        ),
+                    ),
+                }
+            }
+            SetupOrigin::Preflight if success && !failed => self.set_status(
+                StatusKind::Success,
+                "shell integration updated; press Ctrl+S to save the alias again",
+            ),
+            SetupOrigin::Preflight if success => self.set_status(
+                StatusKind::Warning,
+                format!(
+                    "some shells were updated, but others failed; press Ctrl+S to re-check the draft\n{summary}"
+                ),
+            ),
+            SetupOrigin::Preflight if attempted => self.set_status(
+                StatusKind::Error,
+                format!(
+                    "shell setup did not complete; the draft is kept and nothing was saved\n{summary}"
+                ),
+            ),
             SetupOrigin::Preflight => self.set_status(
-                if changed {
-                    StatusKind::Success
-                } else {
-                    StatusKind::Warning
-                },
-                if changed {
-                    "shell integration updated; press Ctrl+S to save the alias again"
-                } else {
-                    "shell setup closed; the draft is kept and nothing was saved"
-                },
+                StatusKind::Warning,
+                "shell setup closed; the draft is kept and nothing was saved",
             ),
             SetupOrigin::Settings | SetupOrigin::Repair => {
-                if changed {
+                if success && !failed {
                     self.set_status(StatusKind::Success, "shell integration updated");
+                } else if attempted {
+                    self.set_status(
+                        StatusKind::Warning,
+                        format!("shell integration finished with errors\n{summary}"),
+                    );
                 } else {
                     self.set_status(StatusKind::Info, "shell integration closed");
                 }
@@ -614,6 +645,31 @@ impl App {
             SetupOrigin::Doctor => {}
         }
         self.maybe_show_shell_notice();
+    }
+
+    /// Skip persistence shared by `q`/Esc and Ctrl+C on the first-run wizard.
+    /// Writes an empty `shells.enabled` only when no configuration exists yet.
+    fn persist_first_run_skip(&self) -> Result<(), AliasError> {
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        // A non-file at the config path (for example a directory) is not a
+        // usable existing configuration, so attempt the write and surface the
+        // failure instead of silently reporting a successful skip.
+        if !paths.config_file().is_file() {
+            shell_setup::set_enabled_shells(&paths, &[])?;
+        }
+        Ok(())
+    }
+
+    /// Ctrl+C quits immediately (no screen key handler runs), so persist the
+    /// first-run skip best-effort when the wizard was not applied.
+    fn persist_first_run_skip_on_ctrl_c(&self) {
+        if let Screen::ShellSetup(state) = &self.screen {
+            if state.origin() == SetupOrigin::FirstRun && !state.attempted_apply() {
+                let _ = self.persist_first_run_skip();
+            }
+        }
     }
 
     fn close_shell_setup(&mut self) {
@@ -646,22 +702,18 @@ impl App {
             .iter()
             .map(|kind| {
                 let row = self.shell_rows.iter().find(|row| &row.kind == kind);
-                let plan = self.shell_plans.get(kind);
                 let state = if row.is_some_and(|row| row.wsl) {
                     ShellChoiceState::Wsl
                 } else if row.is_some_and(|row| !row.detected) {
                     ShellChoiceState::NotInstalled
                 } else if enabled.contains(kind) {
-                    // Before the startup scan finishes there is no cached plan;
-                    // probe the loader block directly so an enabled shell is not
-                    // mislabelled just because detection is still running.
-                    let installed = plan
-                        .map(|plan| plan.loader_status.is_installed())
-                        .unwrap_or_else(|| {
-                            integration::loader_status_with_config(&config, &paths, kind.as_str())
-                                .map(|outcome| outcome.installed)
-                                .unwrap_or(false)
-                        });
+                    // Probe the loader live: an external CLI/GUI enable or
+                    // repair since startup must not leave a stale
+                    // "loader invalid" label in the editor.
+                    let installed =
+                        integration::loader_status_with_config(&config, &paths, kind.as_str())
+                            .map(|outcome| outcome.installed)
+                            .unwrap_or(false);
                     if installed {
                         ShellChoiceState::Enabled
                     } else {
@@ -835,11 +887,18 @@ impl App {
                 && !key.modifiers.contains(KeyModifiers::ALT)
                 && matches!(key.code, KeyCode::Char('q'));
             if is_ctrl(&key, 'c') || plain_q {
+                if is_ctrl(&key, 'c') {
+                    self.persist_first_run_skip_on_ctrl_c();
+                }
                 self.should_quit = true;
             }
             return;
         }
         if is_ctrl(&key, 'c') {
+            // Ctrl+C bypasses the screen key handler, so persist the first-run
+            // skip here as well; otherwise the full wizard would reappear on
+            // the next launch.
+            self.persist_first_run_skip_on_ctrl_c();
             self.request_quit();
             return;
         }
@@ -1815,6 +1874,11 @@ impl App {
                 }
                 KeyCode::Enter | KeyCode::Char('r') => {
                     if let Some(notice) = notices.get(cursor).cloned() {
+                        let mut remaining = notices;
+                        remaining.remove(cursor);
+                        // Keep sibling notices queued; they reappear after the
+                        // setup screen closes instead of being dropped.
+                        self.pending_shell_notices.extend(remaining);
                         self.open_shell_setup(SetupOrigin::Repair, &[notice.shell]);
                     }
                 }
@@ -2591,7 +2655,11 @@ impl App {
                 if let Screen::Import(state) = &mut self.screen {
                     state.on_confirmed(report);
                 }
-                let suffix = self.auto_sync_full("import");
+                let suffix = if counts.0 > 0 {
+                    self.auto_sync_full("import")
+                } else {
+                    "no imported records; sync skipped".to_string()
+                };
                 self.set_status(
                     StatusKind::Success,
                     format!(
@@ -4925,6 +4993,174 @@ mod tests {
             .get_alias_by_name("loader-gone")
             .unwrap()
             .is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn type_chars(app: &mut App, text: &str) {
+        for character in text.chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+    }
+
+    #[test]
+    fn repairing_one_startup_notice_requeues_its_siblings() {
+        let root = temp_root("notice-siblings");
+        let zsh = fake_executable(&root, "zsh");
+        set_runtime(&root, |config| {
+            config.shells.bash_rc_path = Some(root.join("missing-bashrc"));
+            config.shells.executables.insert("zsh".into(), zsh.clone());
+        });
+        let mut app = App::new(root.clone()).unwrap();
+        app.apply_shell_scan(vec![
+            detected_row(ShellKind::Bash, None),
+            detected_row(ShellKind::Zsh, Some(zsh)),
+            detected_row(ShellKind::PowerShell5, None),
+            detected_row(ShellKind::PowerShell7, None),
+        ]);
+        app.after_shell_scan();
+        let Some(Modal::ShellNotice { notices, .. }) = &app.modal else {
+            panic!("expected notices");
+        };
+        assert_eq!(notices.len(), 2);
+        // Repair the first notice; the sibling must not be dropped.
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.screen, Screen::ShellSetup(_)));
+        app.handle_key(key(KeyCode::Char('q')));
+        let Some(Modal::ShellNotice { notices, .. }) = &app.modal else {
+            panic!("sibling notice was dropped: {:?}", app.modal);
+        };
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].shell, ShellKind::Zsh);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_preflight_setup_reports_failure_and_restores_the_draft() {
+        let root = temp_root("preflight-fail");
+        set_runtime(&root, |config| {
+            config.shells.enabled.clear();
+            config.shells.bash_rc_path = Some(root.join("bashrc"));
+        });
+        let mut app = App::new(root.clone()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.name = "still-blocked".into();
+            editor.draft.executable = "tool".into();
+        }
+        app.save_editor();
+        assert!(matches!(app.modal, Some(Modal::ShellPreflight { .. })));
+        app.handle_key(key(KeyCode::Char('e')));
+        assert!(matches!(app.screen, Screen::ShellSetup(_)));
+        if let Screen::ShellSetup(state) = &mut app.screen {
+            state.inject_rows_for_test(vec![
+                detected_row(ShellKind::Bash, None),
+                detected_row(ShellKind::Zsh, None),
+                detected_row(ShellKind::PowerShell5, None),
+                detected_row(ShellKind::PowerShell7, None),
+            ]);
+        }
+        let executable = root.join(if cfg!(windows) { "bash.exe" } else { "bash" });
+        std::fs::write(&executable, b"").unwrap();
+        // Enter on the checked Bash row -> option 2 -> manual paths. The
+        // profile is prefilled from config, so only the executable is typed.
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Char('2')));
+        type_chars(&mut app, &executable.display().to_string());
+        app.handle_key(key(KeyCode::Tab));
+        app.handle_key(key(KeyCode::Enter));
+        // The executable disappears before confirmation, so apply must fail.
+        std::fs::remove_file(&executable).unwrap();
+        app.handle_key(key(KeyCode::Char('y')));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(matches!(app.screen, Screen::Editor(_)));
+        let Screen::Editor(editor) = &app.screen else {
+            unreachable!()
+        };
+        assert_eq!(editor.draft.name, "still-blocked");
+        assert_eq!(app.status.kind, StatusKind::Error);
+        assert!(
+            app.status.text.contains("did not complete"),
+            "{}",
+            app.status.text
+        );
+        assert!(
+            !app.status.text.contains("updated"),
+            "failed setup must not report success: {}",
+            app.status.text
+        );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_with_zero_accepted_records_does_not_start_an_auto_sync() {
+        let root = temp_root("import-zero");
+        set_runtime(&root, |config| config.runtime.auto_sync = true);
+        let mut app = App::new(root.clone()).unwrap();
+        let summary = crate::data::ImportReportSummary {
+            imported: Vec::new(),
+            skipped: vec!["gs".into()],
+            unsupported: Vec::new(),
+            warnings: Vec::new(),
+            strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+            path: root.join("in.json"),
+            format: "JSON",
+            overwrite_existing: BTreeMap::new(),
+            file_fingerprint: crate::data::FileFingerprint::default(),
+        };
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::ImportConfirm {
+                path: root.join("in.json"),
+                strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+                overwrite_existing: BTreeMap::new(),
+                file_fingerprint: crate::data::FileFingerprint::default(),
+            },
+            result: JobResult::ImportConfirm(Ok(summary)),
+        });
+        app.poll_jobs();
+        assert!(!app.jobs.is_busy(), "zero imports must not sync");
+        assert!(
+            app.status.text.contains("no imported records"),
+            "{}",
+            app.status.text
+        );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn first_run_skip_reports_a_failed_config_write() {
+        let root = empty_first_run_root("skip-write-fail");
+        let mut app = App::new(root.clone()).unwrap();
+        app.start_shell_startup();
+        let paths = AppPaths { root: root.clone() };
+        std::fs::remove_file(paths.config_file()).ok();
+        std::fs::create_dir(paths.config_file()).unwrap();
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(matches!(app.screen, Screen::Browse));
+        assert_eq!(app.status.kind, StatusKind::Error);
+        assert!(
+            app.status.text.contains("could not be saved"),
+            "{}",
+            app.status.text
+        );
+        std::fs::remove_dir_all(paths.config_file()).ok();
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ctrl_c_on_first_run_persists_the_skip_before_quitting() {
+        let root = empty_first_run_root("ctrl-c-skip");
+        let mut app = App::new(root.clone()).unwrap();
+        app.start_shell_startup();
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        assert!(app.should_quit);
+        let paths = AppPaths { root: root.clone() };
+        assert!(paths.config_file().exists());
+        assert!(paths.load_config().unwrap().shells.enabled.is_empty());
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

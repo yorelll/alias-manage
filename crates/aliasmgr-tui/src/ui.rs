@@ -1879,9 +1879,13 @@ fn footer_keys(app: &App) -> String {
             "Tab field  Left/Right or Space toggle  Enter opens shell panel  Ctrl+S save  Esc cancel"
                 .to_string()
         }
-        Screen::ShellSetup(_) => {
-            "j/k move  Space select  Enter preview/apply  e paths  c defaults  r rescan  q skip/back"
-                .to_string()
+        Screen::ShellSetup(state) => {
+            if state.origin() == crate::shell_setup_ui::SetupOrigin::Doctor {
+                "j/k move  Space enable  Enter preview/apply  r rescan  q quit".to_string()
+            } else {
+                "j/k move  Space select  Enter preview/apply  e paths  c defaults  r rescan  q skip/back"
+                    .to_string()
+            }
         }
     }
 }
@@ -3805,6 +3809,37 @@ mod tests {
         }
         assert!(rendered.contains("Enter preview/apply"), "{rendered}");
         assert!(rendered.contains("not found"), "{rendered}");
+        assert!(rendered.contains("loader:"), "{rendered}");
+        assert!(rendered.contains("e paths"), "{rendered}");
+        assert!(rendered.contains("c defaults"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn doctor_shell_setup_key_bar_does_not_advertise_tui_only_keys() {
+        let (root, mut app) = test_app("doctor-key-bar");
+        let paths = aliasmgr_core::config::AppPaths { root: root.clone() };
+        let mut setup = crate::shell_setup_ui::SetupApp::new_with_origin(
+            paths,
+            crate::shell_setup_ui::SetupOrigin::Doctor,
+            &[],
+        )
+        .unwrap();
+        setup.inject_rows_for_test(vec![aliasmgr_core::detection::ShellInstallation {
+            kind: ShellKind::Bash,
+            executable: None,
+            detected: false,
+            source: aliasmgr_core::detection::ShellDetectionSource::NotFound,
+            version: None,
+            wsl: false,
+        }]);
+        app.screen = Screen::ShellSetup(Box::new(setup));
+        let rendered = render_string(&mut app, 120, 34);
+        assert!(rendered.contains("Space enable"), "{rendered}");
+        assert!(!rendered.contains("e paths"), "{rendered}");
+        assert!(!rendered.contains("c defaults"), "{rendered}");
+        assert!(!rendered.contains("d disable"), "{rendered}");
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

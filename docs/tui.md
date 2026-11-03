@@ -215,6 +215,10 @@ shell; the default selection is persisted intent or an already valid loader.
   Later launches show only a compact "not configured" status, never the full
   wizard again. Add/edit remains strictly blocked until a target shell is
   enabled (see preflight).
+- Apply reports every shell separately. A failed executable/loader/sync step is
+  not reported as ready; the failed path overrides are kept, any key returns to
+  the list for a retry, and `q` returns with the failure visible. A config write
+  failure on skip is reported instead of claiming success.
 
 Detection is best effort: Store/portable installs, changed `PATH`, shells
 installed after launch and WSL can be missed. Manual executable and profile
@@ -248,8 +252,13 @@ first-run and repair, with these additions:
   paths, `c` previews platform defaults (clears stored overrides via the core
   `CLEAR_OVERRIDE` sentinel; persisted only after `y`), `r` rescans, and `d`
   disables the selected shell immediately (persisted; loader block retained).
+  An explicit deselect/disable is never re-added by a rescan or by the presence
+  of a leftover valid loader.
 - Loader status and target path are shown per shell. Applying is idempotent and
   does not rewrite a matching block.
+- The panel re-reads the shared config whenever it rescans or builds a preview,
+  so an enable/path change made by the CLI or GUI while it is open is reflected
+  before writing.
 - Closing the panel restores the settings screen; an unsaved settings draft is
   never discarded by opening the panel.
 
