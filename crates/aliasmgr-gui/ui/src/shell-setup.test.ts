@@ -479,6 +479,8 @@ test("settings shell panel reuses status, per-shell toggles and clear-override s
     "shellSetup.clearProfile",
     "shellSetup.overrideCleared",
     "initialStatuses,",
+    "lastAdoptedStatuses",
+    "initialStatuses === lastAdoptedStatuses.current",
     "editing !== null || busy !== null",
     "shellSetup.rescan",
     "shellSetup.executable",

@@ -51,6 +51,12 @@ export function ShellSettingsPanel({
   const [plan, setPlan] = useState<ShellSetupPlan | null>(null);
   const [outcome, setOutcome] = useState<ShellSetupOutcome | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  // The last App snapshot this panel adopted. Comparing references (rather
+  // than only the editing/busy flags) keeps a local Rescan/Disable result from
+  // being reverted by the unchanged prop when busy clears.
+  const lastAdoptedStatuses = useRef<ShellStatus[] | null>(
+    initialStatuses.length > 0 ? initialStatuses : null,
+  );
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -64,12 +70,15 @@ export function ShellSettingsPanel({
     }
   }, [t]);
 
-  // Adopt every fresh App startup/banner refresh (new array reference), not
-  // just the first one, so wizard/banner actions are reflected without a
-  // manual Rescan. Postpone while the user is editing or an action is running.
+  // Adopt only genuinely new App snapshots (a changed array reference), so
+  // wizard/banner actions appear without Rescan while local status updates
+  // survive the busy flag clearing. Postpone while editing/running an action
+  // and adopt the latest prop once that finishes.
   useEffect(() => {
     if (initialStatuses.length === 0) return;
     if (editing !== null || busy !== null) return;
+    if (initialStatuses === lastAdoptedStatuses.current) return;
+    lastAdoptedStatuses.current = initialStatuses;
     setStatuses(normalizeShellStatuses(initialStatuses));
     setLoading(false);
   }, [initialStatuses, editing, busy]);
