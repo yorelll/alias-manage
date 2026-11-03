@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import type { Settings } from "../lib";
+import type { Settings, ShellStatus } from "../lib";
 import {
   SHELLS,
   configDirExampleCommand,
@@ -19,7 +19,17 @@ import { LANGUAGES, isLanguage } from "../i18n";
 import { useI18n } from "../language";
 import { ShellSettingsPanel } from "./ShellSettingsPanel";
 
-export function SettingsPanel({ focusShellsToken = 0, onShellsChanged }: { focusShellsToken?: number; onShellsChanged?: () => void }) {
+export function SettingsPanel({
+  focusShellsToken = 0,
+  onShellsChanged,
+  shellStatuses = [],
+  active = true,
+}: {
+  focusShellsToken?: number;
+  onShellsChanged?: () => void;
+  shellStatuses?: ShellStatus[];
+  active?: boolean;
+}) {
   const { language, setLanguage, t } = useI18n();
   const [loaded, setLoaded] = useState<Settings | null>(null);
   const [draft, setDraft] = useState<Settings | null>(null);
@@ -226,7 +236,12 @@ export function SettingsPanel({ focusShellsToken = 0, onShellsChanged }: { focus
         </button>
       </div>
 
-      <ShellSettingsPanel focusToken={focusShellsToken} onChanged={onShellsChanged} />
+      <ShellSettingsPanel
+        focusToken={focusShellsToken}
+        onChanged={onShellsChanged}
+        initialStatuses={shellStatuses}
+        active={active}
+      />
     </section>
   );
 }

@@ -45,9 +45,18 @@ interface AliasWizardProps {
   onSave: (alias: AliasDto) => Promise<SaveAliasOutcome>;
   /** Navigate to the shared shell setup flow, keeping this wizard mounted. */
   onOpenShellSetup?: () => void;
+  /** Status rows already loaded by App; avoids a second detection probe. */
+  shellStatuses?: ShellStatus[];
 }
 
-export function AliasWizard({ initial, tags, onCancel, onSave, onOpenShellSetup }: AliasWizardProps) {
+export function AliasWizard({
+  initial,
+  tags,
+  onCancel,
+  onSave,
+  onOpenShellSetup,
+  shellStatuses: initialShellStatuses = [],
+}: AliasWizardProps) {
   const { language, t } = useI18n();
   const [draft, setDraft] = useState<AliasDto>(initial ?? emptyAliasDraft());
   const [envRows, setEnvRows] = useState<EnvRow[]>(() => environmentToRows((initial ?? emptyAliasDraft()).environment));
@@ -56,7 +65,7 @@ export function AliasWizard({ initial, tags, onCancel, onSave, onOpenShellSetup 
   )));
   const [error, setError] = useState<string | null>(null);
   const [preflight, setPreflight] = useState<AliasPreflight | null>(null);
-  const [shellStatuses, setShellStatuses] = useState<ShellStatus[]>([]);
+  const [shellStatuses, setShellStatuses] = useState<ShellStatus[]>(() => normalizeShellStatuses(initialShellStatuses));
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previews, setPreviews] = useState<PreviewSnippet[] | null>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -83,14 +92,19 @@ export function AliasWizard({ initial, tags, onCancel, onSave, onOpenShellSetup 
   useEffect(() => { setError(null); setPreviewError(null); setPreflight(null); }, [language]);
 
   // Shell availability labels (enabled / disabled / not installed) come from
-  // the same core-backed status command the setup panels use.
+  // the same core-backed status command the setup panels use. Prefer App's
+  // shared rows; only fetch when they are unavailable.
   useEffect(() => {
+    if (initialShellStatuses.length > 0) {
+      setShellStatuses(normalizeShellStatuses(initialShellStatuses));
+      return;
+    }
     let cancelled = false;
     tauriInvoke("shell_status")
       .then((value) => { if (!cancelled) setShellStatuses(normalizeShellStatuses(value)); })
       .catch(() => undefined);
     return () => { cancelled = true; };
-  }, []);
+  }, [initialShellStatuses]);
 
   const invalidatePreview = () => {
     previewToken.current += 1;

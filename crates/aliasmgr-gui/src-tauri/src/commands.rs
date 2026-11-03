@@ -1,7 +1,6 @@
 use aliasmgr_core::{
     config::{AppConfig, AppPaths},
     detection::{self, detect, find_definition_source, DetectionContext},
-
     model::{
         normalize_restriction, AliasRecord, ManagedNameSet, PathMode, PathOrigin, PathRestriction,
         ShellKind, TargetType, SUPPORTED_SHELLS,
@@ -228,7 +227,7 @@ fn database() -> Result<Database, String> {
     Database::open(paths.root.join("aliases.db")).map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn list_aliases() -> Result<Vec<AliasDto>, String> {
     let database = database()?;
     AliasService::new(&database)
@@ -237,7 +236,7 @@ pub fn list_aliases() -> Result<Vec<AliasDto>, String> {
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn search_aliases(request: SearchRequest) -> Result<Vec<AliasDto>, String> {
     let database = database()?;
     let query = SearchQuery {
@@ -260,7 +259,7 @@ pub fn search_aliases(request: SearchRequest) -> Result<Vec<AliasDto>, String> {
         .map_err(|error| error.to_string())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn tag_counts() -> Result<BTreeMap<String, usize>, String> {
     let database = database()?;
     AliasService::new(&database)
@@ -360,7 +359,7 @@ pub fn preview_alias(alias: AliasDto) -> Result<Vec<ShellPreviewDto>, String> {
 /// keeps the wizard open and offers the shell setup flow. After a successful
 /// database write, affected shells are synced once when `runtime.auto_sync`
 /// is true. The GUI has no `--allow-missing-loader` escape (CLI-only).
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_alias(mut alias: AliasDto) -> Result<SaveAliasResult, String> {
     let paths = AppPaths::discover(None);
     let config = current_shell_config(&paths)?;
@@ -392,7 +391,7 @@ pub fn create_alias(mut alias: AliasDto) -> Result<SaveAliasResult, String> {
 /// revision is honored (optimistic concurrency), and removing a shell retires
 /// the name for it so the next sync emits the cleanup block. Affected shells
 /// are the old ∪ new sets, synced once after the write.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn update_alias(alias: AliasDto) -> Result<SaveAliasResult, String> {
     let paths = AppPaths::discover(None);
     let config = current_shell_config(&paths)?;
@@ -433,7 +432,7 @@ pub fn update_alias(alias: AliasDto) -> Result<SaveAliasResult, String> {
 /// Tauri command: delete an alias (retiring its names) and sync the affected
 /// shells once when auto-sync is enabled. The retire/delete pair is committed
 /// before sync; a sync failure never rolls back the database write.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_alias(id: String) -> Result<DeleteAliasResult, String> {
     let parsed = uuid::Uuid::parse_str(&id).map_err(|error| error.to_string())?;
     let paths = AppPaths::discover(None);
@@ -462,10 +461,7 @@ pub fn delete_alias(id: String) -> Result<DeleteAliasResult, String> {
     } else {
         AutoSyncDto::skipped("not_saved")
     };
-    Ok(DeleteAliasResult {
-        deleted,
-        auto_sync,
-    })
+    Ok(DeleteAliasResult { deleted, auto_sync })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -524,7 +520,7 @@ pub struct SettingsDto {
 ///
 /// Target shells, the revision floor, generated-file checks, and loader probes
 /// all live in `aliasmgr_core::doctor`, so the CLI and GUI cannot disagree.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn doctor_status() -> Result<Vec<DoctorFindingDto>, String> {
     let paths = AppPaths::discover(None);
     // Capture existence before opening: `Database::open` creates the file.
@@ -561,7 +557,7 @@ fn generated_read_error_code(kind: std::io::ErrorKind) -> &'static str {
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn generated_preview(shell: String) -> Result<String, String> {
     let kind = shell_from_str(&shell)?;
     if matches!(kind, ShellKind::Fish | ShellKind::PosixSh) {
@@ -647,7 +643,7 @@ fn shell_status_str(status: &aliasmgr_core::model::ShellStatus) -> &'static str 
 ///
 /// Uses the same core orchestration as `aliasmgr sync`, so the target-shell
 /// set and monotonic revision rules cannot drift between front ends.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn sync_aliases() -> Result<SyncRunDto, String> {
     let paths = AppPaths::discover(None);
     let run = aliasmgr_core::sync::sync_config_dir_collect_io(&paths.root)
@@ -668,7 +664,7 @@ pub struct LoaderInstallDto {
 ///
 /// Delegates path resolution and profile editing to
 /// `aliasmgr_core::integration`, which is the same code the CLI uses.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_install(shell: String) -> Result<LoaderInstallDto, String> {
     let paths = AppPaths::discover(None);
     let outcome = aliasmgr_core::integration::install_loader(&paths, &shell)
@@ -887,9 +883,22 @@ fn current_shell_config(paths: &AppPaths) -> Result<AppConfig, String> {
     paths.load_config().map_err(|error| error.to_string())
 }
 
+/// True when the currently detected executable was already dismissed for this
+/// shell. Disabling a shell records the same snapshot, so it is not offered
+/// again immediately; a reinstall at a different path prompts once more.
+fn shell_prompt_dismissed(config: &AppConfig, status: &ShellStatusDto) -> bool {
+    status.executable.as_deref().is_some_and(|executable| {
+        config
+            .shells
+            .seen
+            .get(&status.shell)
+            .is_some_and(|seen| seen == executable)
+    })
+}
+
 /// Tauri command: list all four supported shells with detection, user intent
 /// and live loader status. Read-only; never writes configuration or profiles.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_status() -> Result<Vec<ShellStatusDto>, String> {
     let paths = AppPaths::discover(None);
     let config = current_shell_config(&paths)?;
@@ -899,7 +908,7 @@ pub fn shell_status() -> Result<Vec<ShellStatusDto>, String> {
 /// Tauri command: startup shell state. A missing `config.toml` means a fresh
 /// install and enables the one-time first-run panel; later launches only report
 /// invalid enabled loaders and newly detected shells.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_startup_state() -> Result<ShellStartupStateDto, String> {
     let paths = AppPaths::discover(None);
     let config_exists = paths.config_file().exists();
@@ -920,7 +929,12 @@ pub fn shell_startup_state() -> Result<ShellStartupStateDto, String> {
         .collect();
     let newly_detected = shells
         .iter()
-        .filter(|status| status.detected && !status.enabled && !status.wsl)
+        .filter(|status| {
+            status.detected
+                && !status.enabled
+                && !status.wsl
+                && !shell_prompt_dismissed(&config, status)
+        })
         .map(|status| status.shell.clone())
         .collect();
     Ok(ShellStartupStateDto {
@@ -935,7 +949,7 @@ pub fn shell_startup_state() -> Result<ShellStartupStateDto, String> {
 /// Tauri command: persist the user's enabled intent atomically. It does not
 /// install loaders or write generated files; confirmed setup uses
 /// [`shell_setup_apply`]. Unsupported values are rejected by core validation.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_set_enabled(shells: Vec<String>) -> Result<Vec<ShellStatusDto>, String> {
     let paths = AppPaths::discover(None);
     let requested = parse_enabled_shells(&shells)?;
@@ -944,8 +958,35 @@ pub fn shell_set_enabled(shells: Vec<String>) -> Result<Vec<ShellStatusDto>, Str
     shell_statuses(&paths, &config)
 }
 
+/// Tauri command: add or remove one shell by re-reading the shared config, so
+/// a shell enabled by another entry point is never dropped by a stale list.
+/// Disabling also records the detected executable in `shells.seen` to stop the
+/// startup prompt from re-offering it.
+#[tauri::command(async)]
+pub fn shell_set_shell_enabled(
+    shell: String,
+    enabled: bool,
+) -> Result<Vec<ShellStatusDto>, String> {
+    let kind = shell_from_str(&shell)?;
+    let paths = AppPaths::discover(None);
+    shell_setup::set_shell_enabled(&paths, &kind, enabled).map_err(|error| error.to_string())?;
+    let config = current_shell_config(&paths)?;
+    shell_statuses(&paths, &config)
+}
+
+/// Tauri command: persist that the user dismissed the enable prompt for the
+/// current executable of these shells. A later executable change prompts again.
+#[tauri::command(async)]
+pub fn shell_dismiss_detected(shells: Vec<String>) -> Result<Vec<ShellStatusDto>, String> {
+    let requested = parse_enabled_shells(&shells)?;
+    let paths = AppPaths::discover(None);
+    shell_setup::mark_shells_seen(&paths, &requested).map_err(|error| error.to_string())?;
+    let config = current_shell_config(&paths)?;
+    shell_statuses(&paths, &config)
+}
+
 /// Tauri command: preview one shell setup without writing anything.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_setup_plan(
     shell: String,
     executable: Option<String>,
@@ -1050,7 +1091,7 @@ fn sync_run_dto(paths: &AppPaths, run: &SyncRun) -> SyncRunDto {
 /// Tauri command: confirmed setup. Persists enabled intent and path overrides,
 /// installs the loader, then syncs that shell once. The caller must have shown
 /// a preview and obtained confirmation first.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_setup_apply(
     shell: String,
     executable: Option<String>,
@@ -1063,8 +1104,7 @@ pub fn shell_setup_apply(
         sync: true,
     };
     let paths = AppPaths::discover(None);
-    let outcome =
-        shell_setup::apply_shell_setup(&paths, &kind, &options).map_err(setup_error)?;
+    let outcome = shell_setup::apply_shell_setup(&paths, &kind, &options).map_err(setup_error)?;
     let reload_command = outcome
         .sync
         .as_ref()
@@ -1095,7 +1135,7 @@ pub fn shell_setup_apply(
 /// written with an empty `shells.enabled`, so the next launch shows only a
 /// compact "not configured" notice instead of the full wizard. An existing
 /// configuration is never modified.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn shell_setup_skip() -> Result<(), String> {
     let paths = AppPaths::discover(None);
     if !paths.config_file().exists() {
@@ -1130,7 +1170,7 @@ fn preflight_for(
 /// Tauri command: preflight target shells without writing. The save commands
 /// run the same check; this exposes it so the wizard can explain a shell that
 /// is disabled, missing a loader, or not installed.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn preflight_alias_shells(shells: Vec<String>) -> Result<AliasPreflightDto, String> {
     let requested = parse_enabled_shells(&shells)?;
     let paths = AppPaths::discover(None);
@@ -1172,7 +1212,9 @@ fn auto_sync_after_write(paths: &AppPaths, affected: &[ShellKind]) -> AutoSyncDt
             attempted: true,
             skipped_reason: None,
             run: None,
-            error: Some(format!("database changes were saved, but sync failed: {error}")),
+            error: Some(format!(
+                "database changes were saved, but sync failed: {error}"
+            )),
             error_code: Some(sync_error_code(&error)),
         },
     }
@@ -1209,7 +1251,9 @@ fn auto_sync_full(paths: &AppPaths) -> AutoSyncDto {
             attempted: true,
             skipped_reason: None,
             run: None,
-            error: Some(format!("imported records were saved, but sync failed: {error}")),
+            error: Some(format!(
+                "imported records were saved, but sync failed: {error}"
+            )),
             error_code: Some(sync_error_code(&error)),
         },
     }
@@ -1276,7 +1320,7 @@ fn evaluate_content_import(
 ///
 /// The existing-alias set is read through a read-only connection and a missing
 /// database is treated as empty, so previewing never creates or writes files.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_preview_content(
     content: String,
     filename: String,
@@ -1291,18 +1335,13 @@ pub fn import_preview_content(
         BTreeMap::new()
     };
     evaluate_content_import(&content, &filename, &existing)
-        .map(|report| {
-            import_dto(
-                report.into_public(),
-                AutoSyncDto::skipped("preview"),
-            )
-        })
+        .map(|report| import_dto(report.into_public(), AutoSyncDto::skipped("preview")))
 }
 
 /// Tauri command: evaluate and atomically persist pasted/dropped import content.
 /// A confirmed import is a batch write: sync once when auto-sync is enabled.
 /// Preview never syncs.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_confirm_content(
     content: String,
     filename: String,
@@ -1335,14 +1374,13 @@ fn import_dto(
     }
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_preview(file: String) -> Result<ImportPreviewDto, String> {
-    import_path(std::path::Path::new(&file)).map(|report| {
-        import_dto(report.into_public(), AutoSyncDto::skipped("preview"))
-    })
+    import_path(std::path::Path::new(&file))
+        .map(|report| import_dto(report.into_public(), AutoSyncDto::skipped("preview")))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
     let report = import_path(std::path::Path::new(&file))?;
     let paths = AppPaths::discover(None);
@@ -1358,7 +1396,7 @@ pub fn import_confirm(file: String) -> Result<ImportPreviewDto, String> {
     Ok(import_dto(report.into_public(), auto_sync))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn config_get() -> Result<SettingsDto, String> {
     let paths = AppPaths::discover(None);
     let config = paths.load_config().map_err(|error| error.to_string())?;
@@ -1377,7 +1415,7 @@ pub fn config_get() -> Result<SettingsDto, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
     // The config directory is resolved at startup and is read-only in the UI:
     // never create a different directory or report a save that did not happen.
@@ -1417,7 +1455,7 @@ pub fn config_save(settings: SettingsDto) -> Result<SettingsDto, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> {
     Ok(if purge {
         vec!["将删除 Alias Manager 生成文件、数据库和标记加载块；引用目标文件保持不变".into()]
@@ -1426,7 +1464,7 @@ pub fn uninstall_preview(purge: bool) -> Result<Vec<String>, String> {
     })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
     use aliasmgr_core::shells::common::{remove_loader, write_profile_content};
 
@@ -1464,7 +1502,7 @@ pub fn uninstall_confirm(purge: bool) -> Result<Vec<String>, String> {
     Ok(vec!["卸载清理已完成；引用目标文件未处理".into()])
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn overridden_definitions() -> Result<Vec<serde_json::Value>, String> {
     database()?
         .overridden_definitions()
@@ -1492,7 +1530,7 @@ fn override_scan_paths(
 /// aliases are already defined there. File content is only read, never
 /// executed, and only metadata is stored: the raw definition line is never
 /// persisted or returned to the frontend.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn scan_overrides() -> Result<Vec<serde_json::Value>, String> {
     let paths = AppPaths::discover(None);
     let database_path = paths.root.join("aliases.db");
@@ -3360,9 +3398,7 @@ mod tests {
         );
         assert!(statuses.iter().all(|status| !status.detected));
         assert!(statuses.iter().all(|status| !status.enabled));
-        assert!(statuses
-            .iter()
-            .all(|status| status.action == "needs_path"));
+        assert!(statuses.iter().all(|status| status.action == "needs_path"));
         assert!(statuses
             .iter()
             .all(|status| status.loader_status == "missing"));
@@ -3376,20 +3412,29 @@ mod tests {
             .insert("bash".into(), fake_shell(&temp.root, "bash"));
         save_shell_config(&paths, &config);
         let statuses = shell_set_enabled(vec!["bash".into()]).unwrap();
-        let bash = statuses.iter().find(|status| status.shell == "bash").unwrap();
+        let bash = statuses
+            .iter()
+            .find(|status| status.shell == "bash")
+            .unwrap();
         assert!(bash.detected);
         assert!(bash.enabled);
         assert_eq!(bash.action, "install_loader");
         assert_eq!(bash.loader_status, "missing");
         assert_eq!(bash.source, "manual");
         let expected_target = temp.root.join("bashrc").to_string_lossy().into_owned();
-        assert_eq!(bash.loader_target.as_deref(), Some(expected_target.as_str()));
+        assert_eq!(
+            bash.loader_target.as_deref(),
+            Some(expected_target.as_str())
+        );
 
         // A confirmed setup installs the loader; a rescan reflects it.
         let outcome = shell_setup_apply("bash".into(), None, None).unwrap();
         assert!(outcome.loader_installed);
         let statuses = shell_status().unwrap();
-        let bash = statuses.iter().find(|status| status.shell == "bash").unwrap();
+        let bash = statuses
+            .iter()
+            .find(|status| status.shell == "bash")
+            .unwrap();
         assert_eq!(bash.loader_status, "installed");
         assert_eq!(bash.action, "enable");
         assert!(temp.root.join("bashrc").exists());
@@ -3411,21 +3456,25 @@ mod tests {
         let statuses =
             shell_set_enabled(vec!["powershell7".into(), "bash".into(), "bash".into()]).unwrap();
         assert_eq!(enabled_state(&paths), vec!["bash", "powershell7"]);
-        assert!(statuses
-            .iter()
-            .find(|status| status.shell == "bash")
-            .unwrap()
-            .enabled);
+        assert!(
+            statuses
+                .iter()
+                .find(|status| status.shell == "bash")
+                .unwrap()
+                .enabled
+        );
         assert!(!paths.load_config().unwrap().shells.enabled.is_empty());
         assert_eq!(paths.load_config().unwrap().backups.rc_keep, 3);
 
         let statuses = shell_set_enabled(vec!["zsh".into()]).unwrap();
         assert_eq!(enabled_state(&paths), vec!["zsh"]);
-        assert!(!statuses
-            .iter()
-            .find(|status| status.shell == "bash")
-            .unwrap()
-            .enabled);
+        assert!(
+            !statuses
+                .iter()
+                .find(|status| status.shell == "bash")
+                .unwrap()
+                .enabled
+        );
 
         let cleared = shell_set_enabled(Vec::new()).unwrap();
         assert!(enabled_state(&paths).is_empty());
@@ -3491,7 +3540,12 @@ mod tests {
         );
         assert!(!custom_profile.exists());
         let saved = paths.load_config().unwrap();
-        assert!(saved.shells.executables.get("zsh").unwrap().ends_with("missing-zsh"));
+        assert!(saved
+            .shells
+            .executables
+            .get("zsh")
+            .unwrap()
+            .ends_with("missing-zsh"));
         assert!(!saved.shells.enabled.contains(&"zsh".to_string()));
     }
 
@@ -3573,7 +3627,10 @@ mod tests {
         assert!(outcome.loader_installed);
         assert!(profile.exists());
         let saved = paths.load_config().unwrap();
-        assert_eq!(saved.shells.executables.get("zsh").cloned(), Some(executable));
+        assert_eq!(
+            saved.shells.executables.get("zsh").cloned(),
+            Some(executable)
+        );
         assert_eq!(saved.shells.zsh_rc_path, Some(profile));
         assert_eq!(saved.shells.enabled, vec!["zsh"]);
     }
@@ -3596,7 +3653,11 @@ mod tests {
 
         let relative = shell_setup_apply(
             "bash".into(),
-            Some(fake_shell(&temp.root, "bash").to_string_lossy().into_owned()),
+            Some(
+                fake_shell(&temp.root, "bash")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
             Some("relative/.bashrc".into()),
         )
         .unwrap_err();
@@ -3894,9 +3955,11 @@ mod tests {
             .unwrap()
             .retired
             .contains(&"moves".to_string()));
-        let bash_generated =
-            std::fs::read_to_string(temp.root.join("generated/bash.sh")).unwrap();
-        assert!(!bash_generated.contains("function moves"), "{bash_generated}");
+        let bash_generated = std::fs::read_to_string(temp.root.join("generated/bash.sh")).unwrap();
+        assert!(
+            !bash_generated.contains("function moves"),
+            "{bash_generated}"
+        );
         let zsh_generated = std::fs::read_to_string(temp.root.join("generated/zsh.sh")).unwrap();
         assert!(zsh_generated.contains("moves"), "{zsh_generated}");
     }
@@ -3929,7 +3992,10 @@ mod tests {
         assert!(saved.saved, "the database write still succeeds");
         assert!(saved.auto_sync.attempted);
         assert!(saved.auto_sync.error.is_none());
-        let run = saved.auto_sync.run.expect("per-shell failures are collected");
+        let run = saved
+            .auto_sync
+            .run
+            .expect("per-shell failures are collected");
         assert!(run.failed);
         assert_eq!(run.results.len(), 1);
         assert_eq!(run.results[0].status, "failed");
@@ -3973,14 +4039,10 @@ mod tests {
             shells: vec![ShellKind::Bash],
             ..Default::default()
         }]);
-        let preview =
-            import_preview_content(content.clone(), "import.json".into()).unwrap();
+        let preview = import_preview_content(content.clone(), "import.json".into()).unwrap();
         assert_eq!(preview.imported, vec!["imported"]);
         assert!(!preview.auto_sync.attempted);
-        assert_eq!(
-            preview.auto_sync.skipped_reason.as_deref(),
-            Some("preview")
-        );
+        assert_eq!(preview.auto_sync.skipped_reason.as_deref(), Some("preview"));
         assert!(!temp.root.join("generated").exists());
 
         let confirmed = import_confirm_content(content, "import.json".into()).unwrap();
@@ -3992,6 +4054,142 @@ mod tests {
         assert!(!run.failed);
         let generated = std::fs::read_to_string(temp.root.join("generated/bash.sh")).unwrap();
         assert!(generated.contains("imported"), "{generated}");
+    }
+
+    #[test]
+    fn per_shell_toggle_preserves_external_enables_and_suppresses_the_prompt() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = TempConfig::new("per-shell-toggle");
+        let paths = AppPaths {
+            root: temp.root.clone(),
+        };
+        let mut config = shell_config(&temp.root);
+        let bash_executable = fake_shell(&temp.root, "bash");
+        config
+            .shells
+            .executables
+            .insert("bash".into(), bash_executable.clone());
+        config
+            .shells
+            .executables
+            .insert("zsh".into(), fake_shell(&temp.root, "zsh"));
+        // Another entry point enabled zsh before the GUI action.
+        config.shells.enabled = vec!["zsh".into()];
+        save_shell_config(&paths, &config);
+
+        let statuses = shell_set_shell_enabled("bash".into(), true).unwrap();
+        assert_eq!(enabled_state(&paths), vec!["bash", "zsh"]);
+        assert!(
+            statuses
+                .iter()
+                .find(|status| status.shell == "bash")
+                .unwrap()
+                .enabled
+        );
+
+        let statuses = shell_set_shell_enabled("bash".into(), false).unwrap();
+        assert_eq!(enabled_state(&paths), vec!["zsh"]);
+        assert!(
+            !statuses
+                .iter()
+                .find(|status| status.shell == "bash")
+                .unwrap()
+                .enabled
+        );
+        let saved = paths.load_config().unwrap();
+        assert_eq!(
+            saved.shells.seen.get("bash").map(String::as_str),
+            Some(bash_executable.to_string_lossy().as_ref())
+        );
+        // Disabling must not immediately re-offer the same shell as "new".
+        let state = shell_startup_state().unwrap();
+        assert!(!state.newly_detected.contains(&"bash".to_string()));
+
+        // Reinstalling at a different executable prompts once again.
+        let replacement = temp.root.join("bash-reinstalled");
+        std::fs::write(&replacement, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut changed = paths.load_config().unwrap();
+        changed
+            .shells
+            .executables
+            .insert("bash".into(), replacement);
+        save_shell_config(&paths, &changed);
+        let state = shell_startup_state().unwrap();
+        assert!(state.newly_detected.contains(&"bash".to_string()));
+    }
+
+    #[test]
+    fn dismissing_a_detected_shell_persists_and_hides_the_prompt() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = TempConfig::new("dismiss-detected");
+        let paths = AppPaths {
+            root: temp.root.clone(),
+        };
+        let mut config = shell_config(&temp.root);
+        config
+            .shells
+            .executables
+            .insert("zsh".into(), fake_shell(&temp.root, "zsh"));
+        save_shell_config(&paths, &config);
+
+        let before = shell_startup_state().unwrap();
+        assert_eq!(before.newly_detected, vec!["zsh"]);
+        shell_dismiss_detected(vec!["zsh".into()]).unwrap();
+        let after = shell_startup_state().unwrap();
+        assert!(after.newly_detected.is_empty());
+        // The snapshot lives in shared config, so a later process/scan sees it.
+        let saved = paths.load_config().unwrap();
+        assert!(saved.shells.seen.contains_key("zsh"));
+        assert!(shell_startup_state().unwrap().newly_detected.is_empty());
+    }
+
+    #[test]
+    fn setup_apply_clears_a_profile_override_with_the_clear_sentinel() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let temp = TempConfig::new("clear-override");
+        let paths = AppPaths {
+            root: temp.root.clone(),
+        };
+        let mut config = shell_config(&temp.root);
+        let executable = fake_shell(&temp.root, "bash");
+        config
+            .shells
+            .executables
+            .insert("bash".into(), executable.clone());
+        save_shell_config(&paths, &config);
+
+        let outcome = shell_setup_apply(
+            "bash".into(),
+            Some(executable.to_string_lossy().into_owned()),
+            Some(aliasmgr_core::shell_setup::CLEAR_OVERRIDE.into()),
+        )
+        .unwrap();
+        assert!(outcome.loader_installed);
+        let saved = paths.load_config().unwrap();
+        assert_eq!(saved.shells.bash_rc_path, None);
+        assert_eq!(saved.shells.executables.get("bash"), Some(&executable));
+        // The loader was written to the isolated home's default RC, not the
+        // previously configured override path.
+        let default_rc = aliasmgr_core::config::home_dir().unwrap().join(".bashrc");
+        assert!(default_rc.exists(), "{}", default_rc.display());
+        assert!(std::fs::read_to_string(&default_rc)
+            .unwrap()
+            .contains(aliasmgr_core::shells::common::START_MARKER));
+
+        // Previewing with the executable sentinel does not error or write.
+        let plan = shell_setup_plan(
+            "bash".into(),
+            Some(aliasmgr_core::shell_setup::CLEAR_OVERRIDE.into()),
+            None,
+        )
+        .unwrap();
+        assert!(!plan.loader_block.as_deref().unwrap_or_default().is_empty());
     }
 
     #[test]

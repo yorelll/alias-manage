@@ -59,6 +59,13 @@ pub struct ShellPathOverrides {
     /// Optional non-standard executable paths keyed by stable shell name.
     #[serde(default)]
     pub executables: std::collections::BTreeMap<String, PathBuf>,
+    /// Last executable path the user dismissed or disabled for a detected but
+    /// not-enabled shell. The GUI uses this to avoid re-prompting on every
+    /// launch; a changed executable (reinstall or different install path)
+    /// makes the shell "newly detected" again. Values are display-safe paths,
+    /// not secrets, and never affect detection or enablement by themselves.
+    #[serde(default)]
+    pub seen: std::collections::BTreeMap<String, String>,
     pub bash_rc_path: Option<PathBuf>,
     pub zsh_rc_path: Option<PathBuf>,
     pub powershell5_profile_path: Option<PathBuf>,
@@ -177,6 +184,13 @@ impl AppConfig {
                 return Err(AliasError::Config(format!(
                     "shell executable path for {name} must be absolute (got {})",
                     path.display()
+                )));
+            }
+        }
+        for name in self.shells.seen.keys() {
+            if ShellKind::parse_supported(name).is_none() {
+                return Err(AliasError::Config(format!(
+                    "unsupported seen shell key: {name} (expected bash, zsh, powershell5, or powershell7)"
                 )));
             }
         }
@@ -837,6 +851,10 @@ server:/data /data nfs4 rw 0 0
             .shells
             .executables
             .insert("bash".into(), PathBuf::from("/opt/git/bash"));
+        config
+            .shells
+            .seen
+            .insert("zsh".into(), "/usr/bin/zsh".into());
         config.save(&paths).unwrap();
 
         let saved = fs::read_to_string(paths.config_file()).unwrap();
@@ -861,6 +879,10 @@ server:/data /data nfs4 rw 0 0
         assert_eq!(
             loaded.shells.executables.get("powershell7"),
             Some(&PathBuf::from(r"C:\Tools\pwsh.exe"))
+        );
+        assert_eq!(
+            loaded.shells.seen.get("zsh").map(String::as_str),
+            Some("/usr/bin/zsh")
         );
         let _ = fs::remove_dir_all(root);
     }
@@ -934,6 +956,12 @@ server:/data /data nfs4 rw 0 0
             .shells
             .executables
             .insert("bash".into(), absolute_test_path());
+        assert!(config.validate().is_ok());
+
+        config.shells.seen.insert("fish".into(), "/bin/fish".into());
+        assert!(config.validate().is_err());
+        config.shells.seen.clear();
+        config.shells.seen.insert("bash".into(), "/bin/bash".into());
         assert!(config.validate().is_ok());
     }
 

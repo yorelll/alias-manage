@@ -6,14 +6,15 @@ import type {
   ShellStatus,
 } from "../lib";
 import {
+  CLEAR_OVERRIDE,
   normalizeShellSetupOutcome,
   normalizeShellSetupPlan,
   normalizeShellStatuses,
-  shellEnableArgs,
   shellLabel,
   shellLoaderLabel,
   shellOptionState,
   shellOptionStateLabel,
+  shellSetShellEnabledArgs,
   shellSetupArgs,
   shellSetupOutcomeLines,
   shellSourceLabel,
@@ -27,12 +28,21 @@ interface ShellSettingsPanelProps {
   focusToken?: number;
   /** Notify the app so startup banners refresh after enable/disable/setup. */
   onChanged?: () => void;
+  /** Status rows already loaded by App; avoids a second startup probe. */
+  initialStatuses?: ShellStatus[];
+  /** Only fetch when the Settings page is visible. */
+  active?: boolean;
 }
 
 /** Settings panel for enable/disable, rescan, path overrides and re-setup. */
-export function ShellSettingsPanel({ focusToken = 0, onChanged }: ShellSettingsPanelProps) {
+export function ShellSettingsPanel({
+  focusToken = 0,
+  onChanged,
+  initialStatuses = [],
+  active = true,
+}: ShellSettingsPanelProps) {
   const { language, t } = useI18n();
-  const [statuses, setStatuses] = useState<ShellStatus[]>([]);
+  const [statuses, setStatuses] = useState<ShellStatus[]>(() => normalizeShellStatuses(initialStatuses));
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -42,12 +52,14 @@ export function ShellSettingsPanel({ focusToken = 0, onChanged }: ShellSettingsP
   const [plan, setPlan] = useState<ShellSetupPlan | null>(null);
   const [outcome, setOutcome] = useState<ShellSetupOutcome | null>(null);
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  const appStatusesUsed = useRef(statuses.length > 0);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       setStatuses(normalizeShellStatuses(await tauriInvoke("shell_status")));
+      appStatusesUsed.current = true;
     } catch (reason) {
       setError(t("shellSetup.rescanFailed", { error: String(reason) }));
     } finally {
@@ -55,16 +67,29 @@ export function ShellSettingsPanel({ focusToken = 0, onChanged }: ShellSettingsP
     }
   }, [t]);
 
+  // Share App's startup status rows instead of probing again on mount. Only
+  // the visible Settings page triggers a fetch when no rows are available.
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!appStatusesUsed.current && initialStatuses.length > 0) {
+      appStatusesUsed.current = true;
+      setStatuses(normalizeShellStatuses(initialStatuses));
+      setLoading(false);
+    }
+  }, [initialStatuses]);
+
+  useEffect(() => {
+    if (active && statuses.length === 0) {
+      void load();
+    }
+  }, [active, statuses.length, load]);
 
   useEffect(() => {
     if (focusToken > 0) {
       headingRef.current?.scrollIntoView?.({ block: "start" });
       headingRef.current?.focus?.();
+      if (statuses.length === 0) void load();
     }
-  }, [focusToken]);
+  }, [focusToken, statuses.length, load]);
 
   const replaceStatuses = (next: ShellStatus[]) => {
     setStatuses(normalizeShellStatuses(next));
@@ -78,10 +103,12 @@ export function ShellSettingsPanel({ focusToken = 0, onChanged }: ShellSettingsP
     setError(null);
     setNotice(null);
     try {
-      const remaining = statuses
-        .filter((status) => status.enabled && status.shell !== shell)
-        .map((status) => status.shell);
-      const next = await tauriInvoke("shell_set_enabled", shellEnableArgs(remaining));
+      // Per-shell toggle re-reads shared config, so shells enabled by another
+      // entry point are preserved and `shells.seen` suppresses the prompt.
+      const next = await tauriInvoke(
+        "shell_set_shell_enabled",
+        shellSetShellEnabledArgs(shell, false),
+      );
       replaceStatuses(next as ShellStatus[]);
       setNotice(t("shellSetup.status.disabled"));
       onChanged?.();
@@ -116,6 +143,14 @@ export function ShellSettingsPanel({ focusToken = 0, onChanged }: ShellSettingsP
     setEditing(status.shell);
     setOverrides((current) => ({ ...current, [status.shell]: override }));
     void preview(status.shell, override);
+  };
+
+  /** Explicitly remove a stored override and preview the platform default. */
+  const clearOverride = (shell: string, field: "executable" | "profile") => {
+    const next: ShellPathOverride = { ...overrides[shell], [field]: CLEAR_OVERRIDE };
+    setOverrides((current) => ({ ...current, [shell]: next }));
+    setPlan(null);
+    void preview(shell, next);
   };
 
   const apply = async (shell: string) => {
@@ -240,6 +275,25 @@ export function ShellSettingsPanel({ focusToken = 0, onChanged }: ShellSettingsP
                       {t("shellSetup.useDefault")}
                       {plan?.defaultProfile ? ` ${t("shellSetup.defaultProfile", { path: plan.defaultProfile })}` : ""}
                     </p>
+                    <div className="form-actions field-full">
+                      <button
+                        type="button"
+                        onClick={() => clearOverride(status.shell, "executable")}
+                        disabled={busy !== null}
+                      >
+                        {t("shellSetup.clearExecutable")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => clearOverride(status.shell, "profile")}
+                        disabled={busy !== null}
+                      >
+                        {t("shellSetup.clearProfile")}
+                      </button>
+                    </div>
+                    {(override.executable === CLEAR_OVERRIDE || override.profile === CLEAR_OVERRIDE) && (
+                      <p className="hint field-full" role="status">{t("shellSetup.overrideCleared")}</p>
+                    )}
                   </div>
 
                   {plan && plan.shell === status.shell && (

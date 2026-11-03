@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import type { ShellStatus } from "./lib.ts";
 import {
+  CLEAR_OVERRIDE,
   autoSyncNotice,
   defaultWizardSelection,
   normalizeAliasPreflight,
@@ -18,10 +19,12 @@ import {
   preflightProblemText,
   setupErrorMessage,
   setupOutcomeFailed,
+  shellDismissDetectedArgs,
   shellEnableArgs,
   shellLoaderLabel,
   shellOptionState,
   shellOptionStateLabel,
+  shellSetShellEnabledArgs,
   shellSetupArgs,
   shellSetupOutcomeLines,
   shellSourceLabel,
@@ -91,6 +94,10 @@ test("startup state derives invalid and new shells from the rows when flags are 
   assert.equal(defaults.firstRun, false);
   assert.equal(defaults.autoSync, true);
   assert.deepEqual(defaults.shells, []);
+  const undetected = normalizeShellStartupState({
+    shells: [{ shell: "bash", detected: false, enabled: true, loader_status: "installed" }],
+  });
+  assert.deepEqual(undetected.invalidEnabled, ["bash"]);
 });
 
 test("shell option states distinguish enabled, invalid, disabled, missing and WSL", () => {
@@ -162,6 +169,14 @@ test("shell setup argument envelopes trim optional paths and omit blanks", () =>
     { shell: "zsh", executable: "C:\\Program Files\\Git\\bin\\bash.exe", profile: "~/.zshrc" },
   );
   assert.deepEqual(shellEnableArgs([" bash ", "bash", "", "zsh"]), { shells: ["bash", "zsh"] });
+  assert.deepEqual(shellSetShellEnabledArgs("bash", false), { shell: "bash", enabled: false });
+  assert.deepEqual(shellDismissDetectedArgs([" zsh ", "zsh", ""]), { shells: ["zsh"] });
+  assert.equal(CLEAR_OVERRIDE, "__aliasmgr_default__");
+  assert.deepEqual(
+    shellSetupArgs("bash", { executable: CLEAR_OVERRIDE, profile: CLEAR_OVERRIDE }),
+    { shell: "bash", executable: CLEAR_OVERRIDE, profile: CLEAR_OVERRIDE },
+    "clear sentinels must reach the backend",
+  );
 });
 
 test("setup errors map stable prefixes to localized copy in both languages", () => {
@@ -224,6 +239,19 @@ test("setup plans and outcomes normalize per-step results", () => {
   });
   assert.equal(setupOutcomeFailed(failed), true);
   assert.ok(shellSetupOutcomeLines(failed, "zh").some((line) => /加载块/.test(line)));
+
+  const syncFailed = normalizeShellSetupOutcome({
+    shell: "zsh",
+    enabled: true,
+    loader_installed: true,
+    sync: {
+      revision: 4,
+      failed: true,
+      results: [{ shell: "zsh", status: "failed", error_code: "sync_permission" }],
+    },
+  });
+  assert.equal(setupOutcomeFailed(syncFailed), true);
+  assert.ok(shellSetupOutcomeLines(syncFailed, "en").some((line) => /Sync failed/.test(line)));
 });
 
 test("preflight normalization and messages stay localized and code-driven", () => {
@@ -256,8 +284,8 @@ test("auto-sync notices surface success, partial failure and orchestration error
       revision: 7,
       failed: false,
       results: [
-        { shell: "bash", status: "ok", reload_command: "source /root/generated/bash.sh" },
-        { shell: "powershell7", status: "ok", reload_command: ". 'C:\\root\\generated\\powershell7.ps1'" },
+        { shell: "bash", status: "ok", reload_command: "source /root/generated/bash.sh", loader_installed: true },
+        { shell: "powershell7", status: "ok", reload_command: ". 'C:\\root\\generated\\powershell7.ps1'", loader_installed: true },
       ],
     },
   }), "en");
@@ -290,6 +318,25 @@ test("auto-sync notices surface success, partial failure and orchestration error
   assert.equal(error.tone, "warning");
   assert.match(error.text, /数据库/);
   assert.match(error.text, /database is locked/);
+
+  // A successful sync without a loader is not a success notice: new
+  // terminals would not load the generated file.
+  const noLoader = autoSyncNotice(normalizeAutoSync({
+    attempted: true,
+    run: {
+      revision: 11,
+      failed: false,
+      results: [
+        { shell: "bash", status: "ok", loader_installed: false, loader_error_code: "loader_missing" },
+      ],
+    },
+  }), "en");
+  assert.equal(noLoader.tone, "warning");
+  assert.match(noLoader.text, /will not load/);
+  assert.match(noLoader.text, /profile path could not be found/);
+
+  // Partial failures append the loader warning instead of hiding it.
+  assert.match(partial.text, /will not load|loader/i);
 });
 
 test("save and delete results keep the draft when preflight blocks", () => {
@@ -379,11 +426,18 @@ test("first-run wizard exposes selection, preview, apply and skip", async () => 
   assert.equal(/eval\(|new Function|child_process/.test(wizard), false);
 });
 
-test("startup banner offers re-enable, session ignore and persistent disable", async () => {
+test("startup banner keeps setup outcomes visible and uses per-shell toggles", async () => {
   const banner = await component("ShellStartupBanner");
   for (const fragment of [
     "shell_setup_apply",
-    "shell_set_enabled",
+    "shell_set_shell_enabled",
+    "shell_dismiss_detected",
+    "normalizeShellSetupOutcome",
+    "shellSetupOutcomeLines",
+    "setupOutcomeFailed",
+    "acknowledge",
+    "loaderError",
+    "syncError",
     "shellSetup.reenable",
     "shellSetup.ignore",
     "shellSetup.disableShell",
@@ -398,13 +452,20 @@ test("startup banner offers re-enable, session ignore and persistent disable", a
   assert.equal(/eval\(|new Function|child_process/.test(banner), false);
 });
 
-test("settings shell panel reuses status, enable and setup commands with path overrides", async () => {
+test("settings shell panel reuses status, per-shell toggles and clear-override sentinels", async () => {
   const panel = await component("ShellSettingsPanel");
   for (const fragment of [
     "shell_status",
-    "shell_set_enabled",
+    "shell_set_shell_enabled",
     "shell_setup_plan",
     "shell_setup_apply",
+    "initialStatuses",
+    "active",
+    "CLEAR_OVERRIDE",
+    "clearOverride",
+    "shellSetup.clearExecutable",
+    "shellSetup.clearProfile",
+    "shellSetup.overrideCleared",
     "shellSetup.rescan",
     "shellSetup.executable",
     "shellSetup.profile",
@@ -423,6 +484,7 @@ test("wizard labels shell options and blocks saves through the shared preflight"
   const wizard = await component("AliasWizard");
   for (const fragment of [
     "shell_status",
+    "shellStatuses",
     "normalizeShellStatuses",
     "shellOptionStateLabel",
     "shellOptionState",
@@ -449,7 +511,11 @@ test("App wires startup state, the first-run wizard, banner and auto-sync notice
     "normalizeDeleteAliasResult",
     "onOpenShellSetup",
     "focusShellsToken",
+    "shellStatuses",
+    "active={page === \"settings\"}",
     "ignoreShellWarning",
+    "shell-startup-error",
+    "shellSetup.startupErrorTitle",
     'data-testid="auto-sync-notice"',
   ]) {
     assert.ok(app.includes(fragment), `App is missing ${fragment}`);
@@ -462,12 +528,41 @@ test("Tauri registers the shell setup, startup and preflight commands", async ()
     "shell_status",
     "shell_startup_state",
     "shell_set_enabled",
+    "shell_set_shell_enabled",
+    "shell_dismiss_detected",
     "shell_setup_plan",
     "shell_setup_apply",
     "shell_setup_skip",
     "preflight_alias_shells",
   ]) {
     assert.match(main, new RegExp(`commands::${command}`), `${command} is not registered`);
+  }
+});
+
+test("heavy Tauri commands run off the UI thread with command(async)", async () => {
+  const commands = await readFile(new URL("../../src-tauri/src/commands.rs", import.meta.url), "utf8");
+  for (const command of [
+    "create_alias",
+    "update_alias",
+    "delete_alias",
+    "doctor_status",
+    "sync_aliases",
+    "shell_status",
+    "shell_startup_state",
+    "shell_set_enabled",
+    "shell_set_shell_enabled",
+    "shell_dismiss_detected",
+    "shell_setup_plan",
+    "shell_setup_apply",
+    "shell_install",
+    "import_confirm_content",
+    "scan_overrides",
+  ]) {
+    assert.match(
+      commands,
+      new RegExp(`#\\[tauri::command\\(async\\)\\]\\npub fn ${command}\\b`),
+      `${command} must use #[tauri::command(async)]`,
+    );
   }
 });
 

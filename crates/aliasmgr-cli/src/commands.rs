@@ -5,7 +5,6 @@ use aliasmgr_core::{
     config::AppPaths,
     detection,
     error::AliasError,
-    integration,
     model::{
         normalize_restriction, record_checksum, AliasRecord, PathRestriction, ShellKind,
         SUPPORTED_SHELLS,
@@ -64,43 +63,21 @@ fn preflight_target_shells(
     allow_missing_loader: bool,
     skip_loader: bool,
 ) -> Result<(), AliasError> {
-    let targets = canonical_supported(shells);
-    if targets.is_empty() {
-        return Ok(());
-    }
     let paths = paths_for(config_dir);
     let config = paths.load_config()?;
-    let enabled = shell_setup::enabled_shells(&config);
-    let mut problems = Vec::new();
-    for kind in &targets {
-        if !enabled.contains(kind) {
-            problems.push(format!("{} integration is not enabled", kind.label()));
-            continue;
-        }
-        if skip_loader {
-            continue;
-        }
-        match integration::loader_status(&paths, kind.as_str()) {
-            Ok(outcome) if outcome.installed => {}
-            Ok(_) => problems.push(format!(
-                "{} loader block is not installed at {}",
-                kind.label(),
-                integration::loader_target(&config, &paths, kind.as_str())
-                    .map(|target| target.path.display().to_string())
-                    .unwrap_or_else(|_| "<unresolved profile>".into())
-            )),
-            Err(error) => problems.push(format!(
-                "{} loader cannot be verified ({}: {})",
-                kind.label(),
-                integration::loader_error_code(&error),
-                error
-            )),
-        }
-    }
+    // Shared rule with the GUI: enabled intent plus (unless deferred) a
+    // verifiable loader block. Canonical shell order and unsupported filtering
+    // also live in core, so the two front ends cannot drift.
+    let problems =
+        shell_setup::shell_readiness_problems_with(&config, &paths, shells, !skip_loader)?;
     if problems.is_empty() {
         return Ok(());
     }
-    let detail = problems.join("; ");
+    let detail = problems
+        .iter()
+        .map(|problem| problem.message.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
     if allow_missing_loader {
         eprintln!(
             "warning: saving to the database, but the alias will not take effect yet: {detail}. Run `aliasmgr doctor`."

@@ -21,6 +21,8 @@ fn main() {
             commands::shell_status,
             commands::shell_startup_state,
             commands::shell_set_enabled,
+            commands::shell_set_shell_enabled,
+            commands::shell_dismiss_detected,
             commands::shell_setup_plan,
             commands::shell_setup_apply,
             commands::shell_setup_skip,

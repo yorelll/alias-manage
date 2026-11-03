@@ -626,6 +626,22 @@ export function shellEnableArgs(shells: string[]): { shells: string[] } {
   return { shells: normalizeShells(shells) };
 }
 
+/** Argument envelope for the per-shell toggle command (re-reads shared config). */
+export function shellSetShellEnabledArgs(shell: string, enabled: boolean): { shell: string; enabled: boolean } {
+  return { shell, enabled };
+}
+
+/** Persist that the user dismissed the enable prompt for these shells. */
+export function shellDismissDetectedArgs(shells: string[]): { shells: string[] } {
+  return { shells: normalizeShells(shells) };
+}
+
+/**
+ * Sentinel understood by core `shell_setup`: remove the stored executable or
+ * profile override and fall back to detection/platform defaults.
+ */
+export const CLEAR_OVERRIDE = "__aliasmgr_default__";
+
 /** Stable prefix parsing for setup rejections (`code: message`). */
 export function setupErrorMessage(reason: unknown, language: Language = DEFAULT_LANGUAGE): string {
   const text = typeof reason === "string" ? reason : String(reason);
@@ -739,17 +755,39 @@ export function autoSyncNotice(autoSync: AutoSync, language: Language = DEFAULT_
     };
   }
   if (!run) return { tone: "none", text: "", reloadCommands: [] };
+  // A generated file without a loader block will not load in a new terminal.
+  // This applies to delete/import results too, so it is never hidden behind
+  // an otherwise successful sync.
+  const loaderWarnings = run.results
+    .filter((result) => result.status !== "failed" && !result.loader_installed)
+    .map((result) => (
+      `${shellLabel(result.shell, language)}: ${loaderErrorMessage(result.loader_error_code ?? "loader_missing", language)}`
+    ));
   if (run.failed) {
     const failures = run.results
       .filter((result) => result.status === "failed")
       .map((result) => `${shellLabel(result.shell, language)}: ${syncFailureMessage(result.error_code, language)}`);
+    const text = t(language, "autoSync.partial", { failures: failures.join("; ") });
     return {
       tone: "warning",
-      text: t(language, "autoSync.partial", { failures: failures.join("; ") }),
+      text: loaderWarnings.length > 0
+        ? `${text} ${t(language, "autoSync.loaderMissing", { shells: loaderWarnings.join("; ") })}`
+        : text,
       reloadCommands,
     };
   }
   if (run.results.length === 0) return { tone: "none", text: "", reloadCommands: [] };
+  if (loaderWarnings.length > 0) {
+    return {
+      tone: "warning",
+      text: t(language, "autoSync.notLoaded", {
+        count: run.results.length,
+        revision: run.revision,
+        shells: loaderWarnings.join("; "),
+      }),
+      reloadCommands,
+    };
+  }
   return {
     tone: "ok",
     text: t(language, "autoSync.success", {

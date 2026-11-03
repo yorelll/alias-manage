@@ -57,6 +57,82 @@ pub fn set_enabled_shells(paths: &AppPaths, shells: &[ShellKind]) -> Result<AppC
     Ok(config)
 }
 
+/// Re-reads configuration and adds or removes exactly one shell. Intended for
+/// per-shell toggles so a concurrent enable from another entry point is never
+/// dropped by a stale whole-list replacement. Disabling records the current
+/// executable in `shells.seen`, so the startup prompt does not immediately
+/// offer to enable the same shell again.
+pub fn set_shell_enabled(
+    paths: &AppPaths,
+    kind: &ShellKind,
+    enabled: bool,
+) -> Result<AppConfig, AliasError> {
+    if !SUPPORTED_SHELLS.contains(kind) {
+        return Err(AliasError::Config(format!(
+            "unsupported shell for integration: {}",
+            kind.as_str()
+        )));
+    }
+    let mut config = paths.load_config()?;
+    let mut shells = enabled_shells(&config);
+    if enabled {
+        if !shells.contains(kind) {
+            shells.push(kind.clone());
+        }
+    } else {
+        shells.retain(|candidate| candidate != kind);
+    }
+    config.shells.enabled = SUPPORTED_SHELLS
+        .iter()
+        .filter(|candidate| shells.contains(candidate))
+        .map(|candidate| candidate.as_str().to_string())
+        .collect();
+    if !enabled {
+        record_seen_for(&mut config, kind);
+    }
+    config.validate()?;
+    config.save(paths)?;
+    Ok(config)
+}
+
+/// Records the current executable for detected shells so the GUI does not
+/// prompt about them again until the executable changes.
+pub fn mark_shells_seen(paths: &AppPaths, shells: &[ShellKind]) -> Result<AppConfig, AliasError> {
+    let mut config = paths.load_config()?;
+    for kind in SUPPORTED_SHELLS.iter().filter(|kind| shells.contains(kind)) {
+        record_seen_for(&mut config, kind);
+    }
+    config.validate()?;
+    config.save(paths)?;
+    Ok(config)
+}
+
+fn record_seen_for(config: &mut AppConfig, kind: &ShellKind) {
+    let installation = detection::detect_shell(config, kind);
+    if installation.detected {
+        if let Some(executable) = installation.executable {
+            config.shells.seen.insert(
+                kind.as_str().to_string(),
+                executable.to_string_lossy().into_owned(),
+            );
+        }
+    }
+}
+
+/// True when a detected shell's current executable was already dismissed for
+/// this configuration. A different executable (reinstall/new path) is not
+/// suppressed, so genuinely new installs still get one prompt.
+pub fn shell_prompt_dismissed(config: &AppConfig, installation: &ShellInstallation) -> bool {
+    let Some(executable) = installation.executable.as_ref() else {
+        return false;
+    };
+    config
+        .shells
+        .seen
+        .get(installation.kind.as_str())
+        .is_some_and(|seen| Path::new(seen) == executable)
+}
+
 /// Loader status for one shell. `Unavailable` means this platform/config has
 /// no profile target yet (for example PowerShell 5.1 on Linux), which the UI
 /// must resolve by asking for a profile path rather than by installing.
@@ -198,6 +274,18 @@ pub fn shell_readiness_problems(
     paths: &AppPaths,
     shells: &[ShellKind],
 ) -> Result<Vec<ShellReadinessProblem>, AliasError> {
+    shell_readiness_problems_with(config, paths, shells, true)
+}
+
+/// Same as [`shell_readiness_problems`] with an explicit loader probe toggle.
+/// The CLI uses `check_loader = false` for `--no-sync` (the enabled intent is
+/// still required, but the loader check is deferred to the later sync).
+pub fn shell_readiness_problems_with(
+    config: &AppConfig,
+    paths: &AppPaths,
+    shells: &[ShellKind],
+    check_loader: bool,
+) -> Result<Vec<ShellReadinessProblem>, AliasError> {
     let targets = SUPPORTED_SHELLS
         .iter()
         .filter(|kind| shells.contains(kind))
@@ -219,6 +307,9 @@ pub fn shell_readiness_problems(
                 code: "shell_disabled",
                 loader_target: target,
             });
+            continue;
+        }
+        if !check_loader {
             continue;
         }
         match integration::loader_status_with_config(config, paths, kind.as_str()) {
@@ -253,6 +344,16 @@ pub fn shell_readiness_problems(
     Ok(problems)
 }
 
+/// Sentinel accepted by [`plan_shell_setup`] and [`apply_shell_setup`] in the
+/// executable/profile override slots. It means "remove the configured override
+/// and use detection/platform defaults again". A real relative path is never
+/// valid (overrides must be absolute), so this value cannot collide with one.
+pub const CLEAR_OVERRIDE: &str = "__aliasmgr_default__";
+
+fn is_clear_override(path: &Path) -> bool {
+    path == Path::new(CLEAR_OVERRIDE)
+}
+
 fn normalize_override(label: &str, path: &Path) -> Result<PathBuf, AliasError> {
     if path.as_os_str().is_empty() {
         return Err(AliasError::Config(format!("{label} must not be empty")));
@@ -274,14 +375,17 @@ fn apply_overrides(
     profile: Option<&Path>,
 ) -> Result<(), AliasError> {
     if let Some(path) = executable {
-        let path = normalize_override(&format!("executable path for {}", kind.as_str()), path)?;
-        config
-            .shells
-            .executables
-            .insert(kind.as_str().to_string(), path);
+        if is_clear_override(path) {
+            config.shells.executables.remove(kind.as_str());
+        } else {
+            let path = normalize_override(&format!("executable path for {}", kind.as_str()), path)?;
+            config
+                .shells
+                .executables
+                .insert(kind.as_str().to_string(), path);
+        }
     }
     if let Some(path) = profile {
-        let path = normalize_override(&format!("profile path for {}", kind.as_str()), path)?;
         let slot = match kind {
             ShellKind::Bash => &mut config.shells.bash_rc_path,
             ShellKind::Zsh => &mut config.shells.zsh_rc_path,
@@ -294,7 +398,14 @@ fn apply_overrides(
                 )))
             }
         };
-        *slot = Some(path);
+        if is_clear_override(path) {
+            *slot = None;
+        } else {
+            *slot = Some(normalize_override(
+                &format!("profile path for {}", kind.as_str()),
+                path,
+            )?);
+        }
     }
     Ok(())
 }
@@ -550,6 +661,10 @@ mod tests {
         let path = root.join(if cfg!(windows) { "bash.exe" } else { "bash" });
         fs::write(&path, b"#!/bin/sh\nexit 0\n").unwrap();
         path
+    }
+
+    fn save_config(paths: &AppPaths, config: &AppConfig) {
+        config.save(paths).unwrap();
     }
 
     fn configured_bash(root: &Path) -> (AppPaths, AppConfig) {
@@ -899,6 +1014,155 @@ mod tests {
         assert!(shell_readiness_problems(&saved, &paths, &[])
             .unwrap()
             .is_empty());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn readiness_without_loader_check_only_reports_disabled_intent() {
+        let root = temp_root("readiness-no-loader");
+        let paths = AppPaths { root: root.clone() };
+        let mut config = AppConfig::default();
+        config.shells.enabled = vec!["bash".into()];
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config
+            .shells
+            .executables
+            .insert("bash".into(), fake_executable(&root));
+        save_config(&paths, &config);
+        // Enabled but no loader: deferred check passes, immediate check fails.
+        assert!(
+            shell_readiness_problems_with(&config, &paths, &[ShellKind::Bash], false)
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            shell_readiness_problems(&config, &paths, &[ShellKind::Bash]).unwrap()[0].code,
+            "loader_missing"
+        );
+        // Disabled intent is still reported when the loader check is deferred.
+        config.shells.enabled.clear();
+        assert_eq!(
+            shell_readiness_problems_with(&config, &paths, &[ShellKind::Bash], false).unwrap()[0]
+                .code,
+            "shell_disabled"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn clear_override_sentinel_removes_executable_and_profile_overrides() {
+        let root = temp_root("clear-overrides");
+        let paths = AppPaths { root: root.clone() };
+        let executable = fake_executable(&root);
+        let profile = root.join("custom-rc");
+        let mut config = AppConfig::default();
+        config.shells.bash_rc_path = Some(profile);
+        config.shells.executables.insert("bash".into(), executable);
+        save_config(&paths, &config);
+
+        let options = ShellSetupOptions {
+            executable: Some(PathBuf::from(CLEAR_OVERRIDE)),
+            profile: Some(PathBuf::from(CLEAR_OVERRIDE)),
+            sync: false,
+        };
+        // The sentinel is applied in memory by the same helper that plan and
+        // apply use, and it removes the stored overrides without inventing a
+        // relative path.
+        let effective = effective_config(
+            &config,
+            &ShellKind::Bash,
+            options.executable.as_deref(),
+            options.profile.as_deref(),
+        )
+        .unwrap();
+        assert!(!effective.shells.executables.contains_key("bash"));
+        assert_eq!(effective.shells.bash_rc_path, None);
+        // The on-disk configuration is untouched until an apply/save happens.
+        let saved = paths.load_config().unwrap();
+        assert!(saved.shells.executables.contains_key("bash"));
+        assert!(saved.shells.bash_rc_path.is_some());
+
+        // A plan using the sentinel previews the default home RC without
+        // requiring the override removal to be persisted first.
+        let preview = plan_shell_setup(
+            &saved,
+            &paths,
+            &ShellKind::Bash,
+            None,
+            Some(Path::new(CLEAR_OVERRIDE)),
+        )
+        .unwrap();
+        assert_eq!(
+            preview.loader_target,
+            crate::integration::default_bash_rc_path()
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn set_shell_enabled_re_reads_config_and_records_seen_on_disable() {
+        let root = temp_root("per-shell-enable");
+        let paths = AppPaths { root: root.clone() };
+        let executable = fake_executable(&root);
+        let mut config = AppConfig::default();
+        config.shells.zsh_rc_path = Some(root.join("zshrc"));
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config
+            .shells
+            .executables
+            .insert("bash".into(), executable.clone());
+        config.shells.enabled = vec!["zsh".into()];
+        save_config(&paths, &config);
+
+        // Enabling bash preserves the externally enabled zsh.
+        let saved = set_shell_enabled(&paths, &ShellKind::Bash, true).unwrap();
+        assert_eq!(saved.shells.enabled, vec!["bash", "zsh"]);
+        // Disabling bash re-reads the list (keeps zsh) and records the current
+        // executable so the startup prompt does not immediately re-offer it.
+        let saved = set_shell_enabled(&paths, &ShellKind::Bash, false).unwrap();
+        assert_eq!(saved.shells.enabled, vec!["zsh"]);
+        assert_eq!(
+            saved.shells.seen.get("bash").map(String::as_str),
+            Some(executable.to_string_lossy().as_ref())
+        );
+        let installation = detection::detect_shell(&saved, &ShellKind::Bash);
+        assert!(shell_prompt_dismissed(&saved, &installation));
+
+        // A different executable path is a genuinely new install and prompts.
+        let replacement = root.join("bash-new");
+        fs::write(&replacement, b"#!/bin/sh\nexit 0\n").unwrap();
+        let mut changed = saved.clone();
+        changed
+            .shells
+            .executables
+            .insert("bash".into(), replacement);
+        let installation = detection::detect_shell(&changed, &ShellKind::Bash);
+        assert!(!shell_prompt_dismissed(&changed, &installation));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mark_shells_seen_records_only_detected_shells() {
+        let root = temp_root("mark-seen");
+        let paths = AppPaths { root: root.clone() };
+        let executable = fake_executable(&root);
+        let mut config = AppConfig::default();
+        config
+            .shells
+            .executables
+            .insert("bash".into(), executable.clone());
+        config
+            .shells
+            .executables
+            .insert("zsh".into(), root.join("missing-zsh"));
+        save_config(&paths, &config);
+
+        let saved = mark_shells_seen(&paths, &[ShellKind::Bash, ShellKind::Zsh]).unwrap();
+        assert_eq!(
+            saved.shells.seen.get("bash").map(String::as_str),
+            Some(executable.to_string_lossy().as_ref())
+        );
+        assert!(!saved.shells.seen.contains_key("zsh"));
         let _ = fs::remove_dir_all(root);
     }
 

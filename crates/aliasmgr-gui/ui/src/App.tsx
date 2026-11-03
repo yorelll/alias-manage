@@ -11,7 +11,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { ShellSetupWizard } from "./components/ShellSetupWizard";
 import { ShellStartupBanner } from "./components/ShellStartupBanner";
 import { UninstallPanel } from "./components/UninstallPanel";
-import type { AliasDto, AutoSyncNotice, SaveAliasOutcome, Settings, ShellStartupState } from "./lib";
+import type { AliasDto, AutoSyncNotice, SaveAliasOutcome, Settings, ShellStartupState, ShellStatus } from "./lib";
 import {
   type StartupStatus,
   type Page,
@@ -44,6 +44,8 @@ export { NAV_ITEMS, statusSummaryText };
 export { tauriInvoke, setTauriInvoke } from "./lib";
 
 const SEARCH_LIMIT = 200;
+/** Stable empty identity so status-sharing effects do not refetch every render. */
+const EMPTY_SHELL_STATUSES: ShellStatus[] = [];
 /** Grace period before "Confirm delete" can fire, so a double-click cannot delete. */
 const DELETE_ARM_DELAY_MS = 450;
 
@@ -99,7 +101,7 @@ export function StatusDrawer({ status, error }: StatusDrawerProps) {
 
 type WizardState = { mode: "create" } | { mode: "edit"; alias: AliasDto };
 
-export function AliasesPage({ refreshToken = 0, onOpenImport, onOpenShellSetup }: { refreshToken?: number; onOpenImport?: () => void; onOpenShellSetup?: () => void }) {
+export function AliasesPage({ refreshToken = 0, onOpenImport, onOpenShellSetup, shellStatuses = [] }: { refreshToken?: number; onOpenImport?: () => void; onOpenShellSetup?: () => void; shellStatuses?: ShellStatus[] }) {
   const { language, t } = useI18n();
   const [aliases, setAliases] = useState<AliasDto[]>([]);
   const [tagCounts, setTagCounts] = useState<Record<string, number>>({});
@@ -304,6 +306,7 @@ export function AliasesPage({ refreshToken = 0, onOpenImport, onOpenShellSetup }
           onCancel={() => setWizard(null)}
           onSave={saveAlias}
           onOpenShellSetup={onOpenShellSetup}
+          shellStatuses={shellStatuses}
         />
       )}
       {loading ? (
@@ -452,12 +455,12 @@ export function App() {
         <div className="main-content">
           {showShellWizard && (
             <ShellSetupWizard
-              statuses={shellState?.shells ?? []}
+              statuses={shellState?.shells ?? EMPTY_SHELL_STATUSES}
               loading={shellStateLoading}
               error={shellStateError}
               firstRun
               onRescan={() => void loadShellState()}
-              onClose={() => setShowShellWizard(false)}
+              onClose={() => { setShowShellWizard(false); void loadShellState(); }}
               onApplied={() => void loadShellState()}
             />
           )}
@@ -470,13 +473,34 @@ export function App() {
               onOpenSetup={openShellSetup}
             />
           )}
+          {!showShellWizard && shellStateError && (
+            <div className="shell-startup-banners" data-testid="shell-startup-error">
+              <div className="shell-banner shell-banner-warning" role="alert">
+                <div>
+                  <strong>{i18n.t("shellSetup.startupErrorTitle")}</strong>
+                  <p className="hint">{i18n.t("shellSetup.wizardFailed", { error: shellStateError })}</p>
+                </div>
+                <button type="button" onClick={() => void loadShellState()}>
+                  {i18n.t("shellSetup.retry")}
+                </button>
+              </div>
+            </div>
+          )}
           <div className="page-area">
             {/* Pages stay mounted so drafts survive navigation; inactive pages
                 are hidden from layout, the accessibility tree, and tab order. */}
-            <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} onOpenShellSetup={openShellSetup} /></div>
+            <div hidden={page !== "aliases"}><AliasesPage refreshToken={dataVersion} onOpenImport={openImportPage} onOpenShellSetup={openShellSetup} shellStatuses={shellState?.shells ?? EMPTY_SHELL_STATUSES} /></div>
             <div hidden={page !== "sync"} ref={syncPageRef} tabIndex={-1}><ImportPanel onImported={invalidateAliasData} /><GeneratedFilePanel /></div>
             <div hidden={page !== "doctor"}><DoctorPanel /></div>
-            <div hidden={page !== "settings"}><SettingsPanel focusShellsToken={shellPanelToken} onShellsChanged={refreshShellState} /><UninstallPanel onUninstalled={invalidateAliasData} /></div>
+            <div hidden={page !== "settings"}>
+              <SettingsPanel
+                focusShellsToken={shellPanelToken}
+                onShellsChanged={refreshShellState}
+                shellStatuses={shellState?.shells ?? EMPTY_SHELL_STATUSES}
+                active={page === "settings"}
+              />
+              <UninstallPanel onUninstalled={invalidateAliasData} />
+            </div>
           </div>
           <StatusDrawer status={status} error={statusError} />
         </div>

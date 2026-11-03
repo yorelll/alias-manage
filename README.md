@@ -98,10 +98,10 @@ bash = "C:\\Program Files\\Git\\bin\\bash.exe"
 ### GUI 首次集成、启动检查与自动同步
 
 - **首次启动**：配置根下没有 `config.toml` 时，GUI 在主页顶部显示首次集成面板。它始终列出四个 Shell 及 detected/路径/版本/WSL/loader 状态；默认只勾选已启用或已有有效 loader 的 Shell，用户确认后才写入 `shells.enabled`。勾选 detected Shell 后会先预览 profile/RC 路径与标记块，再安装 loader、执行一次同步并显示 reload 命令。未检测到的 Shell 可填写 executable/profile（或先安装并加入 PATH 后重启）；WSL 行可用原生 Windows 路径覆盖，或在 WSL 发行版内运行 `doctor`。`暂时跳过` 会写入空的 `shells.enabled`，因此后续启动只显示紧凑的“尚未配置”提示，而不是每次弹出完整向导。
-- **后续启动**：只检查已启用 Shell 的 loader。loader 缺失/无效时显示非阻塞提示，提供 `重新启用` / `暂时忽略`（仅本次会话）/ `禁用`（持久化）。新检测到但未启用的 Shell 显示一次可忽略的启用提示；不会自动启用。
-- **设置页 Shell 面板**：启用/禁用、重新检测、查看 loader 状态与路径、为非标准安装填写 executable/profile、重新运行 setup。预览通过后才写入，且只修改标记块。
-- **保存预检（严格）**：GUI 创建/编辑别名时，若目标 Shell 未启用或 loader 无效，保存被拦截并保留草稿，提供“打开 Shell 设置”按钮；不会静默保存不会生效的别名。`--allow-missing-loader` 仅属于 CLI。
-- **自动同步**：GUI 创建/更新/删除/启停别名成功后，若 `runtime.auto_sync = true`，在一次数据库写入后同步受影响的 Shell（更新为旧 ∪ 新集合），并在页面上显示每个 Shell 的结果与 reload 命令；失败明确显示，不伪装成功。导入预览不同步，确认导入后同步一次。设置页可关闭自动同步。
+- **后续启动**：只检查已启用 Shell 的 executable/loader。executable 缺失或 loader 无效时显示非阻塞提示，提供 `重新启用` / `暂时忽略`（仅本次会话）/ `禁用`（持久化）。新检测到但未启用的 Shell 显示可忽略的启用提示；忽略或禁用会记住当前 executable（`shells.seen`），同一安装不会每次启动重复提示，换路径重装后才会再次提示。不会自动启用。设置结果（含 loader/同步失败）在用户确认前保持可见。
+- **设置页 Shell 面板**：逐 Shell 启用/禁用（重新读取共享配置，不会覆盖其他入口的启用）、重新检测、查看 loader 状态与路径、为非标准安装填写 executable/profile、用“使用默认值”显式清除已有覆盖、重新运行 setup。预览通过后才写入，且只修改标记块。
+- **保存预检（严格）**：GUI 创建/编辑别名时，若目标 Shell 未启用或 loader 无效，保存被拦截并保留草稿，提供“打开 Shell 设置”按钮；不会静默保存不会生效的别名。`--allow-missing-loader` 仅属于 CLI；CLI 与 GUI 现在共用 core 的预检规则。启动状态读取失败时显示可重试提示。
+- **自动同步**：GUI 创建/更新/删除/启停别名成功后，若 `runtime.auto_sync = true`，在一次数据库写入后同步受影响的 Shell（更新为旧 ∪ 新集合），并在页面上显示每个 Shell 的结果与 reload 命令；同步失败、loader 缺失（新终端不会加载）都会明确警告，不伪装成功。导入预览不同步，确认导入后同步一次。设置页可关闭自动同步。检测/保存/同步等较重的 Tauri 命令在 UI 线程之外执行；启动状态只探测一次并与设置页/别名向导共享。
 - 检测边界同 CLI：无法保证发现所有安装方式；始终列出四个 Shell 并允许手动路径。版本探测有约 2 秒上限，失败只表示版本未知。GUI 不自动 reload 当前终端、不写环境变量/注册表、不修改标记块以外的 profile 内容。
 
 - Bash/Zsh 使用 `source '<config-root>/generated/bash.sh'`。

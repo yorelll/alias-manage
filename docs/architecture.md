@@ -60,36 +60,43 @@ drift:
   paths. Probes are read-only and bounded by a short timeout; a failed probe
   only leaves the version unknown.
 - `config::ShellPathOverrides` persists the user's `enabled` intent using the
-  stable `ShellKind::as_str()` spellings, plus the existing profile overrides
-  and the optional `shells.executables` map. Loading a legacy configuration
-  leaves `enabled` empty; nothing is enabled without an explicit user action.
+  stable `ShellKind::as_str()` spellings, plus the existing profile overrides,
+  the optional `shells.executables` map, and `shells.seen` (last dismissed
+  executable per shell so startup prompts do not repeat until the path
+  changes). Loading a legacy configuration leaves `enabled`/`seen` empty;
+  nothing is enabled without an explicit user action.
 - `shell_setup` owns `enabled_shells`, `set_enabled_shells`,
-  `plan_shell_setup` (read-only plan with loader target/status and next action),
-  `preview_loader` (block and path without writing), and
-  `apply_shell_setup` (persist intent/overrides, install via `integration`,
-  sync via `sync`). Bash/Zsh loader defaults come from the user home
-  (`$HOME/.bashrc` / `.zshrc`), not the config root; the old config-root RC is
-  retained only as an uninstall candidate. Override paths are expanded from a
-  leading `~` and must be absolute. It reuses the existing loader marker,
-  backup, lock, journal and revision code instead of duplicating it.
+  `set_shell_enabled` (re-reads config and toggles one shell, preserving
+  concurrent enables), `mark_shells_seen`, `plan_shell_setup` (read-only plan
+  with loader target/status and next action), `preview_loader` (block and path
+  without writing), and `apply_shell_setup` (persist intent/overrides, install
+  via `integration`, sync via `sync`). Bash/Zsh loader defaults come from the
+  user home (`$HOME/.bashrc` / `.zshrc`), not the config root; the old
+  config-root RC is retained only as an uninstall candidate. Override paths are
+  expanded from a leading `~` and must be absolute; the `CLEAR_OVERRIDE`
+  sentinel removes a stored executable/profile override and falls back to
+  defaults. It reuses the existing loader marker, backup, lock, journal and
+  revision code instead of duplicating it.
 - The interactive doctor previews every shell that will be applied and applies
   exactly that previewed set; a checked shell that still needs a path blocks
   the confirmation instead of being written un-previewed.
 - `shell_readiness_problems` is the shared preflight rule: a target shell must
-  be in `shells.enabled` and its loader block must verify. The GUI save
-  commands use it strictly (a blocked save writes nothing and keeps the draft).
-  The CLI applies the same rule before `add`/`update` and returns
-  `ShellNotReady` (exit 12) unless `--allow-missing-loader` is supplied;
-  `--no-sync` skips the loader probe and post-save sync but still checks
-  `enabled`.
+  be in `shells.enabled` and its loader block must verify. Both the GUI save
+  commands and the CLI `add`/`update` call the same core function (the CLI uses
+  `shell_readiness_problems_with(..., check_loader = !no_sync)` and keeps its
+  `ShellNotReady` exit 12 / `--allow-missing-loader` behavior). The GUI is
+  strict: a blocked save writes nothing and keeps the draft.
 - The GUI (`crates/aliasmgr-gui/src-tauri/src/commands.rs`) exposes read-only
   `shell_status` / `shell_startup_state`, plan/preview `shell_setup_plan`,
-  confirmed `shell_setup_apply`, `shell_set_enabled`, `shell_setup_skip` and
-  `preflight_alias_shells`. `shell_startup_state.first_run` is true only when
-  `config.toml` is absent; skipping writes an empty configuration so later
-  launches show a compact notice instead of the full wizard. Startup reports
-  `invalid_enabled` (enabled but loader missing/invalid) and `newly_detected`
-  (detected, not enabled, non-WSL) without writing anything.
+  confirmed `shell_setup_apply`, per-shell `shell_set_shell_enabled`,
+  `shell_set_enabled`, `shell_dismiss_detected`, `shell_setup_skip` and
+  `preflight_alias_shells`. Heavy commands use `#[tauri::command(async)]` so
+  detection, CRUD and sync run off the UI thread. `shell_startup_state.first_run`
+  is true only when `config.toml` is absent; skipping writes an empty
+  configuration so later launches show a compact notice instead of the full
+  wizard. Startup reports `invalid_enabled` (enabled but missing executable or
+  loader invalid) and `newly_detected` (detected, not enabled, non-WSL, and not
+  dismissed at the current executable path) without writing anything.
 - Each `shell_setup_apply`/`shell_setup_plan` call delegates path, marker,
   backup, lock and journal handling to `integration`/`sync`; the GUI never
   edits profile text itself. The status scan reports probed versions; previews
@@ -98,8 +105,12 @@ drift:
   `create`/`update` sync old ∪ new shells, `delete` syncs the removed record's
   shells (tombstones), and confirmed imports sync all referenced shells once.
   `update_alias` honors the stored revision and retires removed shells through
-  `AliasService::update_checked`. Per-shell failures and orchestration errors
-  are returned in `AutoSyncDto` so the UI can show them; preview never syncs.
+  `AliasService::update_checked`. Per-shell failures, orchestration errors and
+  missing loader blocks (`loader_installed = false`) are returned in
+  `AutoSyncDto` so the UI can warn that new terminals will not load the file;
+  preview never syncs. The App loads startup shell status once and passes those
+  rows to the Settings panel and alias wizard, which only fetch on demand when
+  no rows are available.
 
 After a successful CLI alias write, `commands::sync_after_write` computes the
 affected shells (old ∪ new for `add`/`update`, bound shells for

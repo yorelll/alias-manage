@@ -41,11 +41,15 @@ powershell7_profile_path = "..."
 [shells.executables]                       # optional non-standard install paths
 powershell7 = "C:\\Program Files\\PowerShell\\7\\pwsh.exe"
 bash = "C:\\Program Files\\Git\\bin\\bash.exe"
+
+[shells.seen]                              # GUI prompt dismissal memory
+bash = "C:\\Program Files\\Git\\bin\\bash.exe"
 ```
 
 - `enabled` is the user's intent. It defaults to `[]`; loading a configuration written before this key existed does **not** enable anything. Only an explicit `doctor`/settings action writes it. Use `bash`, `zsh`, `powershell5`, and `powershell7`; serde spellings such as `power_shell5` and unsupported shells (`fish`, `posix_sh`) are rejected on save.
   - **Upgrade note:** an existing installation therefore has an empty `enabled` list, and `add`/`update` return `ShellNotReady` (exit 12) until `aliasmgr doctor` runs once and the user confirms the shells. This is deliberate: nothing is auto-enabled.
 - `shells.executables.<shell>` is the highest-priority detection source. A configured but missing path is reported as not detected; it does not silently fall back to `PATH`. Override paths must be absolute; a leading `~` is expanded from `HOME`/`USERPROFILE` on load and in interactive prompts.
+- `shells.seen.<shell>` is GUI-only prompt memory: the executable path the user dismissed or disabled. It never enables or detects anything; a changed executable path prompts once again. The CLI does not read or write it, and `enabled` remains the only user intent that controls generation.
 - `runtime.auto_sync` defaults to `true` for old and new configurations. Set it to `false` to require an explicit `aliasmgr sync`.
 - There is **no `setup` command**. First-run integration happens in `aliasmgr doctor` for the CLI and in the GUI's first-run panel (or Settings → Shell integration) for the desktop app. `doctor` lists all four supported shells even when detection fails, and requires confirmation before writing `enabled`, a profile path, a loader block, or syncing.
 - Detection is read-only and best effort. It checks `PATH`, known Windows install paths (PowerShell 5.1 system path, PowerShell 7 `Program Files`/`WindowsApps`, Git Bash, MSYS2/Cygwin Zsh) and Unix `/bin`, `/usr/bin`, `/usr/local/bin`. Version probes are bounded at about two seconds; a failed or timed-out probe leaves the version unknown but does not mark the shell undetected. A Windows `System32\bash.exe`/WindowsApps `bash.exe` is reported as WSL (`wsl=true`); Alias Manager does not write a Windows profile for it — run `doctor` inside the distribution instead.
@@ -243,23 +247,34 @@ GUI commands, visual acceptance, and installer workflows are outside this pre-GU
   `shells.enabled`; later launches show only a compact "not configured" notice
   rather than the full wizard.
 - Later launches check only enabled shells. A missing/invalid loader shows a
-  non-blocking banner with **Re-enable**, **Ignore for now** (session only), and
-  **Disable** (persists `shells.enabled`). Newly detected non-WSL shells get a
-  one-time, dismissible enable prompt; nothing is enabled automatically.
-- The Settings page's Shell integration panel supports enable/disable,
-  rescan, loader status, path overrides for non-standard installs, and re-running
-  setup. The same core `detect_shells`/`shell_setup`/`integration` code backs
-  the CLI and GUI.
+  non-blocking banner with **Re-enable**, **Ignore for now** (session only for
+  an invalid loader), and **Disable** (persists `shells.enabled`). Newly detected
+  non-WSL shells get a dismissible enable prompt; dismissing it records the
+  current executable in `shells.seen`, and disabling a shell does the same, so
+  the same installation is not re-offered on every launch. A reinstall at a new
+  path prompts once again. Nothing is enabled automatically.
+- The Settings page's Shell integration panel supports per-shell enable/disable,
+  rescan, loader status, path overrides for non-standard installs, explicit
+  "use default" buttons that clear a stored executable/profile override, and
+  re-running setup. Per-shell toggles re-read the shared configuration, so a
+  shell enabled by another entry point is preserved. The same core
+  `detect_shells`/`shell_setup`/`integration` code backs the CLI and GUI.
 - GUI create/update is strict: a target shell that is not enabled, or whose
   loader is not valid, blocks the save with a clear message and an "Open shell
   setup" button, and the wizard draft is kept. There is no GUI equivalent of
-  `--allow-missing-loader`.
+  `--allow-missing-loader`. The CLI and GUI now call the same core
+  `shell_readiness_problems` rule.
+- GUI setup results from the startup banner stay visible until acknowledged,
+  including loader-install and sync failures. Heavy Tauri commands run off the
+  UI thread, and startup status is loaded once and shared with Settings and the
+  alias wizard instead of re-probing on mount. If startup status cannot be read,
+  the GUI shows a compact retry notice.
 - GUI auto-sync runs after a successful database write when
   `runtime.auto_sync = true` (toggle it in Settings): old ∪ new shells for
   create/update, the record's shells for delete/toggle, and all referenced
-  shells once for a confirmed import. Per-shell failures and reload commands are
-  shown; import preview never syncs. Auto-sync does not reload the current
-  terminal.
+  shells once for a confirmed import. Per-shell failures, reload commands, and
+  missing loader blocks (new terminals will not load the file) are shown;
+  import preview never syncs. Auto-sync does not reload the current terminal.
 - Shell detection limits are shared with the CLI (PATH, known install paths,
   manual overrides, WSL marking, bounded version probes, home RC defaults).
   `shells.executables`/profile overrides must be absolute; a leading `~` is
