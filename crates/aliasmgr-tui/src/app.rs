@@ -412,6 +412,12 @@ impl App {
     pub fn poll_shell_scan(&mut self) {
         if let Screen::ShellSetup(state) = &mut self.screen {
             state.poll_detection();
+            // Background detection is not a key/resize event. Propagate the
+            // setup screen's repaint request or the first-run list stays blank
+            // until the user presses a key.
+            if state.take_dirty() {
+                self.dirty = true;
+            }
         }
         let Some(receiver) = self.shell_scan.take() else {
             return;
@@ -5126,6 +5132,44 @@ mod tests {
             "{}",
             app.status.text
         );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn background_shell_detection_requests_a_redraw_without_input() {
+        let root = empty_first_run_root("detection-redraw");
+        let mut app = App::new(root.clone()).unwrap();
+        app.start_shell_startup();
+        assert!(matches!(app.screen, Screen::ShellSetup(_)));
+        let (sender, receiver) = std::sync::mpsc::channel();
+        if let Screen::ShellSetup(state) = &mut app.screen {
+            state.set_detection_receiver_for_test(receiver);
+        }
+        app.dirty = false;
+        sender.send(detected_row(ShellKind::Bash, None)).unwrap();
+        app.poll_shell_scan();
+        assert!(
+            app.dirty,
+            "a detected row must request a repaint without a key or resize"
+        );
+        if let Screen::ShellSetup(state) = &app.screen {
+            assert_eq!(state.installations().len(), 1);
+            assert!(state.is_detecting());
+        }
+
+        app.dirty = false;
+        sender.send(detected_row(ShellKind::Zsh, None)).unwrap();
+        drop(sender);
+        app.poll_shell_scan();
+        assert!(
+            app.dirty,
+            "detection completion must request a repaint without input"
+        );
+        if let Screen::ShellSetup(state) = &app.screen {
+            assert_eq!(state.installations().len(), 2);
+            assert!(!state.is_detecting());
+        }
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

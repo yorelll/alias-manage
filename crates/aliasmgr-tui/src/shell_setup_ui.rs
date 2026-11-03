@@ -151,6 +151,11 @@ impl SetupApp {
         self.quit
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_detecting(&self) -> bool {
+        self.detecting
+    }
+
     /// True when the last apply produced at least one fully successful shell
     /// (enabled intent, loader and sync all healthy).
     pub(crate) fn has_success(&self) -> bool {
@@ -189,6 +194,29 @@ impl SetupApp {
         self.rows = rows;
         self.rebuild_plans();
         self.dirty = true;
+    }
+
+    /// Test hook: replace the probe receiver with a caller-controlled channel
+    /// so an App test can drive `poll_detection` without real shell probing.
+    #[cfg(test)]
+    pub(crate) fn set_detection_receiver_for_test(
+        &mut self,
+        receiver: Receiver<ShellInstallation>,
+    ) {
+        self.receiver = Some(receiver);
+        self.detecting = true;
+        self.rows.clear();
+        self.plans.clear();
+        self.dirty = true;
+    }
+
+    /// Observes and clears the state's redraw flag. The App must copy this to
+    /// its own dirty flag: background detection finishing is not an input
+    /// event, so otherwise the terminal is not repainted until a key/resize.
+    pub(crate) fn take_dirty(&mut self) -> bool {
+        let dirty = self.dirty;
+        self.dirty = false;
+        dirty
     }
 
     /// Re-reads the shared configuration so a change made by the CLI/GUI while
