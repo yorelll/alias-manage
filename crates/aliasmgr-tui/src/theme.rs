@@ -4,7 +4,7 @@
 
 use ratatui::{
     style::{Color, Modifier, Style},
-    widgets::BorderType,
+    symbols::border::{self, Set},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -114,11 +114,22 @@ impl Theme {
         Style::default().add_modifier(Modifier::REVERSED)
     }
 
-    pub fn borders(&self) -> BorderType {
+    /// Border glyphs. Ratatui's Plain/Rounded sets are Unicode; the ASCII mode
+    /// must use only `+ - |` so a non-Unicode terminal remains readable.
+    pub fn border_set(&self) -> Set<'static> {
         if self.ascii {
-            BorderType::Plain
+            Set {
+                top_left: "+",
+                top_right: "+",
+                bottom_left: "+",
+                bottom_right: "+",
+                vertical_left: "|",
+                vertical_right: "|",
+                horizontal_top: "-",
+                horizontal_bottom: "-",
+            }
         } else {
-            BorderType::Rounded
+            border::ROUNDED
         }
     }
 
@@ -195,9 +206,12 @@ mod tests {
     }
 
     #[test]
-    fn ascii_theme_uses_plain_borders_and_markers() {
+    fn ascii_theme_uses_ascii_border_glyphs_and_markers() {
         let theme = Theme::ascii_only();
-        assert_eq!(theme.borders(), BorderType::Plain);
+        let borders = theme.border_set();
+        assert_eq!(borders.top_left, "+");
+        assert_eq!(borders.vertical_left, "|");
+        assert_eq!(borders.horizontal_top, "-");
         assert_eq!(theme.ellipsis(), "...");
         assert_eq!(theme.enabled_marker(true), "[on]");
         assert_eq!(theme.checkbox(false), "[ ]");

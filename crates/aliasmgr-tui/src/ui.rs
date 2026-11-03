@@ -3,8 +3,8 @@
 
 use crate::{
     app::{
-        filter_summary, App, DoctorState, Modal, PreviewState, Screen, ScrollState, StatusKind,
-        SyncReportState,
+        filter_summary, App, DoctorState, Focus, Modal, PreviewState, Screen, ScrollState,
+        StatusKind, SyncReportState,
     },
     data,
     model::{shell_label, target_type_label, target_type_semantics, visible_fields, Editor, Field},
@@ -28,7 +28,7 @@ const MIN_WIDTH: u16 = 80;
 /// Minimum frame height (header + body + footer).
 const MIN_FRAME_HEIGHT: u16 = 24;
 /// Minimum body height once the 2-line header and 2-line footer are removed.
-const MIN_HEIGHT: u16 = 20;
+const MIN_HEIGHT: u16 = 19;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BrowserLayout {
@@ -57,7 +57,7 @@ fn line(spans: Vec<Span<'static>>) -> Line<'static> {
 
 fn block<'a>(title: &str, theme: Theme) -> Block<'a> {
     Block::bordered()
-        .border_type(theme.borders())
+        .border_set(theme.border_set())
         .border_style(theme.muted())
         .title(Line::from(span(title.to_string(), theme.title())))
 }
@@ -72,10 +72,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_too_small(frame, area, app);
         return;
     }
+    let footer_height = (footer_key_lines(app, area.width as usize).len() + 1) as u16;
     let chunks = Layout::vertical([
         Constraint::Length(2),
         Constraint::Min(1),
-        Constraint::Length(2),
+        Constraint::Length(footer_height),
     ])
     .split(area);
     let body = chunks[1];
@@ -202,6 +203,23 @@ fn screen_label(app: &App) -> &'static str {
     }
 }
 
+fn focus_label(app: &App) -> String {
+    if app.modal.is_some() {
+        return "modal".to_string();
+    }
+    match &app.screen {
+        Screen::Browse => match app.focus {
+            Focus::List => "list".to_string(),
+            Focus::Detail => "detail".to_string(),
+        },
+        Screen::Editor(editor) => format!("field {}", editor.field.label()),
+        Screen::Preview(_) => "preview".to_string(),
+        Screen::Doctor(_) => "doctor".to_string(),
+        Screen::Help(_) => "help".to_string(),
+        Screen::SyncReport(_) => "sync report".to_string(),
+    }
+}
+
 fn render_header(frame: &mut Frame, area: Rect, app: &App) {
     let width = area.width as usize;
     let revision = format!("rev {}", app.snapshot.revision);
@@ -219,7 +237,14 @@ fn render_header(frame: &mut Frame, area: Rect, app: &App) {
         span(suffix, app.theme.muted()),
     ]);
     let sync = sync_status(app);
-    let mut second_spans = vec![span(filter_summary(&app.filter), app.theme.muted())];
+    let refreshed = app.last_refresh.elapsed().as_secs();
+    let mut second_spans = vec![
+        span(format!("focus: {}", focus_label(app)), app.theme.accent()),
+        span("  |  ", app.theme.muted()),
+        span(format!("refreshed {refreshed}s ago"), app.theme.muted()),
+        span("  |  ", app.theme.muted()),
+        span(filter_summary(&app.filter), app.theme.muted()),
+    ];
     second_spans.push(span("  |  ", app.theme.muted()));
     second_spans.push(span(
         sync.0,
@@ -291,7 +316,17 @@ fn render_browser(frame: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_list(frame: &mut Frame, area: Rect, app: &App) {
-    let title = format!("Aliases ({})", app.visible.len());
+    let position = if app.visible.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", app.selected + 1, app.visible.len())
+    };
+    let focus = if app.focus == Focus::List {
+        " [focus]"
+    } else {
+        ""
+    };
+    let title = format!("Aliases ({}) {position}{focus}", app.visible.len());
     let container = block(&title, app.theme);
     let inner = container.inner(area);
     if app.visible.is_empty() {
@@ -416,11 +451,16 @@ fn short_shell(shell: &ShellKind) -> &'static str {
 }
 
 fn render_detail(frame: &mut Frame, area: Rect, app: &App) {
-    let title = match &app.screen {
-        Screen::Browse if !app.show_detail => "Detail  (Enter/Tab)",
-        _ => "Detail  (Esc back)",
+    let focus = if app.focus == Focus::Detail {
+        " [focus]"
+    } else {
+        ""
     };
-    let container = block(title, app.theme);
+    let title = match &app.screen {
+        Screen::Browse if !app.show_detail => format!("Detail  (Enter/Tab){focus}"),
+        _ => format!("Detail  (Esc back){focus}"),
+    };
+    let container = block(&title, app.theme);
     let Some(alias) = app.selected_alias() else {
         frame.render_widget(
             Paragraph::new(Text::from(vec![line(vec![span(
@@ -694,10 +734,11 @@ fn editor_panes(area: Rect) -> (Rect, Rect) {
 }
 
 fn render_editor(frame: &mut Frame, area: Rect, app: &App, editor: &Editor) {
+    let focus = format!(" [field: {}]", editor.field.label());
     let title = if editor.is_dirty() {
-        format!("{} *", editor.title())
+        format!("{} *{focus}", editor.title())
     } else {
-        editor.title()
+        format!("{}{focus}", editor.title())
     };
     let (fields, side) = editor_panes(area);
     let (lines, _) = editor_lines(editor, app.theme);
@@ -1128,15 +1169,17 @@ fn preview_lines(state: &PreviewState, theme: Theme) -> Vec<Line<'static>> {
 
 fn render_preview(frame: &mut Frame, area: Rect, app: &App, state: &PreviewState) {
     let shell = state.shell().map(shell_label).unwrap_or("-");
+    let total_rows = app.preview_max_scroll as usize + app.preview_height;
+    let first_row = state.scroll as usize + 1;
+    let last_row = (state.scroll as usize + app.preview_height).min(total_rows);
     let title = format!(
-        "Preview: {} [{}]{}",
-        state.alias_name,
+        "Preview: {} [{}] {}  rows {}-{}/{}  (env values masked)",
+        state.alias.name,
         shell,
-        if state.redacted {
-            "  (environment values masked)"
-        } else {
-            ""
-        }
+        state.mode.label(),
+        first_row,
+        last_row,
+        total_rows
     );
     frame.render_widget(
         Paragraph::new(Text::from(preview_lines(state, app.theme)))
@@ -1210,7 +1253,20 @@ fn doctor_lines(state: &DoctorState, theme: Theme) -> Vec<Line<'static>> {
 }
 
 fn render_doctor(frame: &mut Frame, area: Rect, app: &App, state: &DoctorState) {
-    let title = format!("Doctor ({} findings)", state.findings.len());
+    let position = if state.findings.is_empty() {
+        "0/0".to_string()
+    } else {
+        format!("{}/{}", state.selected + 1, state.findings.len())
+    };
+    let total_rows = app.doctor_max_scroll as usize + app.doctor_height;
+    let last_row = (state.scroll as usize + app.doctor_height).min(total_rows);
+    let title = format!(
+        "Doctor ({} findings) {position}  rows {}-{}/{}",
+        state.findings.len(),
+        state.scroll as usize + 1,
+        last_row,
+        total_rows
+    );
     frame.render_widget(
         Paragraph::new(Text::from(doctor_lines(state, app.theme)))
             .block(block(&title, app.theme))
@@ -1238,7 +1294,15 @@ fn render_scroll(frame: &mut Frame, area: Rect, app: &App, state: &ScrollState, 
 }
 
 fn render_sync_report(frame: &mut Frame, area: Rect, app: &App, state: &SyncReportState) {
-    let title = format!("Sync results (revision {})", state.run.revision);
+    let title = format!(
+        "{} (revision {})",
+        if state.retry {
+            "Sync retry results"
+        } else {
+            "Sync results"
+        },
+        state.run.revision
+    );
     let mut lines = Vec::new();
     for result in &state.run.results {
         let (marker, style) = match result.status {
@@ -1305,7 +1369,7 @@ fn render_sync_report(frame: &mut Frame, area: Rect, app: &App, state: &SyncRepo
 }
 
 fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
-    let keys = footer_keys(app);
+    let keys = footer_key_lines(app, area.width as usize);
     let (prefix, style) = match app.status.kind {
         StatusKind::Info => ("[info]", app.theme.muted()),
         StatusKind::Success => ("[ok]", app.theme.success()),
@@ -1320,17 +1384,51 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &App) {
             .map(|busy| format!("  |  busy: {busy}"))
             .unwrap_or_default()
     );
-    let lines = vec![
-        line(vec![span(
-            text::truncate_display(&keys, width, app.theme.ascii),
-            app.theme.muted(),
-        )]),
-        line(vec![span(
-            text::truncate_display(&status, width, app.theme.ascii),
-            style,
-        )]),
-    ];
+    let mut lines = keys
+        .into_iter()
+        .map(|line_text| line(vec![span(line_text, app.theme.muted())]))
+        .collect::<Vec<_>>();
+    lines.push(line(vec![span(
+        text::truncate_display(&status, width, app.theme.ascii),
+        style,
+    )]));
     frame.render_widget(Paragraph::new(Text::from(lines)), area);
+}
+
+/// Wraps whole key tokens (never characters) into at most two lines so a
+/// narrow footer never shows a truncated action such as `d ...`. Tokens are
+/// already in priority order; anything that cannot fit is dropped whole.
+fn footer_key_lines(app: &App, width: usize) -> Vec<String> {
+    let raw = footer_keys(app);
+    let tokens = raw
+        .split("  ")
+        .filter(|token| !token.is_empty())
+        .collect::<Vec<_>>();
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for token in tokens {
+        if lines.len() >= 2 {
+            break;
+        }
+        let candidate = if current.is_empty() {
+            token.to_string()
+        } else {
+            format!("{current}  {token}")
+        };
+        if text::display_width(&candidate) <= width || current.is_empty() {
+            current = candidate;
+        } else {
+            lines.push(current);
+            current = token.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 fn footer_keys(app: &App) -> String {
@@ -1356,7 +1454,7 @@ fn footer_keys(app: &App) -> String {
             "type to search   Up/Down move   Enter apply   Esc clear".to_string()
         }
         Screen::Browse => {
-            "Up/Down move  Enter detail  / search  n new  e edit  r rename  Space on/off  d delete  s sync  p preview  D doctor  t tags  o sort  ? help  q quit".to_string()
+            "Up/Down move  Enter detail  / search  n new  e edit  r rename  Space on/off  d delete  s sync  p preview  D doctor  ? help  q quit  t tags  o sort  R refresh".to_string()
         }
         Screen::Editor(_) => {
             "Tab field  Ctrl+S save  Esc cancel  Up/Down select  a add  d delete  J/K reorder  Enter edit  Space toggle  F3 advanced".to_string()
@@ -1369,7 +1467,9 @@ fn footer_keys(app: &App) -> String {
             "j/k move  PgUp/PgDn  Home/End  s sync  r rescan  Esc back  q quit".to_string()
         }
         Screen::Help(_) => "j/k scroll  PgUp/PgDn  Home/End  Esc back  q quit".to_string(),
-        Screen::SyncReport(_) => "j/k scroll  PgUp/PgDn  Esc back  q quit".to_string(),
+        Screen::SyncReport(_) => {
+            "j/k scroll  PgUp/PgDn  r retry failed  Esc back  q quit".to_string()
+        }
     }
 }
 
@@ -1386,31 +1486,208 @@ fn render_modal(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(Text::from(lines))
-            .block(block(&title, app.theme))
+            .block(block(&format!("[modal] {title}"), app.theme))
             .wrap(Wrap { trim: false }),
         popup,
     );
 }
 
+fn diff_value(value: &str, ascii: bool) -> String {
+    if value.is_empty() {
+        "(empty)".to_string()
+    } else {
+        text::truncate_display(value, 48, ascii)
+    }
+}
+
+fn restriction_text(restriction: &Option<aliasmgr_core::model::PathRestriction>) -> String {
+    match restriction {
+        Some(value) => format!("{}: {}", value.mode.as_str(), value.paths.join(", ")),
+        None => "none".to_string(),
+    }
+}
+
+/// Field-level diff for the conflict modal. Environment values are deliberately
+/// never shown; only key additions/removals and a masked "changed" marker.
+fn conflict_diff_lines(
+    base: &AliasRecord,
+    current: &AliasRecord,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    let mut changes: Vec<(String, String, String)> = Vec::new();
+    fn push(changes: &mut Vec<(String, String, String)>, label: &str, old: String, new: String) {
+        if old != new {
+            changes.push((label.to_string(), old, new));
+        }
+    }
+    push(
+        &mut changes,
+        "name",
+        base.name.clone(),
+        current.name.clone(),
+    );
+    push(
+        &mut changes,
+        "description",
+        base.description.clone(),
+        current.description.clone(),
+    );
+    push(
+        &mut changes,
+        "target type",
+        target_type_label(&base.target_type).to_string(),
+        target_type_label(&current.target_type).to_string(),
+    );
+    push(
+        &mut changes,
+        "executable",
+        base.executable.clone(),
+        current.executable.clone(),
+    );
+    push(
+        &mut changes,
+        "fixed args",
+        base.fixed_args.join(" | "),
+        current.fixed_args.join(" | "),
+    );
+    push(
+        &mut changes,
+        "pass args",
+        base.pass_args.to_string(),
+        current.pass_args.to_string(),
+    );
+    push(
+        &mut changes,
+        "working dir",
+        base.working_directory.clone().unwrap_or_default(),
+        current.working_directory.clone().unwrap_or_default(),
+    );
+    let base_keys = base.environment.keys().cloned().collect::<Vec<_>>();
+    let current_keys = current.environment.keys().cloned().collect::<Vec<_>>();
+    if base_keys != current_keys || base.environment != current.environment {
+        let added = current_keys
+            .iter()
+            .filter(|key| !base_keys.contains(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        let removed = base_keys
+            .iter()
+            .filter(|key| !current_keys.contains(key))
+            .cloned()
+            .collect::<Vec<_>>();
+        changes.push((
+            "environment".to_string(),
+            "values masked".to_string(),
+            format!(
+                "changed (values masked); keys +[{}] -[{}]",
+                added.join(", "),
+                removed.join(", ")
+            ),
+        ));
+    }
+    push(
+        &mut changes,
+        "shells",
+        base.shells
+            .iter()
+            .map(shell_label)
+            .collect::<Vec<_>>()
+            .join(", "),
+        current
+            .shells
+            .iter()
+            .map(shell_label)
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
+    push(
+        &mut changes,
+        "tags",
+        base.tags.join(", "),
+        current.tags.join(", "),
+    );
+    push(
+        &mut changes,
+        "path mode",
+        format!("{:?}", base.path_mode),
+        format!("{:?}", current.path_mode),
+    );
+    push(
+        &mut changes,
+        "restriction",
+        restriction_text(&base.restriction),
+        restriction_text(&current.restriction),
+    );
+    push(
+        &mut changes,
+        "enabled",
+        base.enabled.to_string(),
+        current.enabled.to_string(),
+    );
+    if changes.is_empty() {
+        return vec![line(vec![span(
+            "  fields are identical; only revision/metadata changed",
+            theme.muted(),
+        )])];
+    }
+    changes
+        .into_iter()
+        .map(|(label, old, new)| {
+            let ascii = theme.ascii;
+            line(vec![
+                span(format!("  {label}: "), theme.label()),
+                span(
+                    format!("{} -> {}", diff_value(&old, ascii), diff_value(&new, ascii)),
+                    Style::default(),
+                ),
+            ])
+        })
+        .collect()
+}
+
 fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'static>>) {
     let theme = app.theme;
     match modal {
-        Modal::ConfirmDelete { alias } => (
-            "Delete alias".to_string(),
-            vec![
-                line(vec![span(
-                    format!("Delete \"{}\"?", text::one_line(&alias.name)),
-                    theme.title(),
-                )]),
-                Line::default(),
-                line(vec![span(
-                    "A tombstone is recorded for every bound shell; the next sync removes it.",
-                    theme.muted(),
-                )]),
-                Line::default(),
-                line(vec![span("y confirm    n/Esc cancel", theme.warning())]),
-            ],
-        ),
+        Modal::ConfirmDelete { alias } => {
+            let shells = alias
+                .shells
+                .iter()
+                .map(shell_label)
+                .collect::<Vec<_>>()
+                .join(", ");
+            (
+                "Delete alias".to_string(),
+                vec![
+                    line(vec![span(
+                        format!("Delete \"{}\"?", text::one_line(&alias.name)),
+                        theme.title(),
+                    )]),
+                    Line::default(),
+                    line(vec![span(
+                        format!(
+                            "Affected shells ({}): {}",
+                            alias.shells.len(),
+                            shells
+                        ),
+                        theme.label(),
+                    )]),
+                    line(vec![span(
+                        format!(
+                            "Tombstones: retire \"{}\" for each affected shell at revision {}.",
+                            text::one_line(&alias.name),
+                            alias.revision.saturating_add(1)
+                        ),
+                        theme.muted(),
+                    )]),
+                    line(vec![span(
+                        "Next sync removes the managed definitions; target executable/files are NOT deleted.",
+                        theme.warning(),
+                    )]),
+                    Line::default(),
+                    line(vec![span("y confirm    n/Esc cancel", theme.warning())]),
+                ],
+            )
+        }
         Modal::ConfirmQuit => (
             "Unsaved changes".to_string(),
             vec![
@@ -1433,20 +1710,30 @@ fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'stati
                 )]),
             ],
         ),
-        Modal::Rename { alias, input } => {
+        Modal::Rename {
+            alias,
+            input,
+            error,
+        } => {
             let mut spans = vec![span("New name: ", theme.label())];
             spans.extend(input_spans(input, theme));
-            (
-                format!("Rename {}", text::one_line(&alias.name)),
-                vec![
-                    line(spans),
-                    Line::default(),
-                    line(vec![span(
-                        "Enter rename    Esc cancel. The old name is retired for its shells.",
-                        theme.muted(),
-                    )]),
-                ],
-            )
+            let mut lines = vec![line(spans)];
+            match error {
+                Some(message) => lines.push(line(vec![span(
+                    format!("! {}", text::one_line(message)),
+                    theme.error(),
+                )])),
+                None => lines.push(line(vec![span(
+                    "name accepted by core validation",
+                    theme.success(),
+                )])),
+            }
+            lines.push(Line::default());
+            lines.push(line(vec![span(
+                "Enter rename    Esc cancel. The old name is retired for its shells.",
+                theme.muted(),
+            )]));
+            (format!("Rename {}", text::one_line(&alias.name)), lines)
         }
         Modal::Deleted { name } => (
             "Record deleted elsewhere".to_string(),
@@ -1494,9 +1781,8 @@ fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'stati
             )]));
             ("Tag filter".to_string(), lines)
         }
-        Modal::Conflict { current } => (
-            "Record changed elsewhere".to_string(),
-            vec![
+        Modal::Conflict { base, current } => {
+            let mut lines = vec![
                 line(vec![span(
                     format!(
                         "{} was modified in another front end (revision {}).",
@@ -1507,22 +1793,35 @@ fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'stati
                 )]),
                 Line::default(),
                 line(vec![span(
-                    "Your draft is NOT saved. Choose explicitly:",
+                    "Changed fields (stored -> external):",
                     theme.title(),
                 )]),
-                line(vec![span(
-                    "r reload latest (discards draft)",
-                    theme.muted(),
-                )]),
-                line(vec![span("d discard draft and go back", theme.muted())]),
-                line(vec![span(
-                    "o overwrite with this draft (explicit)",
-                    theme.warning(),
-                )]),
-                Line::default(),
-                line(vec![span("Esc keep editing without saving", theme.muted())]),
-            ],
-        ),
+            ];
+            lines.extend(conflict_diff_lines(base, current, theme));
+            lines.push(Line::default());
+            lines.push(line(vec![span(
+                "Your draft is NOT saved. Choose explicitly:",
+                theme.title(),
+            )]));
+            lines.push(line(vec![span(
+                "r reload latest (discards draft)",
+                theme.muted(),
+            )]));
+            lines.push(line(vec![span(
+                "d discard draft and go back",
+                theme.muted(),
+            )]));
+            lines.push(line(vec![span(
+                "o overwrite with this draft (explicit)",
+                theme.warning(),
+            )]));
+            lines.push(Line::default());
+            lines.push(line(vec![span(
+                "Esc keep editing without saving",
+                theme.muted(),
+            )]));
+            ("Record changed elsewhere".to_string(), lines)
+        }
         Modal::Message { title, lines } => (
             title.clone(),
             lines
@@ -1542,6 +1841,7 @@ mod tests {
         doctor::DoctorFinding,
         model::{AliasRecord, PathMode},
         service::AliasService,
+        storage::Database,
         sync::SyncRun,
     };
     use ratatui::{backend::TestBackend, Terminal};
@@ -1613,6 +1913,388 @@ mod tests {
     }
 
     #[test]
+    fn footer_keys_wrap_whole_tokens_and_status_stays_readable() {
+        let (root, mut app) = test_app("footer-wrap");
+        seed(&app, "gs", "tool");
+        app.reload();
+        app.set_status(StatusKind::Info, "status message stays readable");
+        for (width, height) in [(80, 24), (120, 40)] {
+            let rendered = render_string(&mut app, width, height);
+            assert!(
+                rendered.contains("d delete"),
+                "{}x{}: {rendered}",
+                width,
+                height
+            );
+            assert!(
+                rendered.contains("q quit"),
+                "{}x{}: {rendered}",
+                width,
+                height
+            );
+            assert!(
+                rendered.contains("status message stays readable"),
+                "{}x{}: {rendered}",
+                width,
+                height
+            );
+            assert!(
+                !rendered.contains("d ..."),
+                "{}x{}: {rendered}",
+                width,
+                height
+            );
+        }
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn ascii_mode_uses_only_plus_dash_pipe_borders() {
+        let (root, mut app) = test_app("ascii");
+        app.theme = Theme::ascii_only();
+        seed(&app, "gs", "tool");
+        app.reload();
+        let rendered = render_string(&mut app, 80, 24);
+        for glyph in ["+", "-", "|"] {
+            assert!(rendered.contains(glyph), "missing {glyph}: {rendered}");
+        }
+        for unicode in ["╭", "╮", "╰", "╯", "│", "─", "┌", "┐", "└", "┘"] {
+            assert!(!rendered.contains(unicode), "unicode {unicode}: {rendered}");
+        }
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn focus_is_marked_for_list_detail_editor_field_and_modal() {
+        let (root, mut app) = test_app("focus");
+        seed(&app, "gs", "tool");
+        app.reload();
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("focus: list"), "{rendered}");
+        assert!(rendered.contains("refreshed "), "{rendered}");
+        assert!(rendered.contains("[focus]"), "{rendered}");
+
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("focus: detail"), "{rendered}");
+        assert!(rendered.contains("Detail"), "{rendered}");
+
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('e'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("focus: field Name"), "{rendered}");
+        assert!(rendered.contains("field: Name"), "{rendered}");
+        assert!(rendered.contains("> Name:"), "{rendered}");
+
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("focus: field Target type"), "{rendered}");
+
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 120, 40);
+        assert!(rendered.contains("focus: modal"), "{rendered}");
+        assert!(rendered.contains("[modal] Delete alias"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn list_preview_and_doctor_show_scroll_positions() {
+        let (root, mut app) = test_app("positions");
+        for index in 0..50 {
+            AliasService::new(&app.database)
+                .create(AliasRecord {
+                    name: format!("a{index:02}"),
+                    executable: "tool".into(),
+                    shells: vec![ShellKind::Bash],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        app.reload();
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(rendered.contains("1/50"), "{rendered}");
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(rendered.contains("50/50"), "{rendered}");
+
+        let body = (0..100)
+            .map(|index| format!("line {index}\n"))
+            .collect::<String>();
+        app.screen = Screen::Preview(PreviewState {
+            alias: Box::new(AliasRecord {
+                name: "a00".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }),
+            shells: vec![ShellKind::Bash],
+            index: 0,
+            body,
+            error: None,
+            scroll: 0,
+            mode: crate::app::PreviewMode::Alias,
+        });
+        let rendered = render_string(&mut app, 80, 24);
+        let total = app.preview_max_scroll as usize + app.preview_height;
+        assert!(rendered.contains("rows 1-"), "{rendered}");
+        assert!(rendered.contains(&format!("/{total}")), "{rendered}");
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(
+            rendered.contains(&format!("-{total}/{total}")),
+            "{rendered}"
+        );
+
+        let findings = (0..20)
+            .map(|index| DoctorFinding {
+                shell: Some(ShellKind::Bash),
+                severity: "warning",
+                code: "test",
+                message: format!("finding {index}"),
+                action: None,
+                detail: None,
+            })
+            .collect::<Vec<_>>();
+        app.screen = Screen::Doctor(DoctorState {
+            findings,
+            selected: 0,
+            scroll: 0,
+            busy: false,
+            error: None,
+        });
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(rendered.contains("1/20"), "{rendered}");
+        let total = app.doctor_max_scroll as usize + app.doctor_height;
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(
+            rendered.contains(&format!("-{total}/{total}")),
+            "{rendered}"
+        );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn delete_impact_lists_shells_and_never_target_files() {
+        let (root, mut app) = test_app("delete-impact");
+        AliasService::new(&app.database)
+            .create(AliasRecord {
+                name: "multi".into(),
+                executable: "/srv/tool".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        app.reload();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("Affected shells (2)"), "{rendered}");
+        assert!(rendered.contains("bash"), "{rendered}");
+        assert!(rendered.contains("zsh"), "{rendered}");
+        assert!(rendered.contains("Tombstones"), "{rendered}");
+        assert!(rendered.contains("NOT deleted"), "{rendered}");
+
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Esc,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        AliasService::new(&app.database).delete("multi").unwrap();
+        AliasService::new(&app.database)
+            .create(AliasRecord {
+                name: "single".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        app.reload();
+        let position = app
+            .snapshot
+            .aliases
+            .iter()
+            .position(|alias| alias.name == "single")
+            .unwrap();
+        app.selected = app
+            .visible
+            .iter()
+            .position(|index| *index == position)
+            .unwrap();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('d'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("Affected shells (1)"), "{rendered}");
+        assert!(rendered.contains("bash"), "{rendered}");
+        assert!(!rendered.contains("zsh"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conflict_modal_shows_field_diff_and_masks_environment_values() {
+        let (root, mut app) = test_app("conflict-diff");
+        let alias = seed(&app, "gs", "tool");
+        app.reload();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('e'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        let mut external = alias.clone();
+        external.description = "external description".into();
+        external
+            .environment
+            .insert("TOKEN".into(), "secret-value".into());
+        AliasService::new(&other).update(external).unwrap();
+        app.save_editor();
+        assert!(matches!(app.modal, Some(Modal::Conflict { .. })));
+        let rendered = render_string(&mut app, 100, 36);
+        assert!(rendered.contains("Changed fields"), "{rendered}");
+        assert!(rendered.contains("description:"), "{rendered}");
+        assert!(
+            rendered.contains("(empty) -> external description"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("environment:"), "{rendered}");
+        assert!(rendered.contains("values masked"), "{rendered}");
+        assert!(!rendered.contains("secret-value"), "{rendered}");
+        assert!(rendered.contains("reload latest"), "{rendered}");
+        assert!(rendered.contains("overwrite"), "{rendered}");
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn conflict_modal_reports_identical_fields_and_deleted_records() {
+        let (root, mut app) = test_app("conflict-identical");
+        let alias = seed(&app, "gs", "tool");
+        app.reload();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('e'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        // Same fields, newer revision.
+        AliasService::new(&other).update(alias.clone()).unwrap();
+        app.save_editor();
+        let rendered = render_string(&mut app, 100, 36);
+        assert!(rendered.contains("fields are identical"), "{rendered}");
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+
+        let (root, mut app) = test_app("conflict-deleted");
+        let _alias = seed(&app, "gs", "tool");
+        app.reload();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('e'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        AliasService::new(&other).delete("gs").unwrap();
+        app.save_editor();
+        let rendered = render_string(&mut app, 100, 36);
+        assert!(rendered.contains("Record deleted elsewhere"), "{rendered}");
+        assert!(rendered.contains("recreate"), "{rendered}");
+        assert!(!rendered.contains("Changed fields"), "{rendered}");
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rename_modal_renders_live_validation_errors() {
+        let (root, mut app) = test_app("rename-live");
+        seed(&app, "gs", "tool");
+        app.reload();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('r'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        if let Some(Modal::Rename { input, .. }) = &mut app.modal {
+            input.set_value("bad name");
+        }
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::End,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("invalid alias name"), "{rendered}");
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        assert!(matches!(app.modal, Some(Modal::Rename { .. })));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preview_mode_is_labelled_and_sync_retry_title_is_distinct() {
+        let (root, mut app) = test_app("labels");
+        seed(&app, "gs", "tool");
+        app.reload();
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('p'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("alias definition"), "{rendered}");
+        app.handle_key(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('f'),
+            crossterm::event::KeyModifiers::NONE,
+        ));
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("whole shell file"), "{rendered}");
+
+        app.screen = Screen::SyncReport(SyncReportState {
+            run: SyncRun {
+                revision: 1,
+                results: Vec::new(),
+            },
+            scroll: 0,
+            retry: true,
+        });
+        let rendered = render_string(&mut app, 100, 30);
+        assert!(rendered.contains("Sync retry results"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn layout_switches_wide_narrow_and_too_small() {
         assert_eq!(
             browser_layout(Rect::new(0, 0, 120, 40)),
@@ -1631,7 +2313,7 @@ mod tests {
             BrowserLayout::TooSmall
         );
         assert_eq!(
-            browser_layout(Rect::new(0, 0, 80, 19)),
+            browser_layout(Rect::new(0, 0, 80, 18)),
             BrowserLayout::TooSmall
         );
         assert_eq!(
@@ -1659,7 +2341,7 @@ mod tests {
         let alias = seed(&app, "gs", "git");
         app.reload();
         app.modal = Some(Modal::ConfirmDelete {
-            alias: alias.clone(),
+            alias: Box::new(alias.clone()),
         });
         // 80x23 is one row below the advertised 80x24 minimum.
         let rendered = render_string(&mut app, 80, 23);
@@ -1875,7 +2557,7 @@ mod tests {
         ));
         assert!(matches!(app.screen, Screen::Preview(_)));
         let rendered = render_string(&mut app, 120, 40);
-        assert!(rendered.contains("environment values masked"));
+        assert!(rendered.contains("env values masked"));
         assert!(rendered.contains("***"));
         assert!(!rendered.contains("hunter2"));
         drop(app);
@@ -1913,6 +2595,7 @@ mod tests {
     fn sync_report_renders_reload_commands_and_never_claims_automatic_reload() {
         let (root, mut app) = test_app("sync-report");
         app.screen = Screen::SyncReport(SyncReportState {
+            retry: false,
             run: SyncRun {
                 revision: 3,
                 results: vec![aliasmgr_core::sync::ShellSyncOutcome {
@@ -1984,13 +2667,18 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         app.screen = Screen::Preview(PreviewState {
-            alias_name: "gs".into(),
+            alias: Box::new(AliasRecord {
+                name: "gs".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }),
             shells: vec![ShellKind::Bash],
             index: 0,
             body,
             error: None,
             scroll: 0,
-            redacted: true,
+            mode: crate::app::PreviewMode::Alias,
         });
         let _ = render_string(&mut app, 80, 24);
         // The old line-count bound ignored wrapping and stopped far too early.

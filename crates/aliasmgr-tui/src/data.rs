@@ -11,6 +11,7 @@ use aliasmgr_core::{
     error::AliasError,
     integration::{self, LoaderOutcome},
     model::{AliasRecord, ManagedNameSet, ShellKind, ShellState, ShellStatus},
+    shells,
     storage::Database,
     sync::{self, ShellContentState, ShellContentStatus, SyncRun},
 };
@@ -272,6 +273,17 @@ pub fn preview_shell(
     sync::SyncCoordinator::new(root).render_shell(&shell_aliases, shell, snapshot.revision, &names)
 }
 
+/// Renders just one alias's definition through the existing Shell adapter, with
+/// every environment value masked before rendering. Unrelated aliases cannot
+/// make this preview fail.
+pub fn preview_alias(alias: &AliasRecord, shell: &ShellKind) -> Result<String, AliasError> {
+    let mut redacted = alias.clone();
+    for value in redacted.environment.values_mut() {
+        *value = "***".to_string();
+    }
+    shells::render_alias(&redacted, shell)
+}
+
 /// Inserts or replaces a record in a preview list without touching the DB.
 pub fn with_draft(aliases: &[AliasRecord], draft: Option<&AliasRecord>) -> Vec<AliasRecord> {
     let Some(draft) = draft else {
@@ -288,6 +300,8 @@ pub fn with_draft(aliases: &[AliasRecord], draft: Option<&AliasRecord>) -> Vec<A
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobKind {
     Sync,
+    /// Retry only the shells that failed in a previous partial sync.
+    SyncRetry(Vec<ShellKind>),
     Doctor,
     LoaderInstall(String),
     LoaderUninstall(String),
@@ -297,6 +311,7 @@ impl JobKind {
     pub fn label(&self) -> String {
         match self {
             JobKind::Sync => "syncing".to_string(),
+            JobKind::SyncRetry(shells) => format!("retrying {} failed shell(s)", shells.len()),
             JobKind::Doctor => "running doctor".to_string(),
             JobKind::LoaderInstall(shell) => format!("installing {shell} loader"),
             JobKind::LoaderUninstall(shell) => format!("removing {shell} loader"),
@@ -430,6 +445,9 @@ fn run_job(kind: &JobKind, root: &Path) -> JobResult {
         JobKind::Sync => JobResult::Sync(
             sync::sync_config_dir_collect_io(root).map_err(|error| error.to_string()),
         ),
+        JobKind::SyncRetry(shells) => {
+            JobResult::Sync(sync::sync_shells(root, shells).map_err(|error| error.to_string()))
+        }
         JobKind::Doctor => JobResult::Doctor(run_doctor(root)),
         JobKind::LoaderInstall(shell) => JobResult::Loader(
             integration::install_loader(

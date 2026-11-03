@@ -67,15 +67,19 @@ compiled in and exits with code 1. No ratatui/crossterm code is linked.
 | `Space` | enable / disable |
 | `d` | delete (confirmation modal) |
 | `s` | sync in the background |
-| `p` | generated-content preview |
+| `p` | per-alias preview (`f` switches to the whole-file fallback) |
 | `D` | Doctor |
 | `t` | tag filter |
 | `o` / `O` | cycle sort / toggle descending |
+| `R` | manual refresh; reports external changes |
+| `Esc` | clear applied search/tag/sort filters (or unwind detail focus) |
 | `?` | help |
 | `q` / `Ctrl+C` | quit |
 
 While the search field is active, letters such as `q`, `s`, `d` and `/` are
-text, not shortcuts. `Enter` applies the filter; `Esc` clears it.
+text, not shortcuts. `Enter` applies the filter. `Esc` clears applied search,
+tag, sort and fuzzy filters and restores the full list (when not unwinding
+detail focus first).
 
 ### Edit
 
@@ -102,10 +106,34 @@ save shortcut, and a save already in progress refuses a second submit.
 |---|---|
 | `j` / `k`, `PageUp` / `PageDown`, `Home` / `End` | scroll |
 | `Tab` / `[` `]` | switch preview shell |
+| `f` | preview mode: per-alias definition / whole shell file |
 | `s` | sync (Doctor) |
-| `r` | rescan (Doctor) |
+| `r` | rescan (Doctor); retry only failed shells (Sync results) |
 | `Esc` | back to the browser |
 | `q` | quit |
+
+## Interaction details
+
+- The footer adapts to width. Key hints wrap as whole tokens (never a truncated
+  `d ...`), and the status line remains visible at 80x24 and 120x40.
+- `ALIASMGR_TUI_ASCII=1` uses `+ - |` borders and `...` truncation; no Unicode
+  box drawing or colour is required.
+- Focus is marked in text: the header shows `focus: list/detail/field X/modal`,
+  pane titles carry `[focus]`, the editor marks the selected field with `>`,
+  and modal titles start with `[modal]`.
+- The list title shows `selected/total`; preview and Doctor titles show the
+  visible row range and total.
+- The header shows `refreshed Ns ago`; `R` re-reads the database and reports
+  whether external CLI/GUI changes were applied.
+- Rename validates the name live with the core rules (syntax, PowerShell
+  reserved names, duplicates and case-fold conflicts) and refuses Enter while
+  invalid.
+- Delete confirmation lists affected Shells, tombstone revision, and states that
+  target executable/files are not deleted.
+- Conflict modals show a field-by-field stored -> external diff (environment
+  values masked) while retaining reload/discard/explicit-overwrite choices.
+- After a partial sync, `r` on the Sync results screen retries only the failed
+  Shells; successful files are not rewritten.
 
 ## Target type semantics
 
@@ -166,16 +194,17 @@ shell, changes ExecutionPolicy, or writes outside the marked loader block.
 
 Environment values are masked as `***` in the editor list and detail pane.
 They are only visible while the user explicitly edits that one value. A
-generated-content preview replaces every environment value with `***` before
-the core renderer runs, so previews, errors and logs cannot leak a value.
-Environment keys remain visible. The preview is read-only.
+preview replaces every environment value with `***` before the core renderer
+runs, so previews, errors and logs cannot leak a value. Environment keys remain
+visible. The preview is read-only.
 
-The preview renders the whole generated file for the selected Shell, not only
-the selected alias's definition. If an unrelated alias in that Shell has an
-invalid or missing target, the preview can show `preview unavailable: target is
-missing: /srv/missing-tool` even though the selected alias is valid. Per-alias
-preview is not implemented; inspect the record with the CLI or fix/remove the
-other alias.
+By default the preview renders only the selected alias's definition through the
+same Shell adapter used by sync (`f` switches to the whole generated file as an
+explicit fallback). An unrelated alias with a missing target therefore cannot
+break the default preview. The whole-file fallback can report
+`preview unavailable: target is missing: /srv/missing-tool` for another alias;
+that is expected for that mode. The title labels the active mode and its row
+position.
 
 ## Conflicts and external edits
 

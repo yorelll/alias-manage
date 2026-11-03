@@ -606,6 +606,15 @@ pub fn sync_config_dir_collect_io(config_dir: &Path) -> Result<SyncRun, AliasErr
     sync_with_database_mode(config_dir, &database, &aliases, true)
 }
 
+/// Syncs only the requested shells, using the same revision, names, lock,
+/// journal, backup and per-shell error rules as a full sync. Used to retry the
+/// failed subset of a partial run without touching successful shells.
+pub fn sync_shells(config_dir: &Path, shells: &[ShellKind]) -> Result<SyncRun, AliasError> {
+    let database = crate::storage::Database::open(config_dir.join("aliases.db"))?;
+    let aliases = database.list_aliases()?;
+    sync_with_database_shells(config_dir, &database, &aliases, true, Some(shells))
+}
+
 /// Same as [`sync_config_dir`] but reuses an already-open database and alias
 /// list. Kept public so diagnostics and tests can avoid a second connection.
 pub fn sync_with_database(
@@ -622,7 +631,26 @@ fn sync_with_database_mode(
     aliases: &[AliasRecord],
     collect_io: bool,
 ) -> Result<SyncRun, AliasError> {
-    let shells = referenced_shells(database, aliases)?;
+    sync_with_database_shells(config_dir, database, aliases, collect_io, None)
+}
+
+fn sync_with_database_shells(
+    config_dir: &Path,
+    database: &crate::storage::Database,
+    aliases: &[AliasRecord],
+    collect_io: bool,
+    only: Option<&[ShellKind]>,
+) -> Result<SyncRun, AliasError> {
+    let referenced = referenced_shells(database, aliases)?;
+    let mut shells = match only {
+        Some(selected) => {
+            let mut values = selected.to_vec();
+            values.sort();
+            values.dedup();
+            values
+        }
+        None => referenced.clone(),
+    };
     let revision = current_revision(database, aliases)?;
     let coordinator = SyncCoordinator::new(config_dir);
     let paths = AppPaths {
@@ -634,14 +662,14 @@ fn sync_with_database_mode(
     let config = paths.load_config().ok();
     let mut shared_paths: BTreeMap<PathBuf, usize> = BTreeMap::new();
     if let Some(config) = &config {
-        for shell in &shells {
+        for shell in &referenced {
             if let Ok(target) = crate::integration::loader_target(config, &paths, shell.as_str()) {
                 *shared_paths.entry(target.path).or_default() += 1;
             }
         }
     }
     let mut results = Vec::new();
-    for shell in shells {
+    for shell in shells.drain(..) {
         let names = database.managed_name_set(&shell)?;
         let shell_aliases = aliases
             .iter()
@@ -1907,6 +1935,35 @@ mod tests {
             generated.contains("a() {"),
             "old definition is still present"
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn subset_sync_only_touches_the_requested_shells() {
+        let root = sync_root("subset");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        sync_config_dir(&root).unwrap();
+        let bash_path = root.join("generated/bash.sh");
+        let zsh_path = root.join("generated/zsh.sh");
+        let bash_before = fs::read_to_string(&bash_path).unwrap();
+        let zsh_before = fs::read_to_string(&zsh_path).unwrap();
+
+        let retry = sync_shells(&root, &[ShellKind::Zsh]).unwrap();
+        assert_eq!(retry.results.len(), 1);
+        assert_eq!(retry.results[0].shell, ShellKind::Zsh);
+        assert_eq!(retry.results[0].status, ShellStatus::Ok);
+        assert_eq!(fs::read_to_string(&bash_path).unwrap(), bash_before);
+        assert!(fs::read_to_string(&zsh_path).unwrap().contains("gs"));
+        let _ = zsh_before;
         let _ = fs::remove_dir_all(root);
     }
 }

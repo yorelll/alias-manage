@@ -15,11 +15,12 @@ use aliasmgr_core::{
     doctor::DoctorFinding,
     error::AliasError,
     lock::FileLock,
-    model::{AliasRecord, ShellKind},
+    model::{AliasRecord, ShellKind, ShellStatus},
     search::{search, SearchField, SearchQuery, SortField},
     service::AliasService,
     storage::Database,
     sync::{self, SyncCoordinator, SyncRun},
+    validation::{validate_alias_name, validate_powershell_name},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{
@@ -82,15 +83,30 @@ impl Default for FilterState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreviewMode {
+    Alias,
+    File,
+}
+
+impl PreviewMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            PreviewMode::Alias => "alias definition",
+            PreviewMode::File => "whole shell file",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PreviewState {
-    pub alias_name: String,
+    pub alias: Box<AliasRecord>,
     pub shells: Vec<ShellKind>,
     pub index: usize,
     pub body: String,
     pub error: Option<String>,
     pub scroll: u16,
-    pub redacted: bool,
+    pub mode: PreviewMode,
 }
 
 impl PreviewState {
@@ -119,25 +135,28 @@ pub struct ScrollState {
 pub struct SyncReportState {
     pub run: SyncRun,
     pub scroll: u16,
+    pub retry: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Modal {
     ConfirmDelete {
-        alias: AliasRecord,
+        alias: Box<AliasRecord>,
     },
     ConfirmQuit,
     ConfirmDiscard,
     Rename {
-        alias: AliasRecord,
+        alias: Box<AliasRecord>,
         input: TextInput,
+        error: Option<String>,
     },
     TagFilter {
         entries: Vec<(String, bool)>,
         cursor: usize,
     },
     Conflict {
-        current: AliasRecord,
+        base: Box<AliasRecord>,
+        current: Box<AliasRecord>,
     },
     /// The record was deleted in another front end while the editor was open.
     Deleted {
@@ -188,6 +207,8 @@ pub struct App {
     pub jobs: Jobs,
     pub saving: bool,
     pub external_pending: bool,
+    /// When the DB snapshot was last refreshed (relative time in the header).
+    pub last_refresh: Instant,
     /// Set by the renderer. While the terminal is too small every key except
     /// q/Ctrl+C is ignored, so invisible destructive modals cannot fire.
     pub too_small: bool,
@@ -245,6 +266,7 @@ impl App {
             jobs: Jobs::new(),
             saving: false,
             external_pending: false,
+            last_refresh: Instant::now(),
             too_small: false,
             last_external_check: Instant::now(),
         };
@@ -313,12 +335,13 @@ impl App {
         };
     }
 
-    pub fn reload(&mut self) {
+    pub fn reload(&mut self) -> bool {
         let selected_id = self.selected_alias().map(|alias| alias.id);
         match data::load_snapshot(&self.database, &self.root) {
             Ok(snapshot) => {
                 self.snapshot = snapshot;
                 self.external_pending = false;
+                self.last_refresh = Instant::now();
                 self.recompute_visible();
                 if let Some(id) = selected_id {
                     if let Some(position) = self
@@ -330,10 +353,29 @@ impl App {
                     }
                 }
                 self.dirty = true;
+                true
             }
             Err(error) => {
                 self.set_status(StatusKind::Error, format!("refresh failed: {error}"));
+                false
             }
+        }
+    }
+
+    /// Re-reads the database on demand and reports whether another front end
+    /// changed it since the last snapshot.
+    pub fn manual_refresh(&mut self) {
+        let before = self.snapshot.fingerprint.clone();
+        if !self.reload() {
+            return;
+        }
+        if before == self.snapshot.fingerprint {
+            self.set_status(StatusKind::Info, "refreshed; no external changes");
+        } else {
+            self.set_status(
+                StatusKind::Info,
+                "refreshed; external changes applied from the shared database",
+            );
         }
     }
 
@@ -365,6 +407,7 @@ impl App {
                 }
             }
             self.external_pending = true;
+            self.last_refresh = Instant::now();
             self.dirty = true;
             if editor_open {
                 self.set_status(
@@ -431,7 +474,8 @@ impl App {
             }
             Screen::Preview(_) => self.handle_preview_key(key),
             Screen::Doctor(_) => self.handle_doctor_key(key),
-            Screen::Help(_) | Screen::SyncReport(_) => self.handle_scroll_key(key),
+            Screen::Help(_) => self.handle_scroll_key(key),
+            Screen::SyncReport(_) => self.handle_sync_report_key(key),
         }
     }
 
@@ -480,9 +524,7 @@ impl App {
                 }
                 KeyCode::Esc => {
                     self.filter.active = false;
-                    self.filter.input.clear();
-                    self.recompute_visible();
-                    self.dirty = true;
+                    self.clear_filters();
                     return;
                 }
                 KeyCode::Up => {
@@ -565,6 +607,7 @@ impl App {
             KeyCode::Char('d') => self.open_delete(),
             KeyCode::Char('s') => self.start_sync(),
             KeyCode::Char('D') => self.start_doctor(),
+            KeyCode::Char('R') => self.manual_refresh(),
             KeyCode::Char('?') => self.open_help(),
             KeyCode::Char('t') => self.open_tag_filter(),
             KeyCode::Char('o') => self.cycle_sort(false),
@@ -602,8 +645,27 @@ impl App {
                 self.focus = Focus::List;
                 self.dirty = true;
             }
+            KeyCode::Esc if self.has_applied_filters() => {
+                self.clear_filters();
+            }
             _ => {}
         }
+    }
+
+    pub fn has_applied_filters(&self) -> bool {
+        !self.filter.input.is_empty()
+            || !self.filter.tags.is_empty()
+            || self.filter.fuzzy
+            || self.filter.descending
+            || self.filter.sort != SortField::Name
+    }
+
+    pub fn clear_filters(&mut self) {
+        self.filter = FilterState::default();
+        self.selected = 0;
+        self.list_offset = 0;
+        self.recompute_visible();
+        self.set_status(StatusKind::Info, "filters cleared; showing all aliases");
     }
 
     fn edit_selected(&mut self) {
@@ -620,9 +682,11 @@ impl App {
             self.set_status(StatusKind::Warning, "no alias selected");
             return;
         };
+        let error = self.rename_error(&alias, &alias.name);
         self.modal = Some(Modal::Rename {
             input: TextInput::new(alias.name.clone()),
-            alias,
+            alias: Box::new(alias),
+            error,
         });
         self.dirty = true;
     }
@@ -632,7 +696,9 @@ impl App {
             self.set_status(StatusKind::Warning, "no alias selected");
             return;
         };
-        self.modal = Some(Modal::ConfirmDelete { alias });
+        self.modal = Some(Modal::ConfirmDelete {
+            alias: Box::new(alias),
+        });
         self.dirty = true;
     }
 
@@ -717,13 +783,13 @@ impl App {
         };
         let shells = alias.shells.clone();
         let mut state = PreviewState {
-            alias_name: alias.name.clone(),
+            alias: Box::new(alias),
             shells,
             index: 0,
             body: String::new(),
             error: None,
             scroll: 0,
-            redacted: true,
+            mode: PreviewMode::Alias,
         };
         self.fill_preview(&mut state);
         self.screen = Screen::Preview(state);
@@ -736,9 +802,14 @@ impl App {
             state.body.clear();
             return;
         };
-        let draft = None;
-        let aliases = data::with_draft(&self.snapshot.aliases, draft);
-        match data::preview_shell(&self.root, &self.snapshot, &shell, &aliases) {
+        let result = match state.mode {
+            PreviewMode::Alias => data::preview_alias(&state.alias, &shell),
+            PreviewMode::File => {
+                let aliases = data::with_draft(&self.snapshot.aliases, None);
+                data::preview_shell(&self.root, &self.snapshot, &shell, &aliases)
+            }
+        };
+        match result {
             Ok(body) => {
                 state.body = body;
                 state.error = None;
@@ -754,6 +825,7 @@ impl App {
         let mut back = false;
         let mut quit = false;
         let mut switch: i64 = 0;
+        let mut toggle_mode = false;
         let page = self.preview_height.max(1) as u16;
         let end = self.preview_max_scroll;
         {
@@ -777,6 +849,7 @@ impl App {
                 }
                 KeyCode::Home | KeyCode::Char('g') => state.scroll = 0,
                 KeyCode::End | KeyCode::Char('G') => state.scroll = end,
+                KeyCode::Char('f') => toggle_mode = true,
                 KeyCode::Tab | KeyCode::Right | KeyCode::Char(']') => switch = 1,
                 KeyCode::BackTab | KeyCode::Left | KeyCode::Char('[') => switch = -1,
                 _ => {}
@@ -793,6 +866,15 @@ impl App {
                     state.index = (state.index as i64 + switch).rem_euclid(len) as usize;
                     state.scroll = 0;
                 }
+            }
+            self.refresh_preview_body();
+        } else if toggle_mode {
+            if let Screen::Preview(state) = &mut self.screen {
+                state.mode = match state.mode {
+                    PreviewMode::Alias => PreviewMode::File,
+                    PreviewMode::File => PreviewMode::Alias,
+                };
+                state.scroll = 0;
             }
             self.refresh_preview_body();
         }
@@ -855,6 +937,34 @@ impl App {
         self.dirty = true;
     }
 
+    fn handle_sync_report_key(&mut self, key: KeyEvent) {
+        let mut back = false;
+        let mut quit = false;
+        let mut retry = false;
+        match &mut self.screen {
+            Screen::SyncReport(state) => {
+                let max = state.run.results.len() * 4 + 6;
+                match key.code {
+                    KeyCode::Char('r') | KeyCode::Char('R') => retry = true,
+                    _ => match scroll_event(&key, &mut state.scroll, max) {
+                        ScrollAction::Back => back = true,
+                        ScrollAction::Quit => quit = true,
+                        ScrollAction::None => {}
+                    },
+                }
+            }
+            _ => return,
+        }
+        if back {
+            self.screen = Screen::Browse;
+        } else if quit {
+            self.request_quit();
+        } else if retry {
+            self.start_retry_failed();
+        }
+        self.dirty = true;
+    }
+
     fn handle_scroll_key(&mut self, key: KeyEvent) {
         let mut back = false;
         let mut quit = false;
@@ -889,7 +999,7 @@ impl App {
         self.dirty = true;
         match modal {
             Modal::ConfirmDelete { alias } => match key.code {
-                KeyCode::Char('y') | KeyCode::Char('Y') => self.perform_delete(alias),
+                KeyCode::Char('y') | KeyCode::Char('Y') => self.perform_delete(*alias),
                 KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
                     self.set_status(StatusKind::Info, "delete cancelled");
                 }
@@ -912,17 +1022,42 @@ impl App {
                 }
                 _ => self.modal = Some(Modal::ConfirmDiscard),
             },
-            Modal::Rename { alias, mut input } => match key.code {
-                KeyCode::Enter => self.perform_rename(alias, input.value().to_string()),
+            Modal::Rename {
+                alias,
+                mut input,
+                mut error,
+            } => match key.code {
+                KeyCode::Enter => {
+                    error = self.rename_error(&alias, input.value());
+                    if let Some(message) = &error {
+                        self.set_status(StatusKind::Error, format!("rename blocked: {message}"));
+                        self.modal = Some(Modal::Rename {
+                            alias,
+                            input,
+                            error,
+                        });
+                    } else {
+                        self.perform_rename(*alias, input.value().to_string());
+                    }
+                }
                 KeyCode::Esc => {
                     self.set_status(StatusKind::Info, "rename cancelled");
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
-                    self.modal = Some(Modal::Rename { alias, input });
+                    self.modal = Some(Modal::Rename {
+                        alias,
+                        input,
+                        error,
+                    });
                 }
                 _ => {
                     input.handle_key(key);
-                    self.modal = Some(Modal::Rename { alias, input });
+                    error = self.rename_error(&alias, input.value());
+                    self.modal = Some(Modal::Rename {
+                        alias,
+                        input,
+                        error,
+                    });
                 }
             },
             Modal::Deleted { name } => match key.code {
@@ -991,7 +1126,7 @@ impl App {
                 }
                 _ => self.modal = Some(Modal::TagFilter { entries, cursor }),
             },
-            Modal::Conflict { current } => match key.code {
+            Modal::Conflict { current, .. } => match key.code {
                 KeyCode::Char('r') | KeyCode::Char('R') => {
                     self.external_pending = false;
                     if let Screen::Editor(editor) = &mut self.screen {
@@ -1056,7 +1191,12 @@ impl App {
                     Ok(record) => {
                         editor.error = None;
                         editor.saving = true;
-                        Some((record, editor.is_new, editor.base_revision))
+                        Some((
+                            record,
+                            editor.is_new,
+                            editor.base_revision,
+                            editor.base.clone(),
+                        ))
                     }
                     Err(error) => {
                         editor.error = Some(error);
@@ -1066,7 +1206,7 @@ impl App {
             }
             _ => None,
         };
-        let Some((record, is_new, base_revision)) = prepared else {
+        let Some((record, is_new, base_revision, base)) = prepared else {
             if let Screen::Editor(editor) = &self.screen {
                 if let Some(error) = &editor.error {
                     self.set_status(
@@ -1108,7 +1248,10 @@ impl App {
                 if let (Screen::Editor(editor), Some(current)) = (&mut self.screen, current) {
                     editor.saving = false;
                     editor.conflict_revision = Some(current.revision);
-                    self.modal = Some(Modal::Conflict { current });
+                    self.modal = Some(Modal::Conflict {
+                        base: Box::new(base),
+                        current: Box::new(current),
+                    });
                 } else {
                     if let Screen::Editor(editor) = &mut self.screen {
                         editor.saving = false;
@@ -1192,6 +1335,45 @@ impl App {
             }
         }
         self.dirty = true;
+    }
+
+    /// Core-backed live validation for the rename modal. The same rules that
+    /// `rename_checked` enforces are checked while typing, without touching the
+    /// database.
+    pub fn rename_error(&self, alias: &AliasRecord, new_name: &str) -> Option<String> {
+        if new_name == alias.name {
+            return None;
+        }
+        if let Err(error) = validate_alias_name(new_name) {
+            return Some(error.to_string());
+        }
+        let powershell = alias
+            .shells
+            .iter()
+            .any(|shell| matches!(shell, ShellKind::PowerShell5 | ShellKind::PowerShell7));
+        if powershell {
+            if let Err(error) = validate_powershell_name(new_name) {
+                return Some(error.to_string());
+            }
+        }
+        match self.database.get_alias_by_name(new_name) {
+            Ok(Some(existing)) if existing.id != alias.id => {
+                return Some(format!("alias name already exists: {}", existing.name));
+            }
+            Ok(_) => {}
+            Err(error) => return Some(error.to_string()),
+        }
+        if powershell {
+            match self
+                .database
+                .has_powershell_case_conflict(new_name, Some(alias.id))
+            {
+                Ok(true) => return Some("PowerShell case-fold alias conflict".to_string()),
+                Ok(false) => {}
+                Err(error) => return Some(error.to_string()),
+            }
+        }
+        None
     }
 
     fn perform_rename(&mut self, alias: AliasRecord, new_name: String) {
@@ -1279,6 +1461,51 @@ impl App {
         }
     }
 
+    /// Retries only the failed shells of the current sync report. Successful
+    /// shells are not rewritten; core applies the same lock/journal rules.
+    pub fn start_retry_failed(&mut self) {
+        if self.jobs.is_busy() {
+            self.set_status(
+                StatusKind::Warning,
+                "another background job is running; wait for it to finish",
+            );
+            return;
+        }
+        let shells = match &self.screen {
+            Screen::SyncReport(state) => state
+                .run
+                .results
+                .iter()
+                .filter(|result| result.status == ShellStatus::Failed)
+                .map(|result| result.shell.clone())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        if shells.is_empty() {
+            self.set_status(StatusKind::Info, "no failed shells to retry");
+            return;
+        }
+        if self
+            .jobs
+            .start(JobKind::SyncRetry(shells.clone()), self.root.clone())
+        {
+            self.set_status(
+                StatusKind::Info,
+                format!(
+                    "retrying {} failed shell(s): {}",
+                    shells.len(),
+                    shells
+                        .iter()
+                        .map(|shell| shell.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+        } else {
+            self.set_status(StatusKind::Error, "could not start the retry worker");
+        }
+    }
+
     pub fn start_doctor(&mut self) {
         if self.jobs.is_busy() {
             self.set_status(
@@ -1314,6 +1541,7 @@ impl App {
         let Some(outcome) = self.jobs.try_recv() else {
             return;
         };
+        let retried = matches!(&outcome.kind, JobKind::SyncRetry(_));
         match outcome.result {
             JobResult::Sync(Ok(run)) => {
                 let failed = run.failed();
@@ -1336,18 +1564,32 @@ impl App {
                         );
                     }
                 } else {
-                    self.screen = Screen::SyncReport(SyncReportState { run, scroll: 0 });
+                    self.screen = Screen::SyncReport(SyncReportState {
+                        run,
+                        scroll: 0,
+                        retry: retried,
+                    });
                     if failed {
                         self.set_status(
                             StatusKind::Warning,
-                            "sync finished with failures; generated files may be stale; reload is still manual",
+                            if retried {
+                                "retry finished with failures; reload is still manual"
+                            } else {
+                                "sync finished with failures; generated files may be stale; reload is still manual"
+                            },
                         );
                     } else {
                         self.set_status(
                             StatusKind::Success,
-                            format!(
-                                "synced {count} shell(s); run the shown reload command in this terminal"
-                            ),
+                            if retried {
+                                format!(
+                                    "retried {count} failed shell(s); successful shells were not rewritten; reload is still manual"
+                                )
+                            } else {
+                                format!(
+                                    "synced {count} shell(s); run the shown reload command in this terminal"
+                                )
+                            },
                         );
                     }
                 }
@@ -1509,6 +1751,8 @@ pub fn help_lines() -> Vec<String> {
         "  d                 delete      s       sync (background)".to_string(),
         "  p                 preview     D       Doctor".to_string(),
         "  t                 tag filter  o / O   cycle sort / toggle descending".to_string(),
+        "  R                 manual refresh        Esc     clear applied search/tag/sort filters"
+            .to_string(),
         "  Tab               list/detail focus    ?  help    q / Ctrl+C  quit".to_string(),
         String::new(),
         "EDIT".to_string(),
@@ -1521,7 +1765,10 @@ pub fn help_lines() -> Vec<String> {
         String::new(),
         "PREVIEW / DOCTOR".to_string(),
         "  j/k PgUp/PgDn Home/End scroll    Tab/[ ] switch preview shell".to_string(),
+        "  preview: f toggles per-alias definition / whole shell file; rows show position"
+            .to_string(),
         "  Doctor: j/k PgUp/PgDn Home/End scroll, s sync, r rescan, Esc back".to_string(),
+        "  Sync results: r retries only the failed shells".to_string(),
         String::new(),
         "TARGET TYPES".to_string(),
     ];
@@ -1758,6 +2005,336 @@ mod tests {
         assert!(!app.jobs.is_busy());
         assert!(matches!(app.screen, Screen::Browse));
         assert!(app.modal.is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn select_name(app: &mut App, name: &str) {
+        let position = app
+            .visible
+            .iter()
+            .position(|index| app.snapshot.aliases[*index].name == name)
+            .unwrap_or_else(|| panic!("alias {name} is not visible"));
+        app.selected = position;
+    }
+
+    fn set_rename_input(app: &mut App, value: &str) {
+        if let Some(Modal::Rename { input, .. }) = &mut app.modal {
+            input.set_value(value);
+        } else {
+            panic!("rename modal");
+        }
+        // Trigger the live validation path, as a real key event would.
+        app.handle_key(key(KeyCode::End));
+    }
+
+    fn rename_error(app: &App) -> Option<String> {
+        match &app.modal {
+            Some(Modal::Rename { error, .. }) => error.clone(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn per_alias_preview_ignores_an_unrelated_missing_target() {
+        let root = temp_root("preview-per-alias");
+        let mut app = App::new(root.clone()).unwrap();
+        let service = AliasService::new(&app.database);
+        service
+            .create(AliasRecord {
+                name: "good".into(),
+                executable: "tool".into(),
+                fixed_args: vec!["status".into()],
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        service
+            .create(AliasRecord {
+                name: "zz-bad".into(),
+                executable: "/definitely/missing/tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        app.reload();
+        select_name(&mut app, "good");
+        app.handle_key(key(KeyCode::Char('p')));
+        let Screen::Preview(state) = &app.screen else {
+            panic!("preview");
+        };
+        assert_eq!(state.mode, PreviewMode::Alias);
+        assert!(state.error.is_none(), "{:?}", state.error);
+        assert!(state.body.contains("good"));
+        assert!(!state.body.contains("zz-bad"));
+
+        // The whole-file fallback is explicit and may show the unrelated error.
+        app.handle_key(key(KeyCode::Char('f')));
+        let Screen::Preview(state) = &app.screen else {
+            panic!("preview");
+        };
+        assert_eq!(state.mode, PreviewMode::File);
+        assert!(state
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("target is missing"));
+        app.handle_key(key(KeyCode::Char('f')));
+        let Screen::Preview(state) = &app.screen else {
+            panic!("preview");
+        };
+        assert_eq!(state.mode, PreviewMode::Alias);
+        assert!(state.error.is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn retry_after_partial_sync_targets_only_failed_shells() {
+        let root = temp_root("retry-failed");
+        let mut app = App::new(root.clone()).unwrap();
+        AliasService::new(&app.database)
+            .create(AliasRecord {
+                name: "gs".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                ..Default::default()
+            })
+            .unwrap();
+        app.reload();
+        app.screen = Screen::SyncReport(SyncReportState {
+            run: SyncRun {
+                revision: 1,
+                results: vec![
+                    aliasmgr_core::sync::ShellSyncOutcome {
+                        shell: ShellKind::Bash,
+                        status: ShellStatus::Ok,
+                        error: None,
+                        error_code: None,
+                        generated_path: root.join("generated/bash.sh"),
+                        loader_installed: true,
+                        loader_error_code: None,
+                    },
+                    aliasmgr_core::sync::ShellSyncOutcome {
+                        shell: ShellKind::Zsh,
+                        status: ShellStatus::Failed,
+                        error: Some("synthetic failure".into()),
+                        error_code: Some("sync_failed".into()),
+                        generated_path: root.join("generated/zsh.sh"),
+                        loader_installed: true,
+                        loader_error_code: None,
+                    },
+                ],
+            },
+            scroll: 0,
+            retry: false,
+        });
+        app.handle_key(key(KeyCode::Char('r')));
+        assert!(app.jobs.is_busy());
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            app.poll_jobs();
+            if !app.jobs.is_busy() {
+                break;
+            }
+            assert!(Instant::now() < deadline, "retry did not finish");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let Screen::SyncReport(state) = &app.screen else {
+            panic!("sync report");
+        };
+        assert!(state.retry);
+        assert_eq!(state.run.results.len(), 1);
+        assert_eq!(state.run.results[0].shell, ShellKind::Zsh);
+        assert!(!root.join("generated/bash.sh").exists());
+        assert!(root.join("generated/zsh.sh").exists());
+        assert!(app
+            .status
+            .text
+            .contains("successful shells were not rewritten"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn retry_with_no_failed_shells_is_a_no_op() {
+        let (root, mut app) = app_with_two();
+        app.screen = Screen::SyncReport(SyncReportState {
+            run: SyncRun {
+                revision: 1,
+                results: Vec::new(),
+            },
+            scroll: 0,
+            retry: false,
+        });
+        app.start_retry_failed();
+        assert!(!app.jobs.is_busy());
+        assert!(app.status.text.contains("no failed shells"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manual_refresh_updates_timestamp_and_reports_external_changes() {
+        let (root, mut app) = app_with_two();
+        app.last_refresh = Instant::now() - Duration::from_secs(5);
+        let before = app.last_refresh;
+        app.manual_refresh();
+        assert!(app.last_refresh > before);
+        assert!(app.status.text.contains("no external changes"));
+
+        let other = Database::open(root.join("aliases.db")).unwrap();
+        AliasService::new(&other)
+            .create(AliasRecord {
+                name: "newone".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        let before = app.last_refresh;
+        app.handle_key(key(KeyCode::Char('R')));
+        assert!(app.last_refresh > before);
+        assert!(app.status.text.contains("external changes applied"));
+        assert!(app
+            .snapshot
+            .aliases
+            .iter()
+            .any(|alias| alias.name == "newone"));
+        drop(other);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn rename_validation_blocks_invalid_reserved_duplicate_and_casefold_names() {
+        let (root, mut app) = app_with_two();
+        select_name(&mut app, "gs");
+        app.handle_key(key(KeyCode::Char('r')));
+
+        set_rename_input(&mut app, "bad name");
+        assert!(rename_error(&app).unwrap().contains("invalid alias name"));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.modal, Some(Modal::Rename { .. })));
+        assert!(AliasService::new(&app.database)
+            .get_by_name("gs")
+            .unwrap()
+            .is_some());
+
+        set_rename_input(&mut app, "ll");
+        assert!(rename_error(&app).unwrap().contains("already exists"));
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.modal, Some(Modal::Rename { .. })));
+
+        set_rename_input(&mut app, "gs2");
+        assert!(rename_error(&app).is_none());
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.screen, Screen::Browse));
+        assert!(AliasService::new(&app.database)
+            .get_by_name("gs2")
+            .unwrap()
+            .is_some());
+
+        // PowerShell reserved and case-fold rules.
+        {
+            let service = AliasService::new(&app.database);
+            service
+                .create(AliasRecord {
+                    name: "Build".into(),
+                    executable: "tool".into(),
+                    shells: vec![ShellKind::PowerShell7],
+                    ..Default::default()
+                })
+                .unwrap();
+            service
+                .create(AliasRecord {
+                    name: "other".into(),
+                    executable: "tool".into(),
+                    shells: vec![ShellKind::PowerShell7],
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        app.reload();
+        select_name(&mut app, "other");
+        app.handle_key(key(KeyCode::Char('r')));
+        set_rename_input(&mut app, "ls");
+        assert!(rename_error(&app).unwrap().contains("reserved"));
+        set_rename_input(&mut app, "BUILD");
+        assert!(rename_error(&app).unwrap().contains("case-fold"));
+        set_rename_input(&mut app, "renamed-ps");
+        assert!(rename_error(&app).is_none());
+        app.handle_key(key(KeyCode::Enter));
+        assert!(AliasService::new(&app.database)
+            .get_by_name("renamed-ps")
+            .unwrap()
+            .is_some());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn esc_clears_search_tag_sort_and_fuzzy_filters() {
+        let (root, mut app) = app_with_two();
+        // Search.
+        app.handle_key(key(KeyCode::Char('/')));
+        for character in "gs".chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.visible.len(), 1);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.filter.input.is_empty());
+        assert_eq!(app.visible.len(), 2);
+        assert!(app.status.text.contains("filters cleared"));
+
+        // Sort and fuzzy.
+        app.handle_key(key(KeyCode::Char('o')));
+        app.handle_key(key(KeyCode::Char('F')));
+        assert_eq!(app.filter.sort, SortField::UpdatedAt);
+        assert!(app.filter.fuzzy);
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.filter.sort, SortField::Name);
+        assert!(!app.filter.fuzzy);
+        assert!(!app.filter.descending);
+
+        // Tag filter (and a combined search/tag/sort state).
+        let tagged = app
+            .snapshot
+            .aliases
+            .iter()
+            .find(|alias| alias.name == "gs")
+            .cloned()
+            .unwrap();
+        let mut tagged = tagged;
+        tagged.tags = vec!["git".into()];
+        AliasService::new(&app.database).update(tagged).unwrap();
+        app.reload();
+        app.handle_key(key(KeyCode::Char('t')));
+        app.handle_key(key(KeyCode::Char(' ')));
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.filter.tags, vec!["git".to_string()]);
+        assert_eq!(app.visible.len(), 1);
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.filter.tags.is_empty());
+        assert_eq!(app.visible.len(), 2);
+
+        // Combination: every filter cleared by one Esc.
+        app.handle_key(key(KeyCode::Char('/')));
+        for character in "gs".chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        app.handle_key(key(KeyCode::Char('o')));
+        app.handle_key(key(KeyCode::Char('F')));
+        app.filter.tags = vec!["git".into()];
+        app.recompute_visible();
+        app.handle_key(key(KeyCode::Esc));
+        assert!(app.filter.input.is_empty());
+        assert!(app.filter.tags.is_empty());
+        assert_eq!(app.filter.sort, SortField::Name);
+        assert!(!app.filter.fuzzy);
+        assert_eq!(app.visible.len(), 2);
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -2043,11 +2620,18 @@ mod tests {
         let (root, mut app) = app_with_two();
         // Selected alias sorts first: gs.
         app.handle_key(key(KeyCode::Char('r')));
-        let Some(Modal::Rename { alias, mut input }) = app.modal.take() else {
+        let Some(Modal::Rename {
+            alias, mut input, ..
+        }) = app.modal.take()
+        else {
             panic!("rename modal");
         };
         input.set_value("git-status");
-        app.modal = Some(Modal::Rename { alias, input });
+        app.modal = Some(Modal::Rename {
+            alias,
+            input,
+            error: None,
+        });
         app.handle_key(key(KeyCode::Enter));
         assert!(app.snapshot.aliases.iter().any(|a| a.name == "git-status"));
         app.handle_key(key(KeyCode::Char(' ')));
