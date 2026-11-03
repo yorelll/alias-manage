@@ -361,3 +361,29 @@
 - 慢操作后台线程 + mpsc；写操作一次一个，复用锁；revision 冲突不静默覆盖。
 - 正常/边界/错误/回归测试；B3 无 blocking/confirmed；C3 四终端真实 PTY 通过。
 - 敏感环境变量不泄露；不自动 reload/重启/改环境变量/注册表。
+
+## 12. R2.1b：Footer 重排与全局语言模式（方案 B）
+
+在 R2.1 通过后、R2.2（loader）之前实施。
+
+### Footer
+- 键位强调：快捷键用主强调色 + 粗体，标签用中性/dim 色；不只靠颜色区分。
+- 分组分隔：只在逻辑组之间使用 dim `│`，组内用 `·`/空格；不对每个命令都加竖线。
+- 分组建议：移动/浏览；编辑/操作（new/edit/rename/toggle/delete）；同步/查看（sync/preview/doctor）；帮助/退出。
+- ASCII 回退：`ALIASMGR_TUI_ASCII=1` 时 `│`→`|`、`·`→`-`。
+- 自适应折行：80×24 优先保留高优先级组，低优先级整项丢弃，不截断成 `d …`；120×40 显示完整组。
+- 破坏性操作（delete）额外用 `!`/文字标记，不依赖红色。
+- 测试：80×24、120×40、无颜色、ASCII、折行/分组、无截断 token。
+
+### 全局语言模式（zh/en，默认 en，方案 B）
+- 唯一事实来源：共享 `config.toml` 的 `runtime.language`；CLI/TUI/GUI 通过同一配置根读写。
+- 默认英文：core/GUI/TUI/CLI 默认 `en`；旧配置缺字段按 `en` 解释（迁移测试）。
+- CLI：
+  - `aliasmgr language` 显示当前语言；`aliasmgr language en|zh` 设置并保存；非法值退出码 2。
+  - CLI 用户消息/错误跟随语言。
+  - **方案 B：clap `--help`/子命令 help/参数说明也本地化**；解析前预读 `--config-dir`/`ALIASMGR_CONFIG_DIR` 以选择语言包；`aliasmgr help language`、`language -h`、`language --help` 均提供。
+  - 不写环境变量/注册表。
+- TUI：zh/en 完整语言包；设置页/快捷键切换；即时重绘并写回共享配置；外部语言变更可感知/刷新；所有用户可见文案走统一 `t(key)`。
+- GUI：沿用现有 zh/en 语言包，默认改 en；切换写共享配置；获得焦点/刷新时重读 CLI/TUI 的修改。
+- 一致性测试：CLI 设置→TUI/GUI 读取；TUI 设置→CLI/GUI；GUI 设置→CLI/TUI；同一配置根；无效值；默认 en；旧配置迁移；外部变更刷新。
+- 文档：README、docs/tui.md、docs/cli-commands.md、architecture/limitations 更新；说明语言包可以不同但模式共享。
