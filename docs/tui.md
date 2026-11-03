@@ -72,14 +72,13 @@ compiled in and exits with code 1. No ratatui/crossterm code is linked.
 | `t` | tag filter |
 | `o` / `O` | cycle sort / toggle descending |
 | `R` | manual refresh; reports external changes |
-| `Esc` | clear applied search/tag/sort filters (or unwind detail focus) |
+| `Esc` | clear applied search/tag/sort filters; from detail focus it returns to the list and clears them in one press |
 | `?` | help |
 | `q` / `Ctrl+C` | quit |
 
 While the search field is active, letters such as `q`, `s`, `d` and `/` are
-text, not shortcuts. `Enter` applies the filter. `Esc` clears applied search,
-tag, sort and fuzzy filters and restores the full list (when not unwinding
-detail focus first).
+text, not shortcuts. `Enter` applies the filter. `Esc` clears applied search, tag, sort and fuzzy filters and restores the full
+list; from detail focus a single `Esc` returns to the list and clears them too.
 
 ### Edit
 

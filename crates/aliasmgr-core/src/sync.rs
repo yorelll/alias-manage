@@ -644,7 +644,14 @@ fn sync_with_database_shells(
     let referenced = referenced_shells(database, aliases)?;
     let mut shells = match only {
         Some(selected) => {
-            let mut values = selected.to_vec();
+            // Keep the same target rules as a full sync: a requested shell with
+            // no aliases and no tombstones is not a sync target, so it must not
+            // get an empty generated file or shell_state.
+            let mut values = selected
+                .iter()
+                .filter(|shell| referenced.contains(shell))
+                .cloned()
+                .collect::<Vec<_>>();
             values.sort();
             values.dedup();
             values
@@ -1964,6 +1971,27 @@ mod tests {
         assert_eq!(fs::read_to_string(&bash_path).unwrap(), bash_before);
         assert!(fs::read_to_string(&zsh_path).unwrap().contains("gs"));
         let _ = zsh_before;
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn subset_sync_ignores_shells_that_full_sync_would_not_target() {
+        let root = sync_root("subset-unreferenced");
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        database
+            .insert_alias(&AliasRecord {
+                name: "gs".into(),
+                executable: "git".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            })
+            .unwrap();
+        drop(database);
+        let retry = sync_shells(&root, &[ShellKind::Zsh]).unwrap();
+        assert!(retry.results.is_empty());
+        assert!(!root.join("generated/zsh.sh").exists());
+        let database = crate::storage::Database::open(root.join("aliases.db")).unwrap();
+        assert!(database.shell_states().unwrap().is_empty());
         let _ = fs::remove_dir_all(root);
     }
 }

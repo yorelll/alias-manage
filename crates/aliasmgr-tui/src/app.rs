@@ -190,8 +190,10 @@ pub struct App {
     pub detail_height: u16,
     pub preview_height: usize,
     pub preview_max_scroll: u16,
+    pub preview_rows: usize,
     pub doctor_height: usize,
     pub doctor_max_scroll: u16,
+    pub doctor_rows: usize,
     pub filter: FilterState,
     pub screen: Screen,
     pub focus: Focus,
@@ -251,8 +253,10 @@ impl App {
             detail_height: 10,
             preview_height: 10,
             preview_max_scroll: 0,
+            preview_rows: 0,
             doctor_height: 10,
             doctor_max_scroll: 0,
+            doctor_rows: 0,
             filter: FilterState::default(),
             screen: Screen::Browse,
             focus: Focus::List,
@@ -574,7 +578,13 @@ impl App {
                     if !self.wide_layout {
                         self.show_detail = false;
                     }
-                    self.dirty = true;
+                    // A single Esc from detail focus both returns to the list
+                    // and clears any applied filters.
+                    if self.has_applied_filters() {
+                        self.clear_filters();
+                    } else {
+                        self.dirty = true;
+                    }
                     return;
                 }
                 KeyCode::Tab | KeyCode::BackTab => {
@@ -2335,6 +2345,26 @@ mod tests {
         assert_eq!(app.filter.sort, SortField::Name);
         assert!(!app.filter.fuzzy);
         assert_eq!(app.visible.len(), 2);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn esc_from_detail_focus_clears_applied_filters_in_one_press() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('/')));
+        for character in "gs".chars() {
+            app.handle_key(key(KeyCode::Char(character)));
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert_eq!(app.visible.len(), 1);
+        app.handle_key(key(KeyCode::Tab));
+        assert_eq!(app.focus, Focus::Detail);
+        app.handle_key(key(KeyCode::Esc));
+        assert_eq!(app.focus, Focus::List);
+        assert!(app.filter.input.is_empty());
+        assert_eq!(app.visible.len(), 2);
+        assert!(app.status.text.contains("filters cleared"));
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

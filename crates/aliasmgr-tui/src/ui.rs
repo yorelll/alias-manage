@@ -124,17 +124,19 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let lines = preview_lines(state, app.theme);
             let inner_width = body.width.saturating_sub(2).max(1) as usize;
             let inner_height = body.height.saturating_sub(2).max(1) as usize;
+            let rows = wrapped_rows(&lines, inner_width);
             app.preview_height = inner_height;
-            app.preview_max_scroll =
-                wrapped_rows(&lines, inner_width).saturating_sub(inner_height) as u16;
+            app.preview_rows = rows;
+            app.preview_max_scroll = rows.saturating_sub(inner_height) as u16;
         }
         Screen::Doctor(state) => {
             let lines = doctor_lines(state, app.theme);
             let inner_width = body.width.saturating_sub(2).max(1) as usize;
             let inner_height = body.height.saturating_sub(2).max(1) as usize;
+            let rows = wrapped_rows(&lines, inner_width);
             app.doctor_height = inner_height;
-            app.doctor_max_scroll =
-                wrapped_rows(&lines, inner_width).saturating_sub(inner_height) as u16;
+            app.doctor_rows = rows;
+            app.doctor_max_scroll = rows.saturating_sub(inner_height) as u16;
         }
         Screen::Editor(editor) => {
             let (fields, _) = editor_panes(body);
@@ -685,7 +687,6 @@ fn wrapped_rows(lines: &[Line<'static>], width: usize) -> usize {
             wrapped_text_rows(&text, width)
         })
         .sum::<usize>()
-        .max(1)
 }
 
 fn wrapped_text_rows(text: &str, width: usize) -> usize {
@@ -1169,17 +1170,23 @@ fn preview_lines(state: &PreviewState, theme: Theme) -> Vec<Line<'static>> {
 
 fn render_preview(frame: &mut Frame, area: Rect, app: &App, state: &PreviewState) {
     let shell = state.shell().map(shell_label).unwrap_or("-");
-    let total_rows = app.preview_max_scroll as usize + app.preview_height;
-    let first_row = state.scroll as usize + 1;
-    let last_row = (state.scroll as usize + app.preview_height).min(total_rows);
+    let rows = app.preview_rows;
+    let first_row = (state.scroll as usize + 1).min(rows);
+    let last_row = (state.scroll as usize + app.preview_height).min(rows);
+    let position = if rows == 0 {
+        "rows 0/0".to_string()
+    } else {
+        format!("rows {first_row}-{last_row}/{rows}")
+    };
+    // Keep the mode and row labels before the (possibly long) alias name so a
+    // narrow title can never hide which preview mode is active.
+    let name = text::truncate_display(&state.alias.name, 24, app.theme.ascii);
     let title = format!(
-        "Preview: {} [{}] {}  rows {}-{}/{}  (env values masked)",
-        state.alias.name,
+        "Preview [{}] {}  {}  {}  (env masked)",
         shell,
         state.mode.label(),
-        first_row,
-        last_row,
-        total_rows
+        position,
+        name
     );
     frame.render_widget(
         Paragraph::new(Text::from(preview_lines(state, app.theme)))
@@ -1258,14 +1265,17 @@ fn render_doctor(frame: &mut Frame, area: Rect, app: &App, state: &DoctorState) 
     } else {
         format!("{}/{}", state.selected + 1, state.findings.len())
     };
-    let total_rows = app.doctor_max_scroll as usize + app.doctor_height;
-    let last_row = (state.scroll as usize + app.doctor_height).min(total_rows);
+    let rows = app.doctor_rows;
+    let first_row = (state.scroll as usize + 1).min(rows);
+    let last_row = (state.scroll as usize + app.doctor_height).min(rows);
+    let range = if rows == 0 {
+        "rows 0/0".to_string()
+    } else {
+        format!("rows {first_row}-{last_row}/{rows}")
+    };
     let title = format!(
-        "Doctor ({} findings) {position}  rows {}-{}/{}",
-        state.findings.len(),
-        state.scroll as usize + 1,
-        last_row,
-        total_rows
+        "Doctor ({} findings) {position}  {range}",
+        state.findings.len()
     );
     frame.render_widget(
         Paragraph::new(Text::from(doctor_lines(state, app.theme)))
@@ -1460,7 +1470,7 @@ fn footer_keys(app: &App) -> String {
             "Tab field  Ctrl+S save  Esc cancel  Up/Down select  a add  d delete  J/K reorder  Enter edit  Space toggle  F3 advanced".to_string()
         }
         Screen::Preview(_) => {
-            "j/k scroll  PgUp/PgDn  Home/End  Tab/[ ] switch shell  Esc back  q quit"
+            "f mode  j/k scroll  PgUp/PgDn  Home/End  Tab/[ ] shell  Esc back  q quit"
                 .to_string()
         }
         Screen::Doctor(_) => {
@@ -1909,7 +1919,7 @@ mod tests {
         assert_eq!(super::wrapped_text_rows("中文中文中文", width), 2);
         let lines = vec![Line::from("one two three four"), Line::from("short")];
         assert_eq!(super::wrapped_rows(&lines, width), 3);
-        assert_eq!(super::wrapped_rows(&[], width), 1);
+        assert_eq!(super::wrapped_rows(&[], width), 0);
     }
 
     #[test]
@@ -2016,6 +2026,84 @@ mod tests {
     }
 
     #[test]
+    fn short_preview_and_doctor_report_exact_row_counts() {
+        let (root, mut app) = test_app("short-rows");
+        app.screen = Screen::Preview(PreviewState {
+            alias: Box::new(AliasRecord {
+                name: "short".into(),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }),
+            shells: vec![ShellKind::Bash],
+            index: 0,
+            body: "one\ntwo".to_string(),
+            error: None,
+            scroll: 0,
+            mode: crate::app::PreviewMode::Alias,
+        });
+        let rendered = render_string(&mut app, 80, 24);
+        assert_eq!(app.preview_rows, 2);
+        assert!(rendered.contains("rows 1-2/2"), "{rendered}");
+        assert!(!rendered.contains("rows 1-17/17"), "{rendered}");
+
+        if let Screen::Preview(state) = &mut app.screen {
+            state.body.clear();
+            state.error = None;
+        }
+        let rendered = render_string(&mut app, 80, 24);
+        assert_eq!(app.preview_rows, 0);
+        assert!(rendered.contains("rows 0/0"), "{rendered}");
+
+        app.screen = Screen::Doctor(DoctorState {
+            findings: vec![DoctorFinding {
+                shell: Some(ShellKind::Bash),
+                severity: "warning",
+                code: "test",
+                message: "short finding".into(),
+                action: None,
+                detail: None,
+            }],
+            selected: 0,
+            scroll: 0,
+            busy: false,
+            error: None,
+        });
+        let rendered = render_string(&mut app, 80, 24);
+        assert_eq!(app.doctor_rows, 2);
+        assert!(rendered.contains("1/1"), "{rendered}");
+        assert!(rendered.contains("rows 1-2/2"), "{rendered}");
+        assert!(!rendered.contains("rows 1-17/17"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn long_preview_names_keep_mode_rows_and_footer_label_visible() {
+        let (root, mut app) = test_app("long-preview-name");
+        app.screen = Screen::Preview(PreviewState {
+            alias: Box::new(AliasRecord {
+                name: "a".repeat(60),
+                executable: "tool".into(),
+                shells: vec![ShellKind::Bash],
+                ..Default::default()
+            }),
+            shells: vec![ShellKind::Bash],
+            index: 0,
+            body: "definition".to_string(),
+            error: None,
+            scroll: 0,
+            mode: crate::app::PreviewMode::Alias,
+        });
+        let rendered = render_string(&mut app, 80, 24);
+        assert!(rendered.contains("alias definition"), "{rendered}");
+        assert!(rendered.contains("rows 1-1/1"), "{rendered}");
+        assert!(rendered.contains("f mode"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn list_preview_and_doctor_show_scroll_positions() {
         let (root, mut app) = test_app("positions");
         for index in 0..50 {
@@ -2056,7 +2144,7 @@ mod tests {
             mode: crate::app::PreviewMode::Alias,
         });
         let rendered = render_string(&mut app, 80, 24);
-        let total = app.preview_max_scroll as usize + app.preview_height;
+        let total = app.preview_rows;
         assert!(rendered.contains("rows 1-"), "{rendered}");
         assert!(rendered.contains(&format!("/{total}")), "{rendered}");
         app.handle_key(crossterm::event::KeyEvent::new(
@@ -2088,7 +2176,7 @@ mod tests {
         });
         let rendered = render_string(&mut app, 80, 24);
         assert!(rendered.contains("1/20"), "{rendered}");
-        let total = app.doctor_max_scroll as usize + app.doctor_height;
+        let total = app.doctor_rows;
         app.handle_key(crossterm::event::KeyEvent::new(
             crossterm::event::KeyCode::End,
             crossterm::event::KeyModifiers::NONE,
@@ -2557,7 +2645,7 @@ mod tests {
         ));
         assert!(matches!(app.screen, Screen::Preview(_)));
         let rendered = render_string(&mut app, 120, 40);
-        assert!(rendered.contains("env values masked"));
+        assert!(rendered.contains("env masked"));
         assert!(rendered.contains("***"));
         assert!(!rendered.contains("hunter2"));
         drop(app);
