@@ -1,4 +1,4 @@
-use crate::fsutil::write_atomic;
+use crate::fsutil::write_atomic_with_mode;
 use crate::{
     error::AliasError,
     model::{contains_powershell, record_checksum, AliasRecord, PathMode, ShellKind, TargetType},
@@ -124,9 +124,10 @@ pub fn export_toml(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
         exported_by_version: env!("CARGO_PKG_VERSION").into(),
         aliases: sanitized_for_export(aliases)?,
     };
-    write_atomic(
+    write_atomic_with_mode(
         path,
         &toml::to_string_pretty(&file).map_err(|error| AliasError::Config(error.to_string()))?,
+        0o666,
     )?;
     Ok(())
 }
@@ -162,7 +163,7 @@ pub fn export_json(path: &Path, aliases: &[AliasRecord]) -> Result<(), AliasErro
         exported_by_version: env!("CARGO_PKG_VERSION").into(),
         aliases: sanitized_for_export(aliases)?,
     };
-    write_atomic(path, &serde_json::to_string_pretty(&file)?)?;
+    write_atomic_with_mode(path, &serde_json::to_string_pretty(&file)?, 0o666)?;
     Ok(())
 }
 pub fn read_json(path: &Path) -> Result<Vec<AliasRecord>, AliasError> {
@@ -984,5 +985,37 @@ mod tests {
             warning.contains("not absolute on this platform"),
             "{warning}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn new_export_file_follows_the_process_umask() {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let dir =
+            std::env::temp_dir().join(format!("aliasmgr-transfer-umask-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // Derive this process's umask from a probe created with the same
+        // requested mode, so the assertion does not assume 022.
+        let probe = dir.join("probe");
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o666)
+            .open(&probe)
+            .unwrap();
+        let umask_mode = fs::metadata(&probe).unwrap().permissions().mode() & 0o777;
+
+        let export = dir.join("aliases.json");
+        let alias = AliasRecord {
+            name: "gs".into(),
+            executable: "git".into(),
+            ..Default::default()
+        };
+        export_json(&export, &[alias]).unwrap();
+        let export_mode = fs::metadata(&export).unwrap().permissions().mode() & 0o777;
+        assert_eq!(export_mode, umask_mode);
+        assert_ne!(export_mode & 0o600, 0, "export must be owner read/write");
+        let _ = fs::remove_dir_all(dir);
     }
 }
