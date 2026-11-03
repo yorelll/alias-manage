@@ -26,13 +26,28 @@ The TUI is a presentation and input-state layer:
 - Sync uses `sync::sync_config_dir_collect_io`, so per-shell results, the
   monotonic revision, lock, backups, journal and atomic writes stay in core.
   Sync and Doctor actions run on a `std::thread` and report through an `mpsc`
-  channel; one job writes at a time and the UI never blocks. The job runner also
-  understands loader install/uninstall results, but this version exposes no TUI
-  action that starts them.
-- Doctor uses `doctor::diagnose`; loader status probing uses `integration`
-  (install/uninstall plumbing exists in the job runner but has no TUI action);
+  channel; one job writes at a time and the UI never blocks. After a successful
+  create/update/delete/rename/enable-disable, `runtime.auto_sync = true` starts
+  one `AutoSync` job for the affected shells (old ∪ new for updates); a
+  confirmed import starts one full `AutoSyncAll`. Auto-sync reuses the same Jobs
+  worker and core sync lock, refuses to start while another job is running, and
+  reports per-shell results without rolling back the database write.
+- Doctor uses `doctor::diagnose`; loader status probing uses `integration`;
   previews use `SyncCoordinator::render_shell`; reload commands come from
   `sync::reload_command`.
+- Shell integration is the shared `shell_setup` state machine in
+  `crates/aliasmgr-tui/src/shell_setup_ui.rs`. `run_shell_setup` runs it
+  standalone for interactive `aliasmgr doctor`; the `aliasmgr tui` app embeds
+  the same `SetupApp` as `Screen::ShellSetup` for first-run, startup repair, the
+  settings panel and the strict add/edit preflight. Loader/marker/backup/sync
+  policy stays in core; the TUI only drives detection rows, selections, preview
+  and confirmation. Startup detection runs on a read-only `mpsc` worker, not on
+  the Jobs writer, so the browser stays usable while versions probe.
+- The editor's shell labels (`enabled`/`disabled`/`not installed`/loader
+  invalid) are display projections of cached detection + live loader status.
+  Save runs `shell_setup::shell_readiness_problems` before the database write;
+  a blocked save keeps the draft and suspends the editor while the setup screen
+  is open, then restores it.
 - At startup an interrupted sync journal is recovered through
   `SyncCoordinator::recover_pending_operations` under the shared sync lock;
   the TUI does not implement its own recovery.
@@ -44,8 +59,8 @@ The TUI is a presentation and input-state layer:
   fingerprint for external CLI/GUI writes. It never treats its cached snapshot
   as the source of truth.
 - The same crate exposes `run_shell_setup`, the interactive `aliasmgr doctor`
-  Shell integration screen. It is not part of the `aliasmgr tui` app: it is
-  reached only from the CLI when the `tui` feature is enabled and gives the
+  Shell integration screen. It is reached from the CLI when the `tui` feature
+  is enabled and gives the
   `--no-default-features` build a line-based fallback instead of crossterm.
 
 ## Shell detection and setup

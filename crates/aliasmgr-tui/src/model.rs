@@ -84,6 +84,30 @@ pub fn shell_label(shell: &ShellKind) -> &'static str {
     shell.as_str()
 }
 
+/// Readiness of one shell as shown next to the editor's shell checkboxes. It
+/// is a display projection of shared `shell_setup` state, never a save rule:
+/// the strict preflight runs the same `shell_readiness_problems` check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShellChoiceState {
+    Enabled,
+    Disabled,
+    NotInstalled,
+    LoaderInvalid,
+    Wsl,
+}
+
+impl ShellChoiceState {
+    pub fn label(self) -> &'static str {
+        match self {
+            ShellChoiceState::Enabled => "[enabled]",
+            ShellChoiceState::Disabled => "[disabled]",
+            ShellChoiceState::NotInstalled => "[not installed]",
+            ShellChoiceState::LoaderInvalid => "[loader invalid]",
+            ShellChoiceState::Wsl => "[wsl: integrate inside WSL]",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
     Name,
@@ -417,6 +441,9 @@ pub struct Editor {
     pub list_input_stage: ListInputStage,
     pub cursor: usize,
     pub shell_cursor: usize,
+    /// Detection/enablement labels for the four built-in shells, filled by the
+    /// App when the editor opens (empty for imported-only shells).
+    pub shell_choice_states: BTreeMap<ShellKind, ShellChoiceState>,
     pub error: Option<DraftError>,
     pub saving: bool,
     pub scroll: u16,
@@ -446,6 +473,7 @@ impl Editor {
             list_input_stage: ListInputStage::Value,
             cursor: 0,
             shell_cursor: 0,
+            shell_choice_states: BTreeMap::new(),
             error: None,
             saving: false,
             scroll: 0,

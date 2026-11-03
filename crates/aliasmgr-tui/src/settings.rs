@@ -30,10 +30,12 @@ pub enum SettingsField {
     GeneratedKeep,
     DbKeep,
     LogKeep,
+    AutoSync,
+    ShellIntegration,
 }
 
 impl SettingsField {
-    pub const ALL: [SettingsField; 7] = [
+    pub const ALL: [SettingsField; 9] = [
         SettingsField::DefaultShell,
         SettingsField::Language,
         SettingsField::AllowRelativePaths,
@@ -41,6 +43,8 @@ impl SettingsField {
         SettingsField::GeneratedKeep,
         SettingsField::DbKeep,
         SettingsField::LogKeep,
+        SettingsField::AutoSync,
+        SettingsField::ShellIntegration,
     ];
 
     pub fn label(self) -> &'static str {
@@ -52,6 +56,8 @@ impl SettingsField {
             SettingsField::GeneratedKeep => "backups.generated_keep",
             SettingsField::DbKeep => "backups.db_keep",
             SettingsField::LogKeep => "logs.keep_files",
+            SettingsField::AutoSync => "runtime.auto_sync",
+            SettingsField::ShellIntegration => "shells.enabled (shell integration panel)",
         }
     }
 
@@ -75,6 +81,7 @@ pub struct SettingsDraft {
     pub generated_keep: String,
     pub db_keep: String,
     pub log_keep: String,
+    pub auto_sync: bool,
 }
 
 impl SettingsDraft {
@@ -87,6 +94,7 @@ impl SettingsDraft {
             generated_keep: config.backups.generated_keep.to_string(),
             db_keep: config.backups.db_keep.to_string(),
             log_keep: config.logs.keep_files.to_string(),
+            auto_sync: config.runtime.auto_sync,
         }
     }
 
@@ -109,6 +117,16 @@ impl SettingsDraft {
             SettingsField::GeneratedKeep => self.generated_keep.clone(),
             SettingsField::DbKeep => self.db_keep.clone(),
             SettingsField::LogKeep => self.log_keep.clone(),
+            SettingsField::AutoSync => {
+                if self.auto_sync {
+                    "[x] enabled".to_string()
+                } else {
+                    "[ ] disabled".to_string()
+                }
+            }
+            SettingsField::ShellIntegration => {
+                "press Enter to open the shell integration panel".to_string()
+            }
         }
     }
 
@@ -179,6 +197,8 @@ pub enum SettingsOutcome {
     Dirty,
     SaveRequested,
     CancelRequested,
+    /// Open the shared shell integration panel (settings sub-screen).
+    ShellPanelRequested,
 }
 
 #[derive(Debug, Clone)]
@@ -306,6 +326,7 @@ impl SettingsState {
         };
         config.runtime.language = self.draft.language.trim().to_string();
         config.runtime.allow_relative_paths = self.draft.allow_relative_paths;
+        config.runtime.auto_sync = self.draft.auto_sync;
         config.backups.rc_keep = self.parse_count(SettingsField::RcKeep, &self.draft.rc_keep)?;
         config.backups.generated_keep =
             self.parse_count(SettingsField::GeneratedKeep, &self.draft.generated_keep)?;
@@ -416,6 +437,17 @@ impl SettingsState {
                     self.draft.allow_relative_paths = !self.draft.allow_relative_paths;
                     SettingsOutcome::Dirty
                 }
+                _ => SettingsOutcome::None,
+            },
+            SettingsField::AutoSync => match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') => {
+                    self.draft.auto_sync = !self.draft.auto_sync;
+                    SettingsOutcome::Dirty
+                }
+                _ => SettingsOutcome::None,
+            },
+            SettingsField::ShellIntegration => match key.code {
+                KeyCode::Enter | KeyCode::Char(' ') => SettingsOutcome::ShellPanelRequested,
                 _ => SettingsOutcome::None,
             },
             _ => SettingsOutcome::None,
@@ -701,6 +733,37 @@ mod tests {
             state.to_config().unwrap_err().field,
             Some(SettingsField::RcKeep)
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_defaults_true_toggles_and_persists_to_shared_config() {
+        let root = temp_root("auto-sync");
+        fs::create_dir_all(&root).unwrap();
+        let paths = AppPaths { root: root.clone() };
+        AppConfig::default().save(&paths).unwrap();
+        let mut state = SettingsState::new(&root).unwrap();
+        assert!(state.draft.auto_sync);
+        state.set_field(SettingsField::AutoSync);
+        let outcome = state.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert_eq!(outcome, SettingsOutcome::Dirty);
+        assert!(!state.draft.auto_sync);
+        state.save().unwrap();
+        assert!(!paths.load_config().unwrap().runtime.auto_sync);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shell_integration_field_requests_the_shared_panel() {
+        let root = temp_root("shell-panel");
+        fs::create_dir_all(&root).unwrap();
+        let mut state = SettingsState::new(&root).unwrap();
+        state.set_field(SettingsField::ShellIntegration);
+        assert_eq!(
+            state.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            SettingsOutcome::ShellPanelRequested
+        );
+        assert!(!state.is_dirty(), "opening the panel must not edit config");
         let _ = fs::remove_dir_all(root);
     }
 }

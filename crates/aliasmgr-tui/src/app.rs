@@ -7,19 +7,23 @@ use crate::{
     data::{self, JobKind, JobResult, Jobs, Snapshot},
     import_export::{ExportAction, ExportState, ImportAction, ImportState},
     input::{is_actionable, is_ctrl, TextInput},
-    model::{DraftError, Editor, EditorOutcome, Field},
+    model::{DraftError, Editor, EditorOutcome, Field, ShellChoiceState},
     settings::{SettingsOutcome, SettingsState},
+    shell_setup_ui::{SetupApp, SetupOrigin},
     text,
     theme::Theme,
 };
 use aliasmgr_core::{
     config::AppPaths,
+    detection::{self, ShellInstallation},
     doctor::DoctorFinding,
     error::AliasError,
+    integration,
     lock::FileLock,
-    model::{AliasRecord, ShellKind, ShellStatus},
+    model::{AliasRecord, ShellKind, ShellStatus, SUPPORTED_SHELLS},
     search::{search, SearchField, SearchQuery, SortField},
     service::AliasService,
+    shell_setup::{self, ShellReadinessProblem, ShellSetupPlan},
     storage::Database,
     sync::{self, SyncCoordinator, SyncRun},
     validation::{validate_alias_name, validate_powershell_name},
@@ -28,6 +32,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
+    sync::mpsc::{self, Receiver, TryRecvError},
     time::{Duration, Instant},
 };
 
@@ -138,6 +143,8 @@ pub struct SyncReportState {
     pub run: SyncRun,
     pub scroll: u16,
     pub retry: bool,
+    /// `Some(reason)` when this report came from an automatic post-write sync.
+    pub auto: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,13 +171,37 @@ pub enum Modal {
     Deleted {
         name: String,
     },
+    /// Startup shell-integration notice. Never a full wizard; the user can
+    /// repair, ignore for this session, or persist a disable/dismiss.
+    ShellNotice {
+        notices: Vec<ShellNotice>,
+        cursor: usize,
+    },
+    /// Add/edit was blocked because a target shell is disabled or its loader is
+    /// invalid. The draft is kept; Enter opens the shared setup flow.
+    ShellPreflight {
+        problems: Vec<ShellReadinessProblem>,
+        shells: Vec<ShellKind>,
+    },
     Message {
         title: String,
         lines: Vec<String>,
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShellNoticeKind {
+    InvalidEnabled,
+    NewlyDetected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShellNotice {
+    pub kind: ShellNoticeKind,
+    pub shell: ShellKind,
+}
+
+#[derive(Debug)]
 pub enum Screen {
     Browse,
     Editor(Box<Editor>),
@@ -181,6 +212,9 @@ pub enum Screen {
     Import(ImportState),
     Export(ExportState),
     Settings(Box<SettingsState>),
+    /// First-run wizard, startup repair, the settings shell panel, or the
+    /// add/edit preflight. The state machine lives in `shell_setup_ui`.
+    ShellSetup(Box<SetupApp>),
 }
 
 pub struct App {
@@ -220,6 +254,16 @@ pub struct App {
     /// q/Ctrl+C is ignored, so invisible destructive modals cannot fire.
     pub too_small: bool,
     last_external_check: Instant,
+    /// Latest shared shell detection rows/plans (read-only projection).
+    pub shell_rows: Vec<ShellInstallation>,
+    pub shell_plans: BTreeMap<ShellKind, ShellSetupPlan>,
+    shell_scan: Option<Receiver<ShellInstallation>>,
+    pending_shell_notices: Vec<ShellNotice>,
+    /// Shells ignored for this session only (never persisted).
+    shell_notices_ignored: Vec<ShellKind>,
+    /// Screen replaced by the shell setup panel (editor or settings), restored
+    /// when the panel closes so drafts are never discarded.
+    suspended: Option<Box<Screen>>,
 }
 
 impl App {
@@ -278,6 +322,12 @@ impl App {
             last_refresh: Instant::now(),
             too_small: false,
             last_external_check: Instant::now(),
+            shell_rows: Vec::new(),
+            shell_plans: BTreeMap::new(),
+            shell_scan: None,
+            pending_shell_notices: Vec::new(),
+            shell_notices_ignored: Vec::new(),
+            suspended: None,
         };
         app.recompute_visible();
         match recovery {
@@ -292,6 +342,344 @@ impl App {
             None => {}
         }
         Ok(app)
+    }
+
+    /// Startup shell-integration pass. Called by [`crate::run`] after the App is
+    /// constructed so ordinary tests and embedders are not forced into a wizard.
+    /// A brand-new configuration opens the first-run screen; later launches
+    /// only scan enabled loaders and newly detected shells in the background.
+    pub fn start_shell_startup(&mut self) {
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        let config_exists = paths.config_file().exists();
+        let config = match paths.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.set_status(
+                    StatusKind::Error,
+                    format!("could not read config.toml for shell integration: {error}"),
+                );
+                return;
+            }
+        };
+        let enabled = shell_setup::enabled_shells(&config);
+        if !config_exists && enabled.is_empty() {
+            self.open_shell_setup(SetupOrigin::FirstRun, &[]);
+            return;
+        }
+        if enabled.is_empty() {
+            self.set_status(
+                StatusKind::Info,
+                "shell integration is not configured; press S to open settings and enable a shell",
+            );
+        }
+        self.start_shell_scan();
+    }
+
+    fn start_shell_scan(&mut self) {
+        if self.shell_scan.is_some() {
+            return;
+        }
+        let config = match (AppPaths {
+            root: self.root.clone(),
+        })
+        .load_config()
+        {
+            Ok(config) => config,
+            Err(error) => {
+                self.set_status(
+                    StatusKind::Warning,
+                    format!("shell detection skipped: config.toml could not be read ({error})"),
+                );
+                return;
+            }
+        };
+        let (sender, receiver) = mpsc::channel();
+        std::thread::spawn(move || {
+            for kind in SUPPORTED_SHELLS {
+                let row = detection::detect_shell(&config, &kind);
+                if sender.send(row).is_err() {
+                    break;
+                }
+            }
+        });
+        self.shell_scan = Some(receiver);
+    }
+
+    /// Polls the startup detection thread. Called from the event loop; writes
+    /// are never blocked because this is a separate read-only worker.
+    pub fn poll_shell_scan(&mut self) {
+        if let Screen::ShellSetup(state) = &mut self.screen {
+            state.poll_detection();
+        }
+        let Some(receiver) = self.shell_scan.take() else {
+            return;
+        };
+        let mut rows = Vec::new();
+        let mut disconnected = false;
+        loop {
+            match receiver.try_recv() {
+                Ok(row) => rows.push(row),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    disconnected = true;
+                    break;
+                }
+            }
+        }
+        if !rows.is_empty() {
+            self.apply_shell_scan(rows);
+        }
+        if disconnected {
+            self.after_shell_scan();
+        } else {
+            self.shell_scan = Some(receiver);
+        }
+    }
+
+    /// Merges detected rows and rebuilds the shared setup plans. Exposed for
+    /// deterministic tests; the production path feeds it from the scan thread.
+    pub(crate) fn apply_shell_scan(&mut self, rows: Vec<ShellInstallation>) {
+        for row in rows {
+            if let Some(existing) = self.shell_rows.iter_mut().find(|r| r.kind == row.kind) {
+                *existing = row;
+            } else {
+                self.shell_rows.push(row);
+            }
+        }
+        let config = AppPaths {
+            root: self.root.clone(),
+        }
+        .load_config()
+        .unwrap_or_default();
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        self.shell_plans = self
+            .shell_rows
+            .iter()
+            .filter_map(|row| {
+                shell_setup::plan_shell_setup_with_installation(
+                    &config, &paths, &row.kind, row, None, None,
+                )
+                .ok()
+                .map(|plan| (row.kind.clone(), plan))
+            })
+            .collect();
+        self.refresh_editor_shell_states();
+        self.dirty = true;
+    }
+
+    fn after_shell_scan(&mut self) {
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        let config = paths.load_config().unwrap_or_default();
+        let enabled = shell_setup::enabled_shells(&config);
+        let mut notices = Vec::new();
+        for kind in &enabled {
+            let invalid = self
+                .shell_plans
+                .get(kind)
+                .map(|plan| !plan.detected || !plan.loader_status.is_installed())
+                .unwrap_or(true);
+            if invalid && !self.shell_notice_ignored(kind) {
+                notices.push(ShellNotice {
+                    kind: ShellNoticeKind::InvalidEnabled,
+                    shell: kind.clone(),
+                });
+            }
+        }
+        for row in &self.shell_rows {
+            if row.detected
+                && !row.wsl
+                && !enabled.contains(&row.kind)
+                && !shell_setup::shell_prompt_dismissed(&config, row)
+                && !self.shell_notice_ignored(&row.kind)
+            {
+                notices.push(ShellNotice {
+                    kind: ShellNoticeKind::NewlyDetected,
+                    shell: row.kind.clone(),
+                });
+            }
+        }
+        if !notices.is_empty() {
+            self.pending_shell_notices = notices;
+            self.maybe_show_shell_notice();
+        } else if enabled.is_empty() {
+            self.set_status(
+                StatusKind::Info,
+                "shell integration is not configured; press S to open settings and enable a shell",
+            );
+        }
+    }
+
+    fn shell_notice_ignored(&self, kind: &ShellKind) -> bool {
+        self.shell_notices_ignored.contains(kind)
+    }
+
+    fn maybe_show_shell_notice(&mut self) {
+        if self.pending_shell_notices.is_empty()
+            || self.modal.is_some()
+            || !matches!(self.screen, Screen::Browse)
+        {
+            return;
+        }
+        let notices = std::mem::take(&mut self.pending_shell_notices);
+        self.modal = Some(Modal::ShellNotice { notices, cursor: 0 });
+        self.dirty = true;
+    }
+
+    fn open_shell_setup(&mut self, origin: SetupOrigin, checked: &[ShellKind]) {
+        if matches!(self.screen, Screen::ShellSetup(_)) {
+            return;
+        }
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        match SetupApp::new_with_origin(paths, origin, checked) {
+            Ok(state) => {
+                let previous = std::mem::replace(&mut self.screen, Screen::Browse);
+                self.suspended = Some(Box::new(previous));
+                self.screen = Screen::ShellSetup(Box::new(state));
+                self.dirty = true;
+            }
+            Err(error) => self.set_status(
+                StatusKind::Error,
+                format!("could not open shell integration: {error}"),
+            ),
+        }
+    }
+
+    fn handle_shell_setup_key(&mut self, key: KeyEvent) {
+        let finished = match &mut self.screen {
+            Screen::ShellSetup(state) => {
+                state.handle_key(key);
+                state.poll_detection();
+                state.is_quit()
+            }
+            _ => return,
+        };
+        if !finished {
+            self.dirty = true;
+            return;
+        }
+        let (origin, changed, summary) = match &self.screen {
+            Screen::ShellSetup(state) => {
+                (state.origin(), state.has_changes(), state.summary_text())
+            }
+            _ => (SetupOrigin::Doctor, false, String::new()),
+        };
+        self.close_shell_setup();
+        match origin {
+            SetupOrigin::FirstRun if !changed => {
+                // Skipping is a real choice: persist an empty enabled list so
+                // the full wizard is not shown on every launch. A configuration
+                // that already existed is never modified.
+                let paths = AppPaths {
+                    root: self.root.clone(),
+                };
+                if !paths.config_file().exists() {
+                    let _ = shell_setup::set_enabled_shells(&paths, &[]);
+                }
+                self.set_status(
+                    StatusKind::Warning,
+                    "shell integration skipped; add/edit is blocked until a shell is enabled in Settings (S)",
+                );
+            }
+            SetupOrigin::FirstRun => self.set_status(
+                StatusKind::Success,
+                format!("shell integration ready; reload is still manual\n{summary}"),
+            ),
+            SetupOrigin::Preflight => self.set_status(
+                if changed {
+                    StatusKind::Success
+                } else {
+                    StatusKind::Warning
+                },
+                if changed {
+                    "shell integration updated; press Ctrl+S to save the alias again"
+                } else {
+                    "shell setup closed; the draft is kept and nothing was saved"
+                },
+            ),
+            SetupOrigin::Settings | SetupOrigin::Repair => {
+                if changed {
+                    self.set_status(StatusKind::Success, "shell integration updated");
+                } else {
+                    self.set_status(StatusKind::Info, "shell integration closed");
+                }
+            }
+            SetupOrigin::Doctor => {}
+        }
+        self.maybe_show_shell_notice();
+    }
+
+    fn close_shell_setup(&mut self) {
+        if let Screen::ShellSetup(state) = &self.screen {
+            self.shell_rows = state.installations().to_vec();
+            self.shell_plans = state
+                .installations()
+                .iter()
+                .zip(state.setup_plans().iter())
+                .filter_map(|(row, plan)| plan.clone().map(|plan| (row.kind.clone(), plan)))
+                .collect();
+        }
+        self.screen = self
+            .suspended
+            .take()
+            .map(|screen| *screen)
+            .unwrap_or(Screen::Browse);
+        self.refresh_editor_shell_states();
+        self.dirty = true;
+    }
+
+    /// Display-only shell readiness for the editor's shell checkboxes.
+    pub fn shell_choice_states(&self) -> BTreeMap<ShellKind, ShellChoiceState> {
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        let config = paths.load_config().unwrap_or_default();
+        let enabled = shell_setup::enabled_shells(&config);
+        SUPPORTED_SHELLS
+            .iter()
+            .map(|kind| {
+                let row = self.shell_rows.iter().find(|row| &row.kind == kind);
+                let plan = self.shell_plans.get(kind);
+                let state = if row.is_some_and(|row| row.wsl) {
+                    ShellChoiceState::Wsl
+                } else if row.is_some_and(|row| !row.detected) {
+                    ShellChoiceState::NotInstalled
+                } else if enabled.contains(kind) {
+                    // Before the startup scan finishes there is no cached plan;
+                    // probe the loader block directly so an enabled shell is not
+                    // mislabelled just because detection is still running.
+                    let installed = plan
+                        .map(|plan| plan.loader_status.is_installed())
+                        .unwrap_or_else(|| {
+                            integration::loader_status_with_config(&config, &paths, kind.as_str())
+                                .map(|outcome| outcome.installed)
+                                .unwrap_or(false)
+                        });
+                    if installed {
+                        ShellChoiceState::Enabled
+                    } else {
+                        ShellChoiceState::LoaderInvalid
+                    }
+                } else {
+                    ShellChoiceState::Disabled
+                };
+                (kind.clone(), state)
+            })
+            .collect()
+    }
+
+    fn refresh_editor_shell_states(&mut self) {
+        let states = self.shell_choice_states();
+        if let Screen::Editor(editor) = &mut self.screen {
+            editor.shell_choice_states = states;
+        }
     }
 
     pub fn selected_alias(&self) -> Option<&AliasRecord> {
@@ -488,6 +876,7 @@ impl App {
             Screen::Import(_) => self.handle_import_key(key),
             Screen::Export(_) => self.handle_export_key(key),
             Screen::Settings(_) => self.handle_settings_key(key),
+            Screen::ShellSetup(_) => self.handle_shell_setup_key(key),
         }
     }
 
@@ -618,6 +1007,7 @@ impl App {
             }
             KeyCode::Char('n') => {
                 self.screen = Screen::Editor(Box::new(Editor::new(None)));
+                self.refresh_editor_shell_states();
                 self.dirty = true;
             }
             KeyCode::Char('e') => self.edit_selected(),
@@ -696,6 +1086,7 @@ impl App {
             return;
         };
         self.screen = Screen::Editor(Box::new(Editor::new(Some(&alias))));
+        self.refresh_editor_shell_states();
         self.dirty = true;
     }
 
@@ -838,6 +1229,16 @@ impl App {
                     self.modal = Some(Modal::ConfirmDiscard);
                 } else {
                     self.screen = Screen::Browse;
+                }
+            }
+            SettingsOutcome::ShellPanelRequested => {
+                if dirty {
+                    self.set_status(
+                        StatusKind::Warning,
+                        "save or discard settings first; the shell panel keeps the shared config consistent",
+                    );
+                } else {
+                    self.open_shell_setup(SetupOrigin::Settings, &[]);
                 }
             }
         }
@@ -1378,6 +1779,103 @@ impl App {
                     );
                 }
             },
+            Modal::ShellPreflight { problems, shells } => match key.code {
+                KeyCode::Enter | KeyCode::Char('e') | KeyCode::Char('E') => {
+                    let _ = problems;
+                    self.open_shell_setup(SetupOrigin::Preflight, &shells);
+                    self.set_status(
+                        StatusKind::Info,
+                        "enable the target shell, then press Ctrl+S to save the draft again",
+                    );
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('N') => {
+                    self.set_status(
+                        StatusKind::Warning,
+                        "not saved; the draft is kept and the target shell is still not enabled",
+                    );
+                }
+                _ => self.modal = Some(Modal::ShellPreflight { problems, shells }),
+            },
+            Modal::ShellNotice {
+                mut notices,
+                mut cursor,
+            } => match key.code {
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('n') => {
+                    self.set_status(StatusKind::Info, "shell notice closed for this session");
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    cursor = cursor.saturating_sub(1);
+                    self.modal = Some(Modal::ShellNotice { notices, cursor });
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if !notices.is_empty() {
+                        cursor = (cursor + 1).min(notices.len() - 1);
+                    }
+                    self.modal = Some(Modal::ShellNotice { notices, cursor });
+                }
+                KeyCode::Enter | KeyCode::Char('r') => {
+                    if let Some(notice) = notices.get(cursor).cloned() {
+                        self.open_shell_setup(SetupOrigin::Repair, &[notice.shell]);
+                    }
+                }
+                KeyCode::Char('i') => {
+                    if let Some(notice) = notices.get(cursor).cloned() {
+                        self.shell_notices_ignored.push(notice.shell.clone());
+                        self.set_status(
+                            StatusKind::Info,
+                            format!("{} ignored for this session", notice.shell.label()),
+                        );
+                        notices.remove(cursor);
+                        if notices.is_empty() {
+                            self.modal = None;
+                        } else {
+                            cursor = cursor.min(notices.len() - 1);
+                            self.modal = Some(Modal::ShellNotice { notices, cursor });
+                        }
+                    }
+                }
+                KeyCode::Char('d') => {
+                    if let Some(notice) = notices.get(cursor).cloned() {
+                        let paths = AppPaths {
+                            root: self.root.clone(),
+                        };
+                        let result = match notice.kind {
+                            ShellNoticeKind::InvalidEnabled => {
+                                shell_setup::set_shell_enabled(&paths, &notice.shell, false)
+                                    .map(|_| "disabled")
+                            }
+                            ShellNoticeKind::NewlyDetected => shell_setup::mark_shells_seen(
+                                &paths,
+                                std::slice::from_ref(&notice.shell),
+                            )
+                            .map(|_| "dismissed"),
+                        };
+                        match result {
+                            Ok(action) => {
+                                self.set_status(
+                                    StatusKind::Info,
+                                    format!("{} {action}", notice.shell.label()),
+                                );
+                                notices.remove(cursor);
+                                if notices.is_empty() {
+                                    self.modal = None;
+                                } else {
+                                    cursor = cursor.min(notices.len() - 1);
+                                    self.modal = Some(Modal::ShellNotice { notices, cursor });
+                                }
+                            }
+                            Err(error) => {
+                                self.set_status(
+                                    StatusKind::Error,
+                                    format!("shell notice action failed: {error}"),
+                                );
+                                self.modal = Some(Modal::ShellNotice { notices, cursor });
+                            }
+                        }
+                    }
+                }
+                _ => self.modal = Some(Modal::ShellNotice { notices, cursor }),
+            },
             Modal::Message { title, lines } => match key.code {
                 KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') => {
                     let _ = (title, lines);
@@ -1440,8 +1938,74 @@ impl App {
             }
             return;
         };
-        self.saving = true;
         let record_id = record.id;
+        // Strict preflight: never save an alias that no enabled shell could
+        // load. The draft is kept untouched and the shared setup screen is
+        // offered; CLI-only `--allow-missing-loader` has no TUI equivalent.
+        let paths = AppPaths {
+            root: self.root.clone(),
+        };
+        let config = match paths.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                if let Screen::Editor(editor) = &mut self.screen {
+                    editor.saving = false;
+                }
+                self.set_status(
+                    StatusKind::Error,
+                    format!("not saved: could not read config.toml for shell preflight: {error}"),
+                );
+                self.dirty = true;
+                return;
+            }
+        };
+        match shell_setup::shell_readiness_problems(&config, &paths, &record.shells) {
+            Ok(problems) if !problems.is_empty() => {
+                let message = problems
+                    .iter()
+                    .map(|problem| problem.message.clone())
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let shells = problems
+                    .iter()
+                    .map(|problem| problem.kind.clone())
+                    .collect::<Vec<_>>();
+                if let Screen::Editor(editor) = &mut self.screen {
+                    editor.saving = false;
+                    editor.error = Some(DraftError::new(Some(Field::Shells), message.clone()));
+                }
+                self.modal = Some(Modal::ShellPreflight { problems, shells });
+                self.set_status(
+                    StatusKind::Warning,
+                    format!("not saved: {message}. Enable a target shell in the setup screen"),
+                );
+                self.dirty = true;
+                return;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                if let Screen::Editor(editor) = &mut self.screen {
+                    editor.saving = false;
+                }
+                self.set_status(
+                    StatusKind::Error,
+                    format!("not saved: shell preflight failed: {error}"),
+                );
+                self.dirty = true;
+                return;
+            }
+        }
+        let previous_shells = if is_new {
+            Vec::new()
+        } else {
+            self.database
+                .get_alias(record_id)
+                .ok()
+                .flatten()
+                .map(|alias| alias.shells)
+                .unwrap_or_default()
+        };
+        self.saving = true;
         let service = AliasService::new(&self.database);
         let result = if is_new {
             service.create(record)
@@ -1453,13 +2017,13 @@ impl App {
             Ok(saved) => {
                 let name = saved.name.clone();
                 let revision = saved.revision;
+                let affected = union_shells(&previous_shells, &saved.shells);
                 self.reload();
                 self.screen = Screen::Browse;
+                let suffix = self.auto_sync_after_write(&affected, "save");
                 self.set_status(
                     StatusKind::Success,
-                    format!(
-                        "saved {name} (revision {revision}); generated files are stale - press s to sync"
-                    ),
+                    format!("saved {name} (revision {revision}); {suffix}"),
                 );
             }
             Err(AliasError::AliasConflict(message)) => {
@@ -1533,9 +2097,10 @@ impl App {
         match service.delete_checked(&alias, alias.revision) {
             Ok(true) => {
                 self.reload();
+                let suffix = self.auto_sync_after_write(&alias.shells, "delete");
                 self.set_status(
                     StatusKind::Success,
-                    format!("deleted {}; press s to sync the removal", alias.name),
+                    format!("deleted {}; {suffix}", alias.name),
                 );
             }
             Ok(false) => {
@@ -1610,12 +2175,10 @@ impl App {
         match service.rename_checked(&alias, &new_name, alias.revision) {
             Ok(saved) => {
                 self.reload();
+                let suffix = self.auto_sync_after_write(&alias.shells, "rename");
                 self.set_status(
                     StatusKind::Success,
-                    format!(
-                        "renamed {} to {}; press s to sync the old-name cleanup",
-                        alias.name, saved.name
-                    ),
+                    format!("renamed {} to {}; {suffix}", alias.name, saved.name),
                 );
             }
             Err(AliasError::AliasConflict(message)) => {
@@ -1652,10 +2215,14 @@ impl App {
         match service.set_enabled_checked(&alias, target, alias.revision) {
             Ok(saved) => {
                 self.reload();
+                let suffix = self.auto_sync_after_write(
+                    &alias.shells,
+                    if saved.enabled { "enable" } else { "disable" },
+                );
                 self.set_status(
                     StatusKind::Success,
                     format!(
-                        "{} {}; press s to sync",
+                        "{} {}; {suffix}",
                         if saved.enabled { "enabled" } else { "disabled" },
                         saved.name
                     ),
@@ -1667,6 +2234,83 @@ impl App {
             }
         }
         self.dirty = true;
+    }
+
+    /// Starts one background sync of the shells affected by a successful
+    /// write when `runtime.auto_sync` is enabled. Returns a status suffix for
+    /// the caller; never blocks and never starts a second job.
+    fn auto_sync_after_write(&mut self, affected: &[ShellKind], reason: &str) -> String {
+        let shells = union_shells(&[], affected);
+        if shells.is_empty() {
+            return "no target shells to sync".to_string();
+        }
+        let config = match (AppPaths {
+            root: self.root.clone(),
+        })
+        .load_config()
+        {
+            Ok(config) => config,
+            Err(error) => {
+                return format!(
+                "saved, but config.toml could not be read for auto-sync ({error}); press s to sync"
+            )
+            }
+        };
+        if !config.runtime.auto_sync {
+            return "auto-sync is off; press s to sync".to_string();
+        }
+        if self.jobs.is_busy() {
+            return "auto-sync skipped because another background job is running; press s to sync"
+                .to_string();
+        }
+        if self.jobs.start(
+            JobKind::AutoSync {
+                shells: shells.clone(),
+                reason: reason.to_string(),
+            },
+            self.root.clone(),
+        ) {
+            format!(
+                "auto-syncing {} shell(s) in the background; the database is already committed",
+                shells.len()
+            )
+        } else {
+            "could not start auto-sync; press s to sync".to_string()
+        }
+    }
+
+    /// Confirmed imports are one batch: sync every referenced shell exactly
+    /// once after the transaction commits.
+    fn auto_sync_full(&mut self, reason: &str) -> String {
+        let config = match (AppPaths {
+            root: self.root.clone(),
+        })
+        .load_config()
+        {
+            Ok(config) => config,
+            Err(error) => {
+                return format!(
+                    "imported, but config.toml could not be read for auto-sync ({error}); press s to sync"
+                )
+            }
+        };
+        if !config.runtime.auto_sync {
+            return "auto-sync is off; press s to sync".to_string();
+        }
+        if self.jobs.is_busy() {
+            return "auto-sync skipped because another background job is running; press s to sync"
+                .to_string();
+        }
+        if self.jobs.start(
+            JobKind::AutoSyncAll {
+                reason: reason.to_string(),
+            },
+            self.root.clone(),
+        ) {
+            "auto-syncing all referenced shells in the background".to_string()
+        } else {
+            "could not start auto-sync; press s to sync".to_string()
+        }
     }
 
     pub fn start_sync(&mut self) {
@@ -1764,14 +2408,66 @@ impl App {
     }
 
     pub fn poll_jobs(&mut self) {
+        self.maybe_show_shell_notice();
         let Some(outcome) = self.jobs.try_recv() else {
             return;
         };
         let retried = matches!(&outcome.kind, JobKind::SyncRetry(_));
+        let auto_reason = match &outcome.kind {
+            JobKind::AutoSync { reason, .. } | JobKind::AutoSyncAll { reason } => {
+                Some(reason.clone())
+            }
+            _ => None,
+        };
         match outcome.result {
             JobResult::Sync(Ok(run)) => {
                 let failed = run.failed();
                 let count = run.results.len();
+                let loader_missing = run
+                    .results
+                    .iter()
+                    .filter(|result| !result.loader_installed)
+                    .map(|result| result.shell.as_str().to_string())
+                    .collect::<Vec<_>>();
+                if let Some(reason) = auto_reason {
+                    self.reload();
+                    if matches!(
+                        self.screen,
+                        Screen::Browse | Screen::SyncReport(_) | Screen::Import(_)
+                    ) {
+                        self.screen = Screen::SyncReport(SyncReportState {
+                            run,
+                            scroll: 0,
+                            retry: false,
+                            auto: Some(reason.clone()),
+                        });
+                    }
+                    if failed {
+                        self.set_status(
+                            StatusKind::Warning,
+                            format!(
+                                "auto-sync after {reason} finished with failures; the database save is committed; press s to retry"
+                            ),
+                        );
+                    } else if !loader_missing.is_empty() {
+                        self.set_status(
+                            StatusKind::Warning,
+                            format!(
+                                "auto-sync after {reason} wrote {count} shell(s), but no loader is installed for {}; new terminals will not load aliases",
+                                loader_missing.join(", ")
+                            ),
+                        );
+                    } else {
+                        self.set_status(
+                            StatusKind::Success,
+                            format!(
+                                "auto-sync after {reason} synced {count} shell(s); run the shown reload command in this terminal"
+                            ),
+                        );
+                    }
+                    self.dirty = true;
+                    return;
+                }
                 let editor_open = matches!(self.screen, Screen::Editor(_));
                 self.reload();
                 if editor_open {
@@ -1794,6 +2490,7 @@ impl App {
                         run,
                         scroll: 0,
                         retry: retried,
+                        auto: None,
                     });
                     if failed {
                         self.set_status(
@@ -1821,10 +2518,19 @@ impl App {
                 }
             }
             JobResult::Sync(Err(error)) => {
-                self.set_status(
-                    StatusKind::Error,
-                    format!("sync failed: {error}. Another process may hold the sync lock"),
-                );
+                if let Some(reason) = auto_reason {
+                    self.set_status(
+                        StatusKind::Error,
+                        format!(
+                            "the database save after {reason} is committed, but auto-sync failed: {error}; press s to retry"
+                        ),
+                    );
+                } else {
+                    self.set_status(
+                        StatusKind::Error,
+                        format!("sync failed: {error}. Another process may hold the sync lock"),
+                    );
+                }
             }
             JobResult::Doctor(Ok(findings)) => {
                 if let Screen::Doctor(state) = &mut self.screen {
@@ -1885,10 +2591,11 @@ impl App {
                 if let Screen::Import(state) = &mut self.screen {
                     state.on_confirmed(report);
                 }
+                let suffix = self.auto_sync_full("import");
                 self.set_status(
                     StatusKind::Success,
                     format!(
-                        "imported {} alias(es); skipped={} unsupported={} warnings={} (single transaction)",
+                        "imported {} alias(es); skipped={} unsupported={} warnings={} (single transaction); {suffix}",
                         counts.0, counts.1, counts.2, counts.3
                     ),
                 );
@@ -1956,6 +2663,15 @@ impl App {
         }
         self.dirty = true;
     }
+}
+
+/// Canonical, deduplicated union used by auto-sync after updates.
+fn union_shells(left: &[ShellKind], right: &[ShellKind]) -> Vec<ShellKind> {
+    SUPPORTED_SHELLS
+        .iter()
+        .filter(|kind| left.contains(kind) || right.contains(kind))
+        .cloned()
+        .collect()
 }
 
 enum DoctorAction {
@@ -2071,9 +2787,28 @@ pub fn help_lines() -> Vec<String> {
         "  X: type a path, Enter exports; an existing file requires y overwrite confirmation"
             .to_string(),
         "  S: Tab field, Left/Right or Space toggle, Ctrl+S save, Esc cancel".to_string(),
+        "  S -> shells.enabled opens the shell panel: Space select, Enter preview/apply, e paths,"
+            .to_string(),
+        "  c clear overrides (preview defaults), d disable, r rescan, q back".to_string(),
         "  Import preview is read-only; confirmation re-evaluates and persists atomically."
             .to_string(),
         "  Sensitive environment values are filtered by core; config.toml is shared with CLI/GUI."
+            .to_string(),
+        String::new(),
+        "SHELL INTEGRATION".to_string(),
+        "  First run lists all four shells; Space selects, Enter previews, r rescans, q skips."
+            .to_string(),
+        "  A skip persists an empty shells.enabled; later starts show only a compact notice."
+            .to_string(),
+        "  Startup notices: Enter repair, i ignore this session, d disable/dismiss (persisted),"
+            .to_string(),
+        "  Esc close for this session. A reinstall at a different path may prompt once again."
+            .to_string(),
+        "  Add/edit is blocked while a target shell is disabled or its loader is invalid:"
+            .to_string(),
+        "  the draft is kept and e/Enter opens the same enable/setup flow.".to_string(),
+        "  Successful writes auto-sync affected shells when runtime.auto_sync is true;".to_string(),
+        "  results show per-shell status, loader warnings and reload commands. Import syncs once."
             .to_string(),
         String::new(),
         "TARGET TYPES".to_string(),
@@ -2123,6 +2858,16 @@ mod tests {
                 .unwrap_or_default()
         ));
         std::fs::create_dir_all(&root).unwrap();
+        // Alias-write tests need a loadable target shell, otherwise the strict
+        // add/edit preflight (correctly) refuses every save. Auto-sync is off so
+        // existing tests stay deterministic; auto-sync has dedicated tests.
+        let paths = AppPaths { root: root.clone() };
+        let mut config = paths.load_config().unwrap();
+        config.shells.enabled = vec!["bash".into()];
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config.runtime.auto_sync = false;
+        config.save(&paths).unwrap();
+        aliasmgr_core::integration::install_loader(&paths, "bash").unwrap();
         root
     }
 
@@ -2453,6 +3198,7 @@ mod tests {
             },
             scroll: 0,
             retry: false,
+            auto: None,
         });
         app.handle_key(key(KeyCode::Char('r')));
         assert!(app.jobs.is_busy());
@@ -2528,6 +3274,7 @@ mod tests {
                 },
                 scroll: 0,
                 retry: false,
+                auto: None,
             });
             app.handle_key(key(KeyCode::Char('r')));
             let deadline = Instant::now() + Duration::from_secs(10);
@@ -2573,6 +3320,7 @@ mod tests {
             },
             scroll: 0,
             retry: false,
+            auto: None,
         });
         app.start_retry_failed();
         assert!(!app.jobs.is_busy());
@@ -3725,5 +4473,475 @@ mod tests {
             visible_fields(true).len(),
             Field::BASIC.len() + Field::ADVANCED.len()
         );
+    }
+
+    fn fake_executable(root: &std::path::Path, name: &str) -> PathBuf {
+        let path = root.join(if cfg!(windows) {
+            format!("{name}.exe")
+        } else {
+            name.to_string()
+        });
+        std::fs::write(&path, b"").unwrap();
+        path
+    }
+
+    fn set_runtime(
+        root: &std::path::Path,
+        mutate: impl FnOnce(&mut aliasmgr_core::config::AppConfig),
+    ) {
+        let paths = AppPaths {
+            root: root.to_path_buf(),
+        };
+        let mut config = paths.load_config().unwrap();
+        mutate(&mut config);
+        config.save(&paths).unwrap();
+    }
+
+    fn install_loader_for(root: &std::path::Path, shell: &str) {
+        let paths = AppPaths {
+            root: root.to_path_buf(),
+        };
+        aliasmgr_core::integration::install_loader(&paths, shell).unwrap();
+    }
+
+    fn detected_row(kind: ShellKind, executable: Option<PathBuf>) -> ShellInstallation {
+        ShellInstallation {
+            kind,
+            detected: executable.is_some(),
+            source: if executable.is_some() {
+                aliasmgr_core::detection::ShellDetectionSource::Manual
+            } else {
+                aliasmgr_core::detection::ShellDetectionSource::NotFound
+            },
+            executable,
+            version: None,
+            wsl: false,
+        }
+    }
+
+    fn sync_outcome(
+        root: &std::path::Path,
+        shell: ShellKind,
+        status: ShellStatus,
+        loader_installed: bool,
+    ) -> aliasmgr_core::sync::ShellSyncOutcome {
+        aliasmgr_core::sync::ShellSyncOutcome {
+            shell: shell.clone(),
+            status,
+            error: None,
+            error_code: None,
+            generated_path: root.join(format!("generated/{}.sh", shell.as_str())),
+            loader_installed,
+            loader_error_code: (!loader_installed).then(|| "loader_missing".to_string()),
+        }
+    }
+
+    fn empty_first_run_root(label: &str) -> PathBuf {
+        let root = temp_root(label);
+        let paths = AppPaths { root: root.clone() };
+        let _ = std::fs::remove_file(paths.config_file());
+        // Starting from a genuinely fresh install also means no loader profile.
+        let _ = std::fs::remove_file(root.join("bashrc"));
+        root
+    }
+
+    #[test]
+    fn first_run_opens_the_shared_setup_screen_and_skip_persists_empty_enabled() {
+        let root = empty_first_run_root("first-run");
+        let mut app = App::new(root.clone()).unwrap();
+        app.start_shell_startup();
+        assert!(
+            matches!(app.screen, Screen::ShellSetup(_)),
+            "a brand-new configuration must open the first-run wizard"
+        );
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(matches!(app.screen, Screen::Browse));
+        assert!(app.status.text.contains("skipped"), "{}", app.status.text);
+        let paths = AppPaths { root: root.clone() };
+        assert!(paths.config_file().exists(), "skip must persist a config");
+        assert!(paths.load_config().unwrap().shells.enabled.is_empty());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_scan_reports_invalid_enabled_and_newly_detected_shells() {
+        let root = temp_root("startup-notices");
+        let zsh = fake_executable(&root, "zsh");
+        set_runtime(&root, |config| {
+            config.shells.bash_rc_path = Some(root.join("missing-bashrc"));
+            config.shells.executables.insert("zsh".into(), zsh.clone());
+        });
+        let mut app = App::new(root.clone()).unwrap();
+        let rows = vec![
+            detected_row(ShellKind::Bash, None),
+            detected_row(ShellKind::Zsh, Some(zsh.clone())),
+            detected_row(ShellKind::PowerShell5, None),
+            detected_row(ShellKind::PowerShell7, None),
+        ];
+        app.apply_shell_scan(rows);
+        app.after_shell_scan();
+        let Some(Modal::ShellNotice { notices, .. }) = &app.modal else {
+            panic!("expected a startup shell notice, got {:?}", app.modal);
+        };
+        assert!(notices.iter().any(|notice| {
+            notice.kind == ShellNoticeKind::InvalidEnabled && notice.shell == ShellKind::Bash
+        }));
+        assert!(notices.iter().any(|notice| {
+            notice.kind == ShellNoticeKind::NewlyDetected && notice.shell == ShellKind::Zsh
+        }));
+        // Invalid enabled shell: `d` persists enabled=false.
+        app.handle_key(key(KeyCode::Char('d')));
+        let config = AppPaths { root: root.clone() }.load_config().unwrap();
+        assert!(!config.shells.enabled.contains(&"bash".to_string()));
+        // Newly detected shell: `d` records the executable in shells.seen.
+        app.handle_key(key(KeyCode::Char('d')));
+        let config = AppPaths { root: root.clone() }.load_config().unwrap();
+        assert_eq!(
+            config.shells.seen.get("zsh").map(String::as_str),
+            Some(zsh.to_string_lossy().as_ref())
+        );
+        assert!(app.modal.is_none());
+        // A second scan does not nag about the dismissed shell.
+        app.after_shell_scan();
+        assert!(app.modal.is_none(), "{:?}", app.modal);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn startup_notice_ignore_is_session_only_and_repair_opens_setup() {
+        let root = temp_root("startup-ignore");
+        set_runtime(&root, |config| {
+            config.shells.bash_rc_path = Some(root.join("missing-bashrc"));
+        });
+        let mut app = App::new(root.clone()).unwrap();
+        app.apply_shell_scan(vec![detected_row(ShellKind::Bash, None)]);
+        app.after_shell_scan();
+        assert!(matches!(app.modal, Some(Modal::ShellNotice { .. })));
+        app.handle_key(key(KeyCode::Char('i')));
+        assert!(app.modal.is_none());
+        assert!(app.shell_notices_ignored.contains(&ShellKind::Bash));
+        let config = AppPaths { root: root.clone() }.load_config().unwrap();
+        assert!(config.shells.enabled.contains(&"bash".to_string()));
+
+        // Repair (Enter) opens the shared setup screen.
+        let mut app = App::new(root.clone()).unwrap();
+        app.apply_shell_scan(vec![detected_row(ShellKind::Bash, None)]);
+        app.after_shell_scan();
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.screen, Screen::ShellSetup(_)));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preflight_blocks_save_keeps_the_draft_and_restores_it_after_setup() {
+        let root = temp_root("preflight-block");
+        set_runtime(&root, |config| config.shells.enabled.clear());
+        let mut app = App::new(root.clone()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.name = "blocked".into();
+            editor.draft.executable = "tool".into();
+        }
+        app.save_editor();
+        assert!(matches!(app.screen, Screen::Editor(_)));
+        let Screen::Editor(editor) = &app.screen else {
+            unreachable!()
+        };
+        assert_eq!(editor.draft.name, "blocked");
+        assert!(editor.error.is_some());
+        assert!(matches!(app.modal, Some(Modal::ShellPreflight { .. })));
+        assert!(app.database.get_alias_by_name("blocked").unwrap().is_none());
+        // Offer the shared setup flow and return with the draft intact.
+        app.handle_key(key(KeyCode::Char('e')));
+        assert!(matches!(app.screen, Screen::ShellSetup(_)));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(matches!(app.screen, Screen::Editor(_)));
+        let Screen::Editor(editor) = &app.screen else {
+            unreachable!()
+        };
+        assert_eq!(editor.draft.name, "blocked");
+        assert_eq!(editor.draft.executable, "tool");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn editor_shell_selector_shows_enabled_disabled_and_not_installed() {
+        let root = temp_root("shell-labels");
+        let zsh = fake_executable(&root, "zsh");
+        set_runtime(&root, |config| {
+            config.shells.executables.insert("zsh".into(), zsh.clone());
+        });
+        let mut app = App::new(root.clone()).unwrap();
+        let rows = vec![
+            detected_row(ShellKind::Bash, Some(fake_executable(&root, "bash"))),
+            detected_row(ShellKind::Zsh, Some(zsh)),
+            detected_row(ShellKind::PowerShell5, None),
+            detected_row(ShellKind::PowerShell7, None),
+        ];
+        app.apply_shell_scan(rows);
+        app.handle_key(key(KeyCode::Char('n')));
+        let Screen::Editor(editor) = &app.screen else {
+            panic!("editor expected");
+        };
+        assert_eq!(
+            editor.shell_choice_states.get(&ShellKind::Bash),
+            Some(&ShellChoiceState::Enabled)
+        );
+        assert_eq!(
+            editor.shell_choice_states.get(&ShellKind::Zsh),
+            Some(&ShellChoiceState::Disabled)
+        );
+        assert_eq!(
+            editor.shell_choice_states.get(&ShellKind::PowerShell7),
+            Some(&ShellChoiceState::NotInstalled)
+        );
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_after_update_runs_once_for_old_and_new_shells() {
+        let root = temp_root("autosync-start");
+        let zsh_profile = root.join("zshrc");
+        set_runtime(&root, |config| {
+            config.runtime.auto_sync = true;
+            config.shells.enabled = vec!["bash".into(), "zsh".into()];
+            config.shells.zsh_rc_path = Some(zsh_profile.clone());
+        });
+        install_loader_for(&root, "zsh");
+        let mut app = App::new(root.clone()).unwrap();
+        seed(&app, "gs", "git");
+        app.reload();
+        select_name(&mut app, "gs");
+        app.handle_key(key(KeyCode::Char('e')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.shells = vec![ShellKind::Zsh];
+        }
+        app.save_editor();
+        assert!(matches!(
+            app.jobs.running(),
+            Some(JobKind::AutoSync { shells, .. })
+                if shells == &vec![ShellKind::Bash, ShellKind::Zsh]
+        ));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_is_skipped_when_disabled_busy_or_without_shells() {
+        let root = temp_root("autosync-skip");
+        set_runtime(&root, |config| config.runtime.auto_sync = false);
+        let mut app = App::new(root.clone()).unwrap();
+        assert!(app
+            .auto_sync_after_write(&[ShellKind::Bash], "save")
+            .contains("auto-sync is off"));
+        set_runtime(&root, |config| config.runtime.auto_sync = true);
+        app.jobs.mark_running_for_test(JobKind::Sync);
+        assert!(app
+            .auto_sync_after_write(&[ShellKind::Bash], "save")
+            .contains("another background job"));
+        assert!(app
+            .auto_sync_after_write(&[], "save")
+            .contains("no target shells"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_results_show_per_shell_status_and_loader_warning() {
+        let (root, mut app) = app_with_two();
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::AutoSync {
+                shells: vec![ShellKind::Bash, ShellKind::Zsh],
+                reason: "save".into(),
+            },
+            result: JobResult::Sync(Ok(SyncRun {
+                revision: 3,
+                results: vec![
+                    sync_outcome(&root, ShellKind::Bash, ShellStatus::Ok, true),
+                    sync_outcome(&root, ShellKind::Zsh, ShellStatus::LoaderMissing, false),
+                ],
+            })),
+        });
+        app.poll_jobs();
+        assert!(app.status.text.contains("no loader is installed for zsh"));
+        let Screen::SyncReport(state) = &app.screen else {
+            panic!("auto-sync results should open the shared report");
+        };
+        assert_eq!(state.auto.as_deref(), Some("save"));
+        assert_eq!(state.run.results.len(), 2);
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_success_and_failure_never_roll_back_the_database() {
+        let (root, mut app) = app_with_two();
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::AutoSync {
+                shells: vec![ShellKind::Bash],
+                reason: "save".into(),
+            },
+            result: JobResult::Sync(Ok(SyncRun {
+                revision: 3,
+                results: vec![sync_outcome(&root, ShellKind::Bash, ShellStatus::Ok, true)],
+            })),
+        });
+        app.poll_jobs();
+        assert!(app.status.text.contains("synced 1 shell(s)"));
+        assert!(app.status.text.contains("reload"));
+        assert!(app.database.get_alias_by_name("gs").unwrap().is_some());
+        app.screen = Screen::Browse;
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::AutoSync {
+                shells: vec![ShellKind::Bash],
+                reason: "delete".into(),
+            },
+            result: JobResult::Sync(Err("lock busy".into())),
+        });
+        app.poll_jobs();
+        assert!(app.status.text.contains("committed"), "{}", app.status.text);
+        assert!(app.status.text.contains("auto-sync failed"));
+        assert!(app.database.get_alias_by_name("gs").unwrap().is_some());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn import_confirm_starts_one_full_sync_and_preview_never_starts_one() {
+        let root = temp_root("import-autosync");
+        set_runtime(&root, |config| config.runtime.auto_sync = true);
+        let mut app = App::new(root.clone()).unwrap();
+        let summary = crate::data::ImportReportSummary {
+            imported: vec!["gs".into()],
+            skipped: Vec::new(),
+            unsupported: Vec::new(),
+            warnings: Vec::new(),
+            strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+            path: root.join("in.json"),
+            format: "JSON",
+            overwrite_existing: BTreeMap::new(),
+            file_fingerprint: crate::data::FileFingerprint::default(),
+        };
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::ImportPreview {
+                path: root.join("in.json"),
+                strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+            },
+            result: JobResult::ImportPreview(Ok(summary.clone())),
+        });
+        app.poll_jobs();
+        assert!(!app.jobs.is_busy(), "a preview must never trigger a sync");
+        app.jobs.inject(crate::data::JobOutcome {
+            kind: JobKind::ImportConfirm {
+                path: root.join("in.json"),
+                strategy: aliasmgr_core::transfer::ConflictStrategy::Ask,
+                overwrite_existing: BTreeMap::new(),
+                file_fingerprint: crate::data::FileFingerprint::default(),
+            },
+            result: JobResult::ImportConfirm(Ok(summary)),
+        });
+        app.poll_jobs();
+        assert!(matches!(
+            app.jobs.running(),
+            Some(JobKind::AutoSyncAll { reason }) if reason == "import"
+        ));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_runs_after_delete_rename_and_alias_toggle() {
+        // Toggle.
+        let (root, mut app) = app_with_two();
+        set_runtime(&root, |config| config.runtime.auto_sync = true);
+        select_name(&mut app, "gs");
+        app.handle_key(key(KeyCode::Char(' ')));
+        assert!(matches!(
+            app.jobs.running(),
+            Some(JobKind::AutoSync { reason, .. }) if reason == "disable"
+        ));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+
+        // Delete.
+        let (root, mut app) = app_with_two();
+        set_runtime(&root, |config| config.runtime.auto_sync = true);
+        select_name(&mut app, "gs");
+        app.handle_key(key(KeyCode::Char('d')));
+        app.handle_key(key(KeyCode::Char('y')));
+        assert!(matches!(
+            app.jobs.running(),
+            Some(JobKind::AutoSync { reason, .. }) if reason == "delete"
+        ));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+
+        // Rename.
+        let (root, mut app) = app_with_two();
+        set_runtime(&root, |config| config.runtime.auto_sync = true);
+        select_name(&mut app, "gs");
+        app.handle_key(key(KeyCode::Char('r')));
+        if let Some(Modal::Rename { input, .. }) = &mut app.modal {
+            input.set_value("gs2");
+        }
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(
+            app.jobs.running(),
+            Some(JobKind::AutoSync { reason, .. }) if reason == "rename"
+        ));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn preflight_blocks_an_enabled_shell_whose_loader_disappeared() {
+        let root = temp_root("preflight-loader");
+        // Enabled intent remains, but the loader block was removed externally.
+        std::fs::write(root.join("bashrc"), b"# cleaned by hand\n").unwrap();
+        let mut app = App::new(root.clone()).unwrap();
+        app.handle_key(key(KeyCode::Char('n')));
+        if let Screen::Editor(editor) = &mut app.screen {
+            editor.draft.name = "loader-gone".into();
+            editor.draft.executable = "tool".into();
+        }
+        app.save_editor();
+        let Screen::Editor(editor) = &app.screen else {
+            panic!("draft must stay in the editor");
+        };
+        assert!(editor
+            .error
+            .as_ref()
+            .unwrap()
+            .message
+            .contains("loader block"));
+        assert!(matches!(app.modal, Some(Modal::ShellPreflight { .. })));
+        assert!(app
+            .database
+            .get_alias_by_name("loader-gone")
+            .unwrap()
+            .is_none());
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_shell_panel_opens_and_restores_the_settings_screen() {
+        let (root, mut app) = app_with_two();
+        app.handle_key(key(KeyCode::Char('S')));
+        let Screen::Settings(state) = &mut app.screen else {
+            panic!("settings expected");
+        };
+        state.set_field(crate::settings::SettingsField::ShellIntegration);
+        app.handle_key(key(KeyCode::Enter));
+        assert!(matches!(app.screen, Screen::ShellSetup(_)));
+        app.handle_key(key(KeyCode::Char('q')));
+        assert!(matches!(app.screen, Screen::Settings(_)));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
     }
 }

@@ -16,7 +16,7 @@ SQLite 是唯一事实来源，各 Shell 的生成脚本是可重建的派生文
 - 保留/清除式卸载；从不删除用户引用的目标文件
 - 统一终端 UI（`aliasmgr tui`）：列表/搜索/标签过滤/排序、创建/编辑/重命名/启用/禁用/删除、结构化参数编辑、生成预览、后台同步、Doctor、导入/导出与共享 `config.toml` 编辑；Bash/Zsh/PowerShell 5.1/PowerShell 7 共用一个 TUI
 - 保存即完成：`add`/`update`/`remove`/`rename`/`enable`/`disable` 成功后自动同步受影响的 Shell；`--no-sync` 关闭单次自动同步，`runtime.auto_sync = false` 全局关闭
-- 首次 Shell 集成：交互式 `aliasmgr doctor` 检测四个 Shell、勾选启用、预览并安装 loader、执行同步并显示 reload 命令；非 TTY 保留文本/JSON 输出
+- 首次 Shell 集成：交互式 `aliasmgr doctor`、TUI 首次启动与 GUI 首次启动都检测四个 Shell、勾选启用、预览并安装 loader、执行同步并显示 reload 命令；TUI 后续启动只检查已启用 Shell 的失效并与一次性新 Shell 提示，正常时保持静默；非 TTY `doctor` 保留文本/JSON 输出
 - Tauri 2 GUI（预发布）
 
 ## 构建要求
@@ -57,7 +57,7 @@ aliasmgr reload --print --shell bash
 aliasmgr tui
 ```
 
-首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。GUI 首次启动也提供同样的 Shell 集成面板（可跳过，不阻塞进入主界面）；没有单独的 `setup` 命令。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；`--allow-missing-loader` 可显式保存并警告（该 Shell 暂不生效）。GUI 保存始终严格预检，不提供该逃生参数。
+首次使用先运行 `aliasmgr doctor`：它列出全部四个受支持 Shell（即使未检测到），由用户确认后启用并安装 loader。TUI 与 GUI 首次启动也提供同样的 Shell 集成面板（可跳过，不阻塞进入主界面）；没有单独的 `setup` 命令。未启用的 Shell 或 loader 无效时，`add`/`update` 会在写库前拒绝并提示运行 `doctor`；TUI 与 GUI 同样严格拦截并保留草稿，不提供 `--allow-missing-loader`。`--allow-missing-loader` 仅属于 CLI，可显式保存并警告（该 Shell 暂不生效）。
 
 配置根优先级：
 
@@ -104,6 +104,15 @@ bash = "C:\\Program Files\\Git\\bin\\bash.exe"
 - **自动同步**：GUI 创建/更新/删除/启停别名成功后，若 `runtime.auto_sync = true`，在一次数据库写入后同步受影响的 Shell（更新为旧 ∪ 新集合），并在页面上显示每个 Shell 的结果与 reload 命令；同步失败、loader 缺失（新终端不会加载）都会明确警告，不伪装成功。导入预览不同步，确认导入后同步一次。设置页可关闭自动同步。检测/保存/同步等较重的 Tauri 命令在 UI 线程之外执行；启动状态只探测一次并与设置页/别名向导共享。
 - 检测边界同 CLI：无法保证发现所有安装方式；始终列出四个 Shell 并允许手动路径。版本探测有约 2 秒上限，失败只表示版本未知。GUI 不自动 reload 当前终端、不写环境变量/注册表、不修改标记块以外的 profile 内容。
 
+### TUI 首次集成、启动检查与自动同步
+
+- **首次启动**：配置根下没有 `config.toml` 时打开共享的 Shell 集成界面，列出全部四个 Shell 及 detected/路径/版本/WSL/loader 状态；`Space` 勾选、`Enter` 预览、`r` 重新检测、`q` 跳过。检测本身不会启用任何 Shell；默认只勾选已启用或已有有效 loader 的 Shell。确认后写入 `shells.enabled`、只安装缺失/不匹配的 loader、同步一次并显示 reload 命令。未检测到的 Shell 提供三选项（安装并加入 PATH 后重启 / 手动填写 executable+profile / 取消）；WSL 仅接受原生 Windows 路径或提示在发行版内运行 `doctor`。`q` 跳过会持久化空的 `shells.enabled`，之后只显示紧凑的“尚未配置”提示。
+- **后续启动**：后台只探测已启用 Shell 的 loader/executable 与新检测到的 Shell。失效时显示一次性模态提示：`Enter` 重新启用（进入同一预览流程）、`i` 仅本次会话忽略、`d` 持久化禁用。新检测到但未启用的非 WSL Shell 可启用或 `d` 持久化忽略（写入 `shells.seen`），同一安装不会反复提示；换路径重装后再次提示一次。正常时静默，不弹完整向导。
+- **设置页 Shell 面板**：`S` → `shells.enabled` 字段打开，逐 Shell 启用/禁用（禁用持久化）、重新检测、查看 loader 状态/路径、`e` 编辑 executable/profile、`c` 预览“使用默认值”清除覆盖、`Enter` 预览并应用。应用是幂等的，只修改标记块。
+- **保存预检（严格）**：编辑器里的 Shell 选择显示 `[enabled]`/`[disabled]`/`[not installed]`/loader invalid。目标 Shell 未启用或 loader 无效时 `Ctrl+S` 被拦截并保留草稿；`e`/`Enter` 打开同一启用流程，`Esc` 保留草稿不保存。TUI 没有 `--allow-missing-loader`。
+- **自动同步**：TUI 创建/更新/删除/重命名/启停别名成功后，若 `runtime.auto_sync = true`（默认），在数据库提交后后台同步一次受影响的 Shell（更新为旧 ∪ 新集合）；确认导入同步一次，导入预览不同步。结果页逐 Shell 显示状态、生成文件、loader 与 reload 命令；同步失败或 loader 缺失会明确警告，但不会回滚已提交的数据库。UI 不阻塞，`s` 仍是手动重试/修复。
+- 检测边界同 CLI；TUI 不自动 reload、不写环境变量/注册表、不修改标记块以外的 profile 内容。与 GUI 共用同一 `config.toml`、`aliases.db` 和 `shells.enabled`。
+
 - Bash/Zsh 使用 `source '<config-root>/generated/bash.sh'`。
 - PowerShell 使用 `. '<config-root>\generated\powershell7.ps1'`；开头的 `.` 是 **点源（dot-source）运算符**，不是逗号，表示在当前会话中运行该文件。
 
@@ -122,7 +131,7 @@ aliasmgr --config-dir /tmp/aliasmgr-demo tui
 
 常用键：`↑/↓` 或 `j/k` 移动，`Enter` 详情，`/` 搜索，`n` 新建，`e` 编辑，`r` 重命名，`Space` 启用/禁用，`d` 删除，`s` 后台同步，`p` 按别名预览（`f` 切换整文件回退），`D` Doctor，`t` 标签过滤，`o`/`O` 排序，`R` 手动刷新，`I` 导入，`X` 导出，`S` 编辑共享配置，`?` 帮助，`q`/`Ctrl+C` 退出；同步结果页 `r` 仅重试失败的 Shell，`Esc` 清除已应用的搜索/标签/排序筛选。编辑时 `Tab` 切换字段、`Ctrl+S` 保存、`Esc` 取消；固定参数逐行编辑（空格、引号、空字符串、CJK 与 `{{args}}` 原样保留，不做拆分或求值）。
 
-TUI 复用同一 SQLite、校验、同步、Doctor、loader 与 Shell 适配器；保存只写数据库并提示需要同步，同步后仍需用户手动执行显示的 reload 命令。详情区区分四层状态：DB 已写入 / 生成文件已更新 / loader 已安装 / 当前终端是否已加载（未知）。环境变量值默认显示为 `***`，生成预览在渲染前即脱敏。
+TUI 复用同一 SQLite、校验、同步、Doctor、loader 与 Shell 适配器；保存会写数据库并在 `runtime.auto_sync` 开启时后台同步受影响的 Shell，同步后仍需用户手动执行显示的 reload 命令。首次启动提供 Shell 集成向导，后续启动只做失效检查；添加/编辑前严格检查目标 Shell 的启用状态与 loader。详情区区分四层状态：DB 已写入 / 生成文件已更新 / loader 已安装 / 当前终端是否已加载（未知）。环境变量值默认显示为 `***`，生成预览在渲染前即脱敏。
 
 完整快捷键、目标类型语义与限制见 [docs/tui.md](docs/tui.md)。
 ## 构建 GUI（预发布）

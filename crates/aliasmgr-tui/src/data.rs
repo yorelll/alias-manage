@@ -693,6 +693,16 @@ pub enum JobKind {
     Sync,
     /// Retry only the shells that failed in a previous partial sync.
     SyncRetry(Vec<ShellKind>),
+    /// One background sync of the shells affected by a successful write.
+    /// `reason` is displayed in the result screen ("save", "delete", ...).
+    AutoSync {
+        shells: Vec<ShellKind>,
+        reason: String,
+    },
+    /// One full sync after a confirmed batch import.
+    AutoSyncAll {
+        reason: String,
+    },
     Doctor,
     ImportPreview {
         path: PathBuf,
@@ -717,6 +727,8 @@ impl JobKind {
         match self {
             JobKind::Sync => "syncing".to_string(),
             JobKind::SyncRetry(shells) => format!("retrying {} failed shell(s)", shells.len()),
+            JobKind::AutoSync { reason, .. } => format!("auto-syncing after {reason}"),
+            JobKind::AutoSyncAll { reason } => format!("auto-syncing after {reason}"),
             JobKind::Doctor => "running doctor".to_string(),
             JobKind::ImportPreview { .. } => "previewing import".to_string(),
             JobKind::ImportConfirm { .. } => "importing aliases".to_string(),
@@ -865,6 +877,12 @@ fn run_job(kind: &JobKind, root: &Path) -> JobResult {
         JobKind::SyncRetry(shells) => {
             JobResult::Sync(sync::sync_shells(root, shells).map_err(|error| error.to_string()))
         }
+        JobKind::AutoSync { shells, .. } => {
+            JobResult::Sync(sync::sync_shells(root, shells).map_err(|error| error.to_string()))
+        }
+        JobKind::AutoSyncAll { .. } => JobResult::Sync(
+            sync::sync_config_dir_collect_io(root).map_err(|error| error.to_string()),
+        ),
         JobKind::Doctor => JobResult::Doctor(run_doctor(root)),
         JobKind::ImportPreview { path, strategy } => {
             JobResult::ImportPreview(import_preview(root, path, *strategy))

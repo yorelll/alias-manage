@@ -16,7 +16,7 @@ use aliasmgr_core::{
 };
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::Line,
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Wrap},
@@ -29,6 +29,23 @@ use std::{
     sync::mpsc::{self, Receiver, TryRecvError},
     time::Duration,
 };
+
+/// Why the setup screen was opened. The TUI keeps the same state machine for
+/// first-run, startup repair, the settings panel and the add/edit preflight so
+/// loader/marker/sync policy is never reimplemented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SetupOrigin {
+    /// Interactive `aliasmgr doctor`; `q` exits without writing anything.
+    Doctor,
+    /// Brand-new configuration; `q`/skip persists an empty `shells.enabled`.
+    FirstRun,
+    /// Repair an enabled shell whose loader went missing.
+    Repair,
+    /// Blocked add/edit save; the caller restores the draft afterwards.
+    Preflight,
+    /// Shell integration panel opened from the settings screen.
+    Settings,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PathFocus {
@@ -61,7 +78,8 @@ enum Mode {
     Result,
 }
 
-struct SetupApp {
+#[derive(Debug)]
+pub struct SetupApp {
     paths: AppPaths,
     config: aliasmgr_core::config::AppConfig,
     rows: Vec<ShellInstallation>,
@@ -76,17 +94,29 @@ struct SetupApp {
     summary: Vec<String>,
     quit: bool,
     dirty: bool,
+    origin: SetupOrigin,
 }
 
 impl SetupApp {
     fn new(paths: AppPaths) -> Result<Self, AliasError> {
+        Self::new_with_origin(paths, SetupOrigin::Doctor, &[])
+    }
+
+    /// Builds the shared setup state and starts detection in the background.
+    /// `checked` preselects shells for repair/preflight flows; first-run and
+    /// settings still default to persisted intent or an already valid loader.
+    pub(crate) fn new_with_origin(
+        paths: AppPaths,
+        origin: SetupOrigin,
+        checked: &[ShellKind],
+    ) -> Result<Self, AliasError> {
         let config = paths.load_config()?;
         let mut app = Self {
             paths,
             config,
             rows: Vec::new(),
             plans: Vec::new(),
-            checked: BTreeSet::new(),
+            checked: checked.iter().cloned().collect(),
             selected: 0,
             mode: Mode::List,
             detecting: false,
@@ -96,9 +126,48 @@ impl SetupApp {
             summary: Vec::new(),
             quit: false,
             dirty: true,
+            origin,
         };
-        app.start_detection(true);
+        app.start_detection(false);
         Ok(app)
+    }
+
+    pub(crate) fn origin(&self) -> SetupOrigin {
+        self.origin
+    }
+
+    pub(crate) fn is_quit(&self) -> bool {
+        self.quit
+    }
+
+    /// True once a confirmed apply produced at least one result line.
+    pub(crate) fn has_changes(&self) -> bool {
+        !self.summary.is_empty()
+    }
+
+    pub(crate) fn summary_text(&self) -> String {
+        self.summary.join("\n")
+    }
+
+    /// Current installed rows and plans, used by the TUI to refresh shell
+    /// selector labels after the panel closes.
+    pub(crate) fn installations(&self) -> &[ShellInstallation] {
+        &self.rows
+    }
+
+    pub(crate) fn setup_plans(&self) -> &[Option<ShellSetupPlan>] {
+        &self.plans
+    }
+
+    /// Deterministic row injection for state/render tests: cancels the probe
+    /// thread and rebuilds plans exactly as if detection had finished.
+    #[cfg(test)]
+    pub(crate) fn inject_rows_for_test(&mut self, rows: Vec<ShellInstallation>) {
+        self.receiver = None;
+        self.detecting = false;
+        self.rows = rows;
+        self.rebuild_plans();
+        self.dirty = true;
     }
 
     fn start_detection(&mut self, reset_checked: bool) {
@@ -126,7 +195,7 @@ impl SetupApp {
         self.dirty = true;
     }
 
-    fn poll_detection(&mut self) {
+    pub(crate) fn poll_detection(&mut self) {
         let Some(receiver) = &self.receiver else {
             return;
         };
@@ -170,15 +239,33 @@ impl SetupApp {
             .rows
             .iter()
             .map(|row| {
-                shell_setup::plan_shell_setup_with_installation(
-                    &self.config,
-                    &self.paths,
-                    &row.kind,
-                    row,
-                    None,
-                    None,
-                )
-                .ok()
+                let (executable, profile) = self
+                    .pending_overrides
+                    .get(&row.kind)
+                    .cloned()
+                    .unwrap_or((None, None));
+                if executable.is_none() && profile.is_none() {
+                    shell_setup::plan_shell_setup_with_installation(
+                        &self.config,
+                        &self.paths,
+                        &row.kind,
+                        row,
+                        None,
+                        None,
+                    )
+                    .ok()
+                } else {
+                    // Overrides (including the clear sentinel) change detection
+                    // itself, so re-plan instead of reusing the probed row.
+                    shell_setup::plan_shell_setup(
+                        &self.config,
+                        &self.paths,
+                        &row.kind,
+                        executable.as_deref(),
+                        profile.as_deref(),
+                    )
+                    .ok()
+                }
             })
             .collect();
         let enabled = shell_setup::enabled_shells(&self.config);
@@ -246,7 +333,10 @@ impl SetupApp {
                 .map(|path| path.display().to_string())
                 .unwrap_or_default()
         };
-        let profile = shell_setup::default_profile_path(&self.config, &self.paths, &kind)
+        let profile = self
+            .current_plan()
+            .and_then(|plan| plan.loader_target.clone())
+            .or_else(|| shell_setup::default_profile_path(&self.config, &self.paths, &kind))
             .map(|path| path.display().to_string())
             .unwrap_or_default();
         self.mode = Mode::PathInput {
@@ -289,6 +379,15 @@ impl SetupApp {
                 SetupAction::WslManual if !self.pending_overrides.contains_key(&kind) => {
                     self.status = format!(
                         "{} is the WSL launcher; press Enter to enter a native Windows executable, or run doctor inside WSL.",
+                        kind.label()
+                    );
+                    self.mode = Mode::List;
+                    self.dirty = true;
+                    return;
+                }
+                SetupAction::NeedsPath if !plan.detected => {
+                    self.status = format!(
+                        "{} still needs an executable that exists; press Enter on it and supply the paths.",
                         kind.label()
                     );
                     self.mode = Mode::List;
@@ -490,7 +589,61 @@ impl SetupApp {
         self.dirty = true;
     }
 
-    fn handle_key(&mut self, key: KeyEvent) {
+    /// Settings panel action: persist `enabled=false` for the current shell.
+    /// The loader block is left alone (removing it is the advanced
+    /// `shell uninstall` operation) and the executable is recorded in
+    /// `shells.seen` by core so startup does not immediately re-offer it.
+    fn disable_current(&mut self) {
+        let Some(row) = self.current_row() else {
+            return;
+        };
+        if row.wsl {
+            self.status = "WSL launcher rows cannot be disabled from Windows.".into();
+            self.dirty = true;
+            return;
+        }
+        let kind = row.kind.clone();
+        match shell_setup::set_shell_enabled(&self.paths, &kind, false) {
+            Ok(config) => {
+                self.config = config;
+                self.checked.remove(&kind);
+                self.pending_overrides.remove(&kind);
+                self.rebuild_plans();
+                self.status = format!(
+                    "{} disabled; its loader block is left in place until removed with the CLI shell uninstall command.",
+                    kind.label()
+                );
+            }
+            Err(error) => self.status = format!("{}: {error}", kind.label()),
+        }
+        self.dirty = true;
+    }
+
+    /// Settings panel action: preview platform defaults for executable and
+    /// profile. Nothing is persisted until the previewed set is confirmed;
+    /// core recognises the sentinel and removes the stored overrides.
+    fn clear_overrides_current(&mut self) {
+        let Some(row) = self.current_row() else {
+            return;
+        };
+        let kind = row.kind.clone();
+        self.pending_overrides.insert(
+            kind.clone(),
+            (
+                Some(PathBuf::from(shell_setup::CLEAR_OVERRIDE)),
+                Some(PathBuf::from(shell_setup::CLEAR_OVERRIDE)),
+            ),
+        );
+        self.checked.insert(kind.clone());
+        self.rebuild_plans();
+        self.status = format!(
+            "{}: executable/profile overrides will be cleared and platform defaults used. Enter previews; nothing is written yet.",
+            kind.label()
+        );
+        self.dirty = true;
+    }
+
+    pub(crate) fn handle_key(&mut self, key: KeyEvent) {
         if key.modifiers.contains(KeyModifiers::CONTROL)
             && matches!(key.code, KeyCode::Char('c' | 'C'))
         {
@@ -550,6 +703,15 @@ impl SetupApp {
                     }
                 }
                 KeyCode::Char('r') => self.start_detection(false),
+                KeyCode::Char('e') if self.origin != SetupOrigin::Doctor => {
+                    self.begin_path_input();
+                }
+                KeyCode::Char('c') if self.origin != SetupOrigin::Doctor => {
+                    self.clear_overrides_current();
+                }
+                KeyCode::Char('d') if self.origin == SetupOrigin::Settings => {
+                    self.disable_current();
+                }
                 KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
                 _ => {}
             },
@@ -676,18 +838,32 @@ impl SetupApp {
                 }
                 _ => {}
             },
-            Mode::Result => match key.code {
-                KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
-                _ => {
-                    self.mode = Mode::List;
-                    self.start_detection(false);
+            Mode::Result => {
+                if self.origin == SetupOrigin::Doctor {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => self.quit = true,
+                        _ => {
+                            self.mode = Mode::List;
+                            self.start_detection(false);
+                        }
+                    }
+                } else {
+                    // TUI flows return to the suspended screen; only the
+                    // standalone doctor screen rescans in place.
+                    self.quit = true;
                 }
-            },
+            }
         }
     }
 }
 
 fn render(frame: &mut Frame, app: &SetupApp) {
+    render_in(frame, frame.area(), app);
+}
+
+/// Renders the setup state into an arbitrary area so the TUI can embed it as a
+/// screen and the standalone `doctor` flow can use the whole terminal.
+pub(crate) fn render_in(frame: &mut Frame, area: Rect, app: &SetupApp) {
     let list_mode = matches!(app.mode, Mode::List);
     let chunks = if list_mode {
         Layout::default()
@@ -698,7 +874,7 @@ fn render(frame: &mut Frame, app: &SetupApp) {
                 Constraint::Length(3),
                 Constraint::Length(4),
             ])
-            .split(frame.area())
+            .split(area)
     } else {
         // Give previews/path prompts the full body so every applied target and
         // block is reachable (the confirm screen scrolls).
@@ -709,13 +885,21 @@ fn render(frame: &mut Frame, app: &SetupApp) {
                 Constraint::Min(6),
                 Constraint::Length(4),
             ])
-            .split(frame.area())
+            .split(area)
     };
 
-    let title = if app.detecting {
-        "Alias Manager — Shell integration (detecting...)"
-    } else {
-        "Alias Manager — Shell integration"
+    let title = match app.origin {
+        SetupOrigin::FirstRun => "Alias Manager — Shell integration (first run)",
+        SetupOrigin::Repair => "Alias Manager — Shell integration (repair)",
+        SetupOrigin::Preflight => "Alias Manager — Shell integration (required by this alias)",
+        SetupOrigin::Settings => "Alias Manager — Shell integration settings",
+        SetupOrigin::Doctor => {
+            if app.detecting {
+                "Alias Manager — Shell integration (detecting...)"
+            } else {
+                "Alias Manager — Shell integration"
+            }
+        }
     };
     frame.render_widget(
         Paragraph::new(title).style(Style::default().add_modifier(Modifier::BOLD)),
@@ -772,12 +956,20 @@ fn render(frame: &mut Frame, app: &SetupApp) {
             state.select(Some(app.selected.min(app.rows.len() - 1)));
         }
         frame.render_stateful_widget(list, chunks[1], &mut state);
+        let mut keys = "↑/↓ or j/k move   Space select   Enter preview/apply   e paths   c defaults   r rescan"
+            .to_string();
+        if app.origin == SetupOrigin::Settings {
+            keys.push_str("   d disable");
+        }
+        keys.push_str(if app.origin == SetupOrigin::Doctor {
+            "   q quit"
+        } else {
+            "   q skip"
+        });
         frame.render_widget(
-            Paragraph::new(
-                "↑/↓ or j/k move   Space enable   Enter preview/apply   r rescan   q quit",
-            )
-            .block(Block::default().borders(Borders::ALL).title("Keys"))
-            .wrap(Wrap { trim: true }),
+            Paragraph::new(keys)
+                .block(Block::default().borders(Borders::ALL).title("Keys"))
+                .wrap(Wrap { trim: true }),
             chunks[2],
         );
         frame.render_widget(status_widget(app), chunks[3]);
@@ -844,7 +1036,11 @@ fn render(frame: &mut Frame, app: &SetupApp) {
 
 fn status_widget(app: &SetupApp) -> Paragraph<'_> {
     let status = if app.mode == Mode::Result {
-        "Press any key to rescan, q to quit.".to_string()
+        if app.origin == SetupOrigin::Doctor {
+            "Press any key to rescan, q to quit.".to_string()
+        } else {
+            "Press any key to return; the result above is kept.".to_string()
+        }
     } else {
         app.status.clone()
     };
@@ -937,6 +1133,7 @@ mod tests {
             summary: Vec::new(),
             quit: false,
             dirty: false,
+            origin: SetupOrigin::Doctor,
         };
         assert_eq!(app.apply_kinds(), vec![ShellKind::Bash]);
     }
@@ -1003,6 +1200,7 @@ mod tests {
             summary: Vec::new(),
             quit: false,
             dirty: false,
+            origin: SetupOrigin::Doctor,
         };
         app.apply_confirmed();
         let summary = app.summary.join("\n");
@@ -1127,6 +1325,7 @@ mod tests {
             summary: Vec::new(),
             quit: false,
             dirty: false,
+            origin: SetupOrigin::Doctor,
         };
         app.confirm_ready_row();
         let preview_kinds = match &app.mode {
@@ -1190,6 +1389,7 @@ mod tests {
             summary: Vec::new(),
             quit: false,
             dirty: false,
+            origin: SetupOrigin::Doctor,
         };
         app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
         match app.mode {
@@ -1243,9 +1443,233 @@ mod tests {
             summary: Vec::new(),
             quit: false,
             dirty: false,
+            origin: SetupOrigin::Doctor,
         };
         app.confirm_ready_row();
         assert!(matches!(app.mode, Mode::List));
         assert!(app.status.contains("needs an executable"), "{}", app.status);
+    }
+
+    fn ui_root(label: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "aliasmgr-shell-setup-ui-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_nanos())
+                .unwrap_or_default()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    fn row(kind: ShellKind, executable: Option<PathBuf>) -> ShellInstallation {
+        ShellInstallation {
+            kind,
+            detected: executable.is_some(),
+            source: if executable.is_some() {
+                detection::ShellDetectionSource::Manual
+            } else {
+                detection::ShellDetectionSource::NotFound
+            },
+            executable,
+            version: None,
+            wsl: false,
+        }
+    }
+
+    fn bash_app(root: &Path, origin: SetupOrigin) -> SetupApp {
+        let paths = AppPaths {
+            root: root.to_path_buf(),
+        };
+        let executable = root.join(if cfg!(windows) { "bash.exe" } else { "bash" });
+        std::fs::write(&executable, b"").unwrap();
+        let mut config = aliasmgr_core::config::AppConfig::default();
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config
+            .shells
+            .executables
+            .insert("bash".into(), executable.clone());
+        config.save(&paths).unwrap();
+        let mut app = SetupApp::new_with_origin(paths, origin, &[]).unwrap();
+        app.inject_rows_for_test(vec![
+            row(ShellKind::Bash, Some(executable)),
+            row(ShellKind::Zsh, None),
+            row(ShellKind::PowerShell5, None),
+            row(ShellKind::PowerShell7, None),
+        ]);
+        app
+    }
+
+    #[test]
+    fn first_run_selects_previews_applies_and_persists_enablement_and_loader() {
+        let root = ui_root("first-run");
+        let mut app = bash_app(&root, SetupOrigin::FirstRun);
+        assert!(app.checked.is_empty(), "detection alone must not pre-check");
+        assert!(app.current_plan().unwrap().loader_status == shell_setup::LoaderStatus::Missing);
+        app.handle_key(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE));
+        assert!(app.checked.contains(&ShellKind::Bash));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::Confirm { .. }));
+        app.handle_key(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::Result));
+        assert!(app.has_changes());
+        assert!(app.summary_text().contains("Bash: enabled"));
+        let config = app.paths.load_config().unwrap();
+        assert_eq!(config.shells.enabled, vec!["bash"]);
+        let profile = root.join("bashrc");
+        assert!(profile.exists(), "apply must install the loader");
+        assert!(std::fs::read_to_string(&profile)
+            .unwrap()
+            .contains(aliasmgr_core::shells::common::START_MARKER));
+        // Isolated root only: the test profile is the temp file above.
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn first_run_skip_quits_without_changes_or_writes() {
+        let root = ui_root("skip");
+        let mut app = bash_app(&root, SetupOrigin::FirstRun);
+        app.handle_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE));
+        assert!(app.is_quit());
+        assert!(!app.has_changes());
+        assert!(app.paths.load_config().unwrap().shells.enabled.is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn not_detected_enter_offers_three_options() {
+        let root = ui_root("three-options");
+        let paths = AppPaths { root: root.clone() };
+        aliasmgr_core::config::AppConfig::default()
+            .save(&paths)
+            .unwrap();
+        let mut app = SetupApp::new_with_origin(paths, SetupOrigin::FirstRun, &[]).unwrap();
+        app.inject_rows_for_test(vec![
+            row(ShellKind::Bash, None),
+            row(ShellKind::Zsh, None),
+            row(ShellKind::PowerShell5, None),
+            row(ShellKind::PowerShell7, None),
+        ]);
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        assert!(matches!(
+            app.mode,
+            Mode::NeedsPathChoice {
+                kind: ShellKind::Bash
+            }
+        ));
+        app.handle_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE));
+        assert!(app.status.contains("Install Bash"), "{}", app.status);
+        assert!(matches!(app.mode, Mode::List));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('3'), KeyModifiers::NONE));
+        assert!(app.status.contains("Cancelled"));
+        app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        app.handle_key(KeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE));
+        assert!(matches!(app.mode, Mode::PathInput { .. }));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manual_paths_reject_relative_and_missing_values_and_expand_tilde() {
+        let root = ui_root("paths");
+        let mut app = bash_app(&root, SetupOrigin::FirstRun);
+        let executable = root.join(if cfg!(windows) { "bash.exe" } else { "bash" });
+
+        app.mode = Mode::PathInput {
+            kind: ShellKind::Bash,
+            executable: "relative/bash".into(),
+            profile: String::new(),
+            focus: PathFocus::Executable,
+        };
+        app.finish_path_input();
+        assert!(
+            app.status.contains("Executable path must be absolute"),
+            "{}",
+            app.status
+        );
+
+        app.mode = Mode::PathInput {
+            kind: ShellKind::Bash,
+            executable: "~/definitely-missing-aliasmgr-bash".into(),
+            profile: String::new(),
+            focus: PathFocus::Executable,
+        };
+        app.finish_path_input();
+        assert!(
+            app.status.contains("Executable not found"),
+            "{}",
+            app.status
+        );
+        assert!(
+            !app.status.contains("must be absolute"),
+            "tilde must expand before validation: {}",
+            app.status
+        );
+
+        app.mode = Mode::PathInput {
+            kind: ShellKind::Bash,
+            executable: executable.display().to_string(),
+            profile: "relative/profile".into(),
+            focus: PathFocus::Profile,
+        };
+        app.finish_path_input();
+        assert!(
+            app.status.contains("Profile/RC path must be absolute"),
+            "{}",
+            app.status
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn checked_wsl_row_blocks_confirm_until_a_native_path_is_supplied() {
+        let root = ui_root("wsl-confirm");
+        let paths = AppPaths { root: root.clone() };
+        aliasmgr_core::config::AppConfig::default()
+            .save(&paths)
+            .unwrap();
+        let mut app = SetupApp::new_with_origin(paths, SetupOrigin::FirstRun, &[]).unwrap();
+        app.inject_rows_for_test(vec![ShellInstallation {
+            kind: ShellKind::Bash,
+            executable: Some(PathBuf::from(r"C:\Windows\System32\bash.exe")),
+            detected: true,
+            source: detection::ShellDetectionSource::Wsl,
+            version: None,
+            wsl: true,
+        }]);
+        app.checked.insert(ShellKind::Bash);
+        app.confirm_ready_row();
+        assert!(matches!(app.mode, Mode::List));
+        assert!(app.status.contains("WSL launcher"), "{}", app.status);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn settings_origin_disable_persists_and_clear_previews_defaults_without_writing() {
+        let root = ui_root("settings-origin");
+        let mut app = bash_app(&root, SetupOrigin::Settings);
+        app.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE));
+        assert!(app.paths.load_config().unwrap().shells.enabled.is_empty());
+        app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        let (executable, profile) = app.pending_overrides.get(&ShellKind::Bash).unwrap();
+        assert_eq!(
+            executable.as_deref(),
+            Some(Path::new(shell_setup::CLEAR_OVERRIDE))
+        );
+        assert_eq!(
+            profile.as_deref(),
+            Some(Path::new(shell_setup::CLEAR_OVERRIDE))
+        );
+        assert!(app.status.contains("platform defaults"), "{}", app.status);
+        // Nothing is persisted until the previewed set is confirmed.
+        assert!(app
+            .paths
+            .load_config()
+            .unwrap()
+            .shells
+            .executables
+            .contains_key("bash"));
+        let _ = std::fs::remove_dir_all(root);
     }
 }

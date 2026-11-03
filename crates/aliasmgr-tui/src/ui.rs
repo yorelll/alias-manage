@@ -168,6 +168,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         Screen::Import(state) => render_import(frame, body, app, state),
         Screen::Export(state) => render_export(frame, body, app, state),
         Screen::Settings(state) => render_settings(frame, body, app, state),
+        Screen::ShellSetup(state) => {
+            crate::shell_setup_ui::render_in(frame, body, state);
+        }
     }
     render_footer(frame, chunks[2], app);
     render_modal(frame, area, app);
@@ -210,6 +213,7 @@ fn screen_label(app: &App) -> &'static str {
         Screen::Import(_) => "Import",
         Screen::Export(_) => "Export",
         Screen::Settings(_) => "Settings",
+        Screen::ShellSetup(_) => "Shell integration",
     }
 }
 
@@ -230,6 +234,7 @@ fn focus_label(app: &App) -> String {
         Screen::Import(_) => "import".to_string(),
         Screen::Export(_) => "export".to_string(),
         Screen::Settings(settings) => format!("settings field {}", settings.field.label()),
+        Screen::ShellSetup(_) => "shell integration".to_string(),
     }
 }
 
@@ -908,6 +913,11 @@ fn editor_lines(editor: &Editor, theme: Theme) -> (Vec<Line<'static>>, usize) {
                 for (index, shell) in choices.iter().enumerate() {
                     let checked = editor.draft.shells.contains(shell);
                     let row_selected = selected && index == editor.shell_cursor;
+                    let state = editor
+                        .shell_choice_states
+                        .get(shell)
+                        .map(|state| state.label())
+                        .unwrap_or("[not checked]");
                     lines.push(line(vec![
                         span(
                             format!("    {} ", theme.checkbox(checked)),
@@ -923,6 +933,7 @@ fn editor_lines(editor: &Editor, theme: Theme) -> (Vec<Line<'static>>, usize) {
                                 theme.muted()
                             },
                         ),
+                        span(format!("  {state}"), theme.muted()),
                     ]));
                 }
             }
@@ -1496,6 +1507,14 @@ fn render_settings(frame: &mut Frame, area: Rect, app: &App, state: &SettingsSta
         "  allow_relative_paths is a shared config switch; the TUI does not gate its own input on it.",
         app.theme.muted(),
     )]));
+    lines.push(line(vec![span(
+        "  runtime.auto_sync runs one background sync after each successful TUI write; s remains the manual retry.",
+        app.theme.muted(),
+    )]));
+    lines.push(line(vec![span(
+        "  Shell integration panel: enabled intent, detection, loader status/path, path overrides, preview + apply.",
+        app.theme.muted(),
+    )]));
     frame.render_widget(
         Paragraph::new(Text::from(lines))
             .block(block(&title, app.theme))
@@ -1657,10 +1676,10 @@ fn render_scroll(frame: &mut Frame, area: Rect, app: &App, state: &ScrollState, 
 fn render_sync_report(frame: &mut Frame, area: Rect, app: &App, state: &SyncReportState) {
     let title = format!(
         "{} (revision {})",
-        if state.retry {
-            "Sync retry results"
-        } else {
-            "Sync results"
+        match &state.auto {
+            Some(reason) => format!("Auto-sync results after {reason}"),
+            None if state.retry => "Sync retry results".to_string(),
+            None => "Sync results".to_string(),
         },
         state.run.revision
     );
@@ -1807,6 +1826,13 @@ fn footer_keys(app: &App) -> String {
                 "r reload latest   d discard draft   o overwrite (explicit)   Esc keep draft"
                     .to_string()
             }
+            Modal::ShellNotice { .. } => {
+                "j/k move   Enter re-enable/setup   i ignore session   d disable/dismiss   Esc close"
+                    .to_string()
+            }
+            Modal::ShellPreflight { .. } => {
+                "e enable/setup   Esc keep draft (not saved)".to_string()
+            }
             Modal::Message { .. } => "Enter/Esc close".to_string(),
         };
     }
@@ -1850,7 +1876,12 @@ fn footer_keys(app: &App) -> String {
             ExportPhase::Result => "j/k scroll   Esc back".to_string(),
         },
         Screen::Settings(_) => {
-            "Tab field  Left/Right or Space toggle  Ctrl+S save  Esc cancel".to_string()
+            "Tab field  Left/Right or Space toggle  Enter opens shell panel  Ctrl+S save  Esc cancel"
+                .to_string()
+        }
+        Screen::ShellSetup(_) => {
+            "j/k move  Space select  Enter preview/apply  e paths  c defaults  r rescan  q skip/back"
+                .to_string()
         }
     }
 }
@@ -2212,6 +2243,79 @@ fn modal_lines(modal: &Modal, app: &App, area: Rect) -> (String, Vec<Line<'stati
             )]));
             ("Record changed elsewhere".to_string(), lines)
         }
+        Modal::ShellNotice { notices, cursor } => {
+            let mut lines = vec![
+                line(vec![span(
+                    "Shell integration needs attention (one-time notice).",
+                    theme.title(),
+                )]),
+                Line::default(),
+            ];
+            for (index, notice) in notices.iter().enumerate() {
+                let selected = index == *cursor;
+                let label = match notice.kind {
+                    crate::app::ShellNoticeKind::InvalidEnabled => format!(
+                        "{} integration is invalid: loader missing/unavailable or executable gone",
+                        notice.shell.label()
+                    ),
+                    crate::app::ShellNoticeKind::NewlyDetected => {
+                        format!("{} was detected but is not enabled", notice.shell.label())
+                    }
+                };
+                lines.push(line(vec![
+                    span(if selected { "> " } else { "  " }, theme.accent()),
+                    span(
+                        label,
+                        if selected {
+                            theme.selected()
+                        } else {
+                            Style::default()
+                        },
+                    ),
+                ]));
+            }
+            lines.push(Line::default());
+            lines.push(line(vec![span(
+                "Enter/r re-enable (opens the setup preview)   i ignore this session",
+                theme.muted(),
+            )]));
+            lines.push(line(vec![span(
+                "d disable (invalid) / dismiss (newly detected), persisted in config.toml",
+                theme.muted(),
+            )]));
+            lines.push(line(vec![span(
+                "Esc close for this session",
+                theme.muted(),
+            )]));
+            ("Shell integration".to_string(), lines)
+        }
+        Modal::ShellPreflight { problems, .. } => {
+            let mut lines = vec![line(vec![span(
+                "Not saved: a target shell cannot load this alias yet.",
+                theme.warning(),
+            )])];
+            lines.push(Line::default());
+            for problem in problems {
+                lines.push(line(vec![span(
+                    format!(
+                        "{}: {}",
+                        problem.kind.label(),
+                        text::one_line(&problem.message)
+                    ),
+                    theme.error(),
+                )]));
+            }
+            lines.push(Line::default());
+            lines.push(line(vec![span(
+                "The draft is kept. e/Enter opens the shared enable/setup flow.",
+                theme.muted(),
+            )]));
+            lines.push(line(vec![span(
+                "Esc keeps the draft without saving.",
+                theme.muted(),
+            )]));
+            ("Shell preflight blocked the save".to_string(), lines)
+        }
         Modal::Message { title, lines } => (
             title.clone(),
             lines
@@ -2251,6 +2355,13 @@ mod tests {
                 .unwrap_or_default()
         ));
         std::fs::create_dir_all(&root).unwrap();
+        let paths = aliasmgr_core::config::AppPaths { root: root.clone() };
+        let mut config = paths.load_config().unwrap();
+        config.shells.enabled = vec!["bash".into()];
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config.runtime.auto_sync = false;
+        config.save(&paths).unwrap();
+        aliasmgr_core::integration::install_loader(&paths, "bash").unwrap();
         root
     }
 
@@ -2936,6 +3047,7 @@ mod tests {
             },
             scroll: 0,
             retry: true,
+            auto: None,
         });
         let rendered = render_string(&mut app, 100, 30);
         assert!(rendered.contains("Sync retry results"), "{rendered}");
@@ -3245,6 +3357,7 @@ mod tests {
         let (root, mut app) = test_app("sync-report");
         app.screen = Screen::SyncReport(SyncReportState {
             retry: false,
+            auto: None,
             run: SyncRun {
                 revision: 3,
                 results: vec![aliasmgr_core::sync::ShellSyncOutcome {
@@ -3624,6 +3737,150 @@ mod tests {
         assert!(rendered.contains("Environment"));
         assert!(rendered.contains("Path mode"));
         assert!(rendered.contains("Restriction"));
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shell_setup_screen_renders_all_four_shells_and_first_run_keys() {
+        let (root, mut app) = test_app("shell-setup-render");
+        let paths = aliasmgr_core::config::AppPaths { root: root.clone() };
+        let bash = root.join(if cfg!(windows) { "bash.exe" } else { "bash" });
+        std::fs::write(&bash, b"").unwrap();
+        let mut config = paths.load_config().unwrap();
+        config.shells.bash_rc_path = Some(root.join("bashrc"));
+        config
+            .shells
+            .executables
+            .insert("bash".into(), bash.clone());
+        config.save(&paths).unwrap();
+        let mut setup = crate::shell_setup_ui::SetupApp::new_with_origin(
+            paths,
+            crate::shell_setup_ui::SetupOrigin::FirstRun,
+            &[],
+        )
+        .unwrap();
+        setup.inject_rows_for_test(vec![
+            aliasmgr_core::detection::ShellInstallation {
+                kind: ShellKind::Bash,
+                executable: Some(bash),
+                detected: true,
+                source: aliasmgr_core::detection::ShellDetectionSource::Manual,
+                version: None,
+                wsl: false,
+            },
+            aliasmgr_core::detection::ShellInstallation {
+                kind: ShellKind::Zsh,
+                executable: None,
+                detected: false,
+                source: aliasmgr_core::detection::ShellDetectionSource::NotFound,
+                version: None,
+                wsl: false,
+            },
+            aliasmgr_core::detection::ShellInstallation {
+                kind: ShellKind::PowerShell5,
+                executable: None,
+                detected: false,
+                source: aliasmgr_core::detection::ShellDetectionSource::NotFound,
+                version: None,
+                wsl: false,
+            },
+            aliasmgr_core::detection::ShellInstallation {
+                kind: ShellKind::PowerShell7,
+                executable: None,
+                detected: false,
+                source: aliasmgr_core::detection::ShellDetectionSource::NotFound,
+                version: None,
+                wsl: false,
+            },
+        ]);
+        app.screen = Screen::ShellSetup(Box::new(setup));
+        let rendered = render_string(&mut app, 120, 34);
+        assert!(
+            rendered.contains("Shell integration (first run)"),
+            "{rendered}"
+        );
+        for label in ["PowerShell 5.1", "PowerShell 7", "Bash", "Zsh"] {
+            assert!(rendered.contains(label), "missing {label}: {rendered}");
+        }
+        assert!(rendered.contains("Enter preview/apply"), "{rendered}");
+        assert!(rendered.contains("not found"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shell_notice_and_preflight_modals_render_actions_and_problems() {
+        let (root, mut app) = test_app("shell-modals");
+        app.modal = Some(Modal::ShellNotice {
+            notices: vec![
+                crate::app::ShellNotice {
+                    kind: crate::app::ShellNoticeKind::InvalidEnabled,
+                    shell: ShellKind::PowerShell7,
+                },
+                crate::app::ShellNotice {
+                    kind: crate::app::ShellNoticeKind::NewlyDetected,
+                    shell: ShellKind::Zsh,
+                },
+            ],
+            cursor: 0,
+        });
+        let rendered = render_string(&mut app, 120, 34);
+        assert!(
+            rendered.contains("PowerShell 7 integration is invalid"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("Zsh was detected"), "{rendered}");
+        assert!(rendered.contains("ignore this session"), "{rendered}");
+        assert!(rendered.contains("dismiss"), "{rendered}");
+
+        app.modal = Some(Modal::ShellPreflight {
+            problems: vec![aliasmgr_core::shell_setup::ShellReadinessProblem {
+                kind: ShellKind::Bash,
+                code: "shell_disabled",
+                message: "Bash integration is not enabled".into(),
+                loader_target: None,
+            }],
+            shells: vec![ShellKind::Bash],
+        });
+        let rendered = render_string(&mut app, 120, 34);
+        assert!(rendered.contains("Not saved"), "{rendered}");
+        assert!(
+            rendered.contains("Bash integration is not enabled"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("draft is kept"), "{rendered}");
+        drop(app);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_sync_report_names_its_reason_and_shows_reload_commands() {
+        let (root, mut app) = test_app("auto-sync-report");
+        app.screen = Screen::SyncReport(SyncReportState {
+            run: SyncRun {
+                revision: 4,
+                results: vec![aliasmgr_core::sync::ShellSyncOutcome {
+                    shell: ShellKind::Bash,
+                    status: ShellStatus::LoaderMissing,
+                    error: None,
+                    error_code: None,
+                    generated_path: root.join("generated/bash.sh"),
+                    loader_installed: false,
+                    loader_error_code: Some("loader_missing".into()),
+                }],
+            },
+            scroll: 0,
+            retry: false,
+            auto: Some("save".into()),
+        });
+        let rendered = render_string(&mut app, 120, 32);
+        assert!(
+            rendered.contains("Auto-sync results after save"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("reload:"), "{rendered}");
+        assert!(rendered.contains("not installed"), "{rendered}");
         drop(app);
         let _ = std::fs::remove_dir_all(root);
     }

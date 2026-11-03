@@ -116,6 +116,25 @@ second submit.
 | `Esc` | back to the browser |
 | `q` | quit |
 
+### Shell setup / startup notice / settings panel
+
+| Key | Action |
+|---|---|
+| `Up` / `Down`, `j` / `k` | move between shells |
+| `Space` | select / deselect a shell (or toggle a settings value) |
+| `Enter` | preview the selected set (setup) / open the settings shell panel |
+| `e` | edit executable and profile/RC paths for the current shell |
+| `c` | preview platform defaults (clears stored path overrides on apply) |
+| `r` | rescan detected shells |
+| `d` | disable (settings panel) / disable or dismiss (startup notice) |
+| `i` | ignore a startup notice for this session |
+| `y` / `n` | apply / cancel the previewed set |
+| `q` / `Esc` | skip first-run, close the panel, or close the notice |
+
+First-run `q` persists an empty `shells.enabled`; later launches never show the
+full wizard again. Startup notices are one-time and dismissible; `Esc` closes
+them for the session without changing configuration.
+
 ## Import and export
 
 `I` opens an import flow: enter a path, `Enter` previews, `y` confirms and
@@ -149,14 +168,16 @@ messages.
 ## Settings
 
 `S` edits the shared `config.toml` loaded through `AppPaths`: default shell,
-language, `allow_relative_paths`, `backups.rc_keep`/`generated_keep`/`db_keep`
-and `logs.keep_files`. Fields are validated with the shared
-`AppConfig::validate` rules and numeric bounds before anything is written;
-invalid values keep the draft and show a field error. `Ctrl+S` re-reads
-`config.toml` first, applies only the fields this screen edits, then writes via
-a temporary file and rename, preserving shell path overrides, unknown top-level
-keys and external edits to other fields. A failed write leaves the previous
-config intact.
+language, `allow_relative_paths`, `runtime.auto_sync`,
+`backups.rc_keep`/`generated_keep`/`db_keep` and `logs.keep_files`. Fields are
+validated with the shared `AppConfig::validate` rules and numeric bounds before
+anything is written; invalid values keep the draft and show a field error.
+`Ctrl+S` re-reads `config.toml` first, applies only the fields this screen
+edits, then writes via a temporary file and rename, preserving shell path
+overrides, unknown top-level keys and external edits to other fields. A failed
+write leaves the previous config intact. The last field, `shells.enabled`,
+opens the shell integration panel described below (save or discard settings
+first, so the panel never works from a stale draft).
 Backup/log retention applies to future rotations. The config directory is
 fixed at startup and shown read-only; change it with `ALIASMGR_CONFIG_DIR` or
 `--config-dir` before launching. `runtime.language` is persisted for the GUI;
@@ -165,13 +186,108 @@ it does not localize CLI output or the TUI (which stays English).
 by the CLI or TUI. Unknown keys nested inside known config tables are not
 preserved; top-level unknown keys are.
 
-The GUI (R2.0-P2a) already uses the shared first-run/setup APIs and strict save
-preflight, and auto-syncs affected shells after GUI writes. The TUI first-run
-integration and auto-sync are later TUI work: the current TUI still requires
-the explicit `s` sync action, and shell enable/loader management remains in the
-CLI `doctor`/GUI Settings panel. Both front ends share the same
-`config.toml`, database and `shells.enabled` intent, so a shell enabled in the
-GUI is immediately visible to the TUI.
+## First-run Shell integration
+
+The TUI, GUI and CLI share `shell_setup` in `aliasmgr-core`; the TUI never
+implements its own loader, marker or sync rules. On a brand-new configuration
+(no `config.toml`, empty `shells.enabled`) the TUI opens the setup screen with
+all four supported shells. Detection is read-only and runs in a background
+thread (`PATH`, known Windows install locations, `shells.executables`
+overrides); a slow version probe never blocks the frame.
+
+Each row shows detected/not detected, executable path, version, WSL state,
+enabled intent, loader status and profile target. `Space` selects, `Enter`
+previews, `r` rescans and `q` skips. Detection alone never checks or enables a
+shell; the default selection is persisted intent or an already valid loader.
+
+- Detected + selected: `Enter` previews the exact profile/RC path and marked
+  block. Nothing is written until `y`. Confirming persists `shells.enabled`,
+  installs only the missing/mismatched loader block, syncs that shell once and
+  shows the reload command. The current terminal still has to run that command.
+- Not detected + selected: `Enter` offers three choices: install the Shell and
+  add it to `PATH` then restart; enter an absolute executable and profile/RC
+  path (leading `~/` expands, default profile prefilled); or cancel.
+- WSL launcher: it is never treated as a native integration target. The TUI
+  asks for a native Windows executable (for example Git Bash) and an absolute
+  profile path, or tells the user to run `aliasmgr doctor` inside the WSL
+  distribution. It never writes a Windows profile for a WSL home.
+- Skip (`q`) persists an empty `shells.enabled` and returns to the browser.
+  Later launches show only a compact "not configured" status, never the full
+  wizard again. Add/edit remains strictly blocked until a target shell is
+  enabled (see preflight).
+
+Detection is best effort: Store/portable installs, changed `PATH`, shells
+installed after launch and WSL can be missed. Manual executable and profile
+paths are always available, and a configured but missing path is authoritative
+(no silent fallback to another installation).
+
+## Startup checks (later launches)
+
+Every later startup scans the four shells in the background and shows a
+non-blocking notice modal only when action is needed:
+
+- An enabled shell whose executable disappeared or whose loader block is
+  missing/unavailable/invalid: `Enter` opens the repair preview, `i` ignores it
+  for this session, `d` persists `enabled=false` (the loader block is left for
+  `aliasmgr shell uninstall`).
+- A newly detected, non-WSL shell that is not enabled and was not dismissed:
+  `Enter` opens the setup preview, `d` records the current executable in
+  `shells.seen` (persisted), so it is not offered again; a reinstall at a
+  different path prompts once more.
+- `Esc` closes the notice for the session. Nothing blocks the main browser.
+
+If every enabled loader is valid and no new shell is detected, startup is
+silent (or shows the compact "not configured" status when nothing is enabled).
+
+## Shell integration panel
+
+The settings screen's shell entry opens the same setup state machine used by
+first-run and repair, with these additions:
+
+- `Space` selects, `Enter` previews/applies, `e` edits executable and profile
+  paths, `c` previews platform defaults (clears stored overrides via the core
+  `CLEAR_OVERRIDE` sentinel; persisted only after `y`), `r` rescans, and `d`
+  disables the selected shell immediately (persisted; loader block retained).
+- Loader status and target path are shown per shell. Applying is idempotent and
+  does not rewrite a matching block.
+- Closing the panel restores the settings screen; an unsaved settings draft is
+  never discarded by opening the panel.
+
+## Add/edit preflight
+
+The editor's shell checkboxes show `[enabled]`, `[disabled]`,
+`[not installed]`, `[loader invalid]` or `[wsl: integrate inside WSL]`. These
+labels are display state; save runs the shared strict check
+`shell_setup::shell_readiness_problems`.
+
+When a target shell is disabled or its loader cannot be verified, `Ctrl+S`
+blocks the save, keeps the editor and its draft, and shows each problem. `e`
+or `Enter` opens the same setup screen with the problem shells preselected;
+`Esc` keeps the draft without saving. There is no TUI equivalent of the CLI
+`--allow-missing-loader`: the TUI never silently saves an alias that would not
+load. Imported records that reference `fish`/`posix_sh` are ignored by the
+preflight, exactly like the other front ends.
+
+## Automatic sync after writes
+
+Successful create/update/delete/rename/enable-disable in the TUI starts one
+background sync of the affected shells when `runtime.auto_sync` is true
+(default). Updates sync the union of old and new target shells; delete,
+rename and enable/disable sync the record's shells. A confirmed import syncs
+every referenced shell once after the transaction; import preview never syncs.
+The manual `s` action remains available as retry/repair.
+
+The write is committed before sync starts. Auto-sync runs on the existing Jobs
+worker and holds the shared core sync lock, so the UI stays responsive and no
+second sync is started while one is running. Results show per-shell status,
+generated path, loader state and reload command; a missing loader is called
+out because a new terminal will not load the generated file. A sync failure
+never rolls back the database and is reported explicitly. Reload is never
+executed automatically.
+
+Both front ends share the same `config.toml`, database and `shells.enabled`
+intent, so a shell enabled in the GUI is immediately visible to the TUI and
+vice versa.
 
 ## Interaction details
 
@@ -248,9 +364,11 @@ The detail pane separates four independent facts:
 4. **Current shell** – always "unknown". The TUI cannot inspect or reload the
    shell that launched it.
 
-Saving only writes the database and then says "press s to sync". Sync runs in
-a background thread, reports a result per Shell (status, generated path, loader
-state, errors), and then says the reload command still has to be run manually.
+Saving writes the database and, when `runtime.auto_sync` is true, starts one
+background sync of the affected shells (see "Automatic sync after writes").
+With auto-sync disabled the status says to press `s`. Sync runs in a background
+thread, reports a result per Shell (status, generated path, loader state,
+errors), and then says the reload command still has to be run manually.
 Reload is never automatic: the TUI never sources the generated file, starts a
 shell, changes ExecutionPolicy, or writes outside the marked loader block.
 
@@ -295,9 +413,9 @@ the next sync emits the cleanup block, matching `aliasmgr rename`.
 
 `D` runs the shared read-only diagnostics and lists findings with severity,
 Shell, stable code, message, action and detail. `s` starts a sync (the
-actionable fix for stale/missing generated files); `r` rescans. The TUI does
-not install or remove loaders in this version; use
-`aliasmgr shell install|uninstall` with the CLI.
+actionable fix for stale/missing generated files); `r` rescans. To enable a
+Shell or install/repair a loader, use the first-run/settings shell panel; the
+advanced uninstall action remains `aliasmgr shell uninstall` with the CLI.
 
 A leftover generated file with no alias or tombstone, and a `shell_state`-only
 shell, are not targeted by `sync`. They therefore never keep the header at
@@ -307,8 +425,6 @@ remedy, and the finding disappears after it.
 
 ## Not implemented in the TUI (Phase 5 remainder)
 
-- Loader install/uninstall actions (Doctor shows the finding and points at the
-  CLI).
 - Bulk multi-select operations.
 - `uninstall` (retain/purge).
 - Mouse and clipboard integration (deliberately out of scope).

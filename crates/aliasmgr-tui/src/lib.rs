@@ -37,6 +37,7 @@ pub fn run(config_dir: Option<PathBuf>) -> Result<(), AliasError> {
         std::io::stdout().is_terminal(),
     )?;
     let mut app = App::new(root)?;
+    app.start_shell_startup();
     terminal::install_panic_hook();
     let mut session = match terminal::TerminalSession::enter() {
         Ok(session) => session,
@@ -76,6 +77,7 @@ fn event_loop(
             }
         }
         app.poll_jobs();
+        app.poll_shell_scan();
         app.poll_external_changes();
     }
     Ok(())
