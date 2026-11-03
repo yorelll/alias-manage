@@ -388,9 +388,12 @@
 - 一致性测试：CLI 设置→TUI/GUI 读取；TUI 设置→CLI/GUI；GUI 设置→CLI/TUI；同一配置根；无效值；默认 en；旧配置迁移；外部变更刷新。
 - 文档：README、docs/tui.md、docs/cli-commands.md、architecture/limitations 更新；说明语言包可以不同但模式共享。
 
-## 13. R2.0：保存即完成（auto-sync）与首次 Shell 集成（待最终确认后实施）
+## 13. R2.0：保存即完成（auto-sync）与首次 Shell 集成（已确认，排期中）
 
 目标：用户只关心“在哪些 Shell 里使用别名”。保存/删除/启停/重命名后自动同步；Shell 集成首次引导、后续只做失效检测。**不新增 `setup` 命令**；GUI/TUI 首次向导，CLI 用交互式 `doctor`。
+
+
+> 状态：已确认（2026-11-03）。排期：R2.1 通过后 → R2.0 → R2.1b → R2.2/R2.3/R2.4。R2.2 的 loader 安装/移除与 R2.0 的首次集成/doctor 启用有重叠，实施时以 R2.0 的统一入口为准，R2.2 只保留高级/批量/卸载操作。
 
 ### 13.1 共享状态与配置
 
